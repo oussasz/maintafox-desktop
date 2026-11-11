@@ -79,7 +79,8 @@
   "confirm": {
     "delete": "\"{{title}}\" will be removed from the library. The file is kept on disk for audit purposes.",
     "deleteTitle": "Delete this document?",
-    "deleteAction": "Delete document"
+    "deleteAction": "Delete document",
+    "deleteVersion": "Revision {{revision}} of “{{title}}” will be withdrawn; the previous version becomes the current one again. The file stays on disk for the audit."
   },
   "errors": {
     "fileTooLarge": "File exceeds {{mb}} MB."
@@ -92,5 +93,29 @@
     "expired_other": "{{count}} documents have expired",
     "soon_one": "{{count}} document expires within {{days}} days",
     "soon_other": "{{count}} documents expire within {{days}} days"
+  },
+  "versions": {
+    "new": "New version",
+    "newNamed": "New version of {{title}}",
+    "newTitle": "New version of the document",
+    "newDescription": "“{{title}}” — current version: {{revision}}. The new file replaces the current one in the library.",
+    "noRevision": "no revision",
+    "sameRevision": "Enter a revision different from the current version.",
+    "changes": "What changes",
+    "changesPlaceholder": "Optional — e.g. added a verification step",
+    "keepsHistory": "The current version stays readable and downloadable in the document's history; it can no longer be edited.",
+    "submit": "Upload the version",
+    "done": "“{{title}}”: revision {{revision}} saved",
+    "history": "Version history",
+    "historyNamed": "Version history of {{title}}",
+    "historyTitle": "Versions of “{{title}}”",
+    "historyDescription": "Newest first. Earlier versions are kept as they are.",
+    "loadError": "The version history could not be read",
+    "current": "Current",
+    "uploaded": "Uploaded on {{date}} by {{by}}",
+    "replaced": "replaced on {{date}}",
+    "unknownUser": "unknown user",
+    "downloadNamed": "Download revision {{revision}}",
+    "close": "Close"
   }
 }

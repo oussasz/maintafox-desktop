@@ -195,3 +195,143 @@ async fn a_number_duplicated_by_sync_does_not_block_other_edits() {
     .expect("own number kept");
     assert_eq!(renamed.title, "Renamed");
 }
+
+fn new_version(id: i64, revision: Option<&str>, user: i64) -> LibraryDocumentVersionInput {
+    LibraryDocumentVersionInput {
+        id,
+        file_name: "loto-v2.pdf".to_string(),
+        file_bytes: b"%PDF-1.7 v2".to_vec(),
+        mime_type: "application/pdf".to_string(),
+        notes: Some("Nouvelle étape de vérification".to_string()),
+        uploaded_by_id: user,
+        revision: revision.map(str::to_string),
+        valid_until: Some("2028-06-30".to_string()),
+    }
+}
+
+/// L7-17: a new version replaces the file; the earlier one stays in the history, read-only.
+#[tokio::test]
+async fn a_new_version_replaces_the_current_one_and_keeps_the_history() {
+    let db = crate::db::test_db::seeded().await;
+    let dir = tempfile::tempdir().expect("temp dir");
+    let user = seeded_user(&db).await;
+    let first = save_library_document(&db, dir.path(), upload(Some("PR-ELEC-012"), Some("2027-01-31"), user))
+        .await
+        .expect("first");
+
+    // A revision label is required and must change.
+    let err = save_library_document_version(&db, dir.path(), new_version(first.id, Some("  "), user))
+        .await
+        .expect_err("no revision");
+    assert!(refusal(&err).starts_with(GATE_REVISION_REQUIRED));
+    let err = save_library_document_version(&db, dir.path(), new_version(first.id, Some("b"), user))
+        .await
+        .expect_err("same revision");
+    assert!(refusal(&err).starts_with(GATE_REVISION_UNCHANGED));
+
+    let second = save_library_document_version(&db, dir.path(), new_version(first.id, Some("C"), user))
+        .await
+        .expect("new version");
+    assert_eq!(second.previous_version_id, Some(first.id));
+    assert_eq!(second.document_number.as_deref(), Some("PR-ELEC-012"), "number kept");
+    assert_eq!(second.title, first.title);
+    assert_eq!(second.category, first.category);
+    assert_eq!(second.valid_until.as_deref(), Some("2028-06-30"));
+    assert_ne!(second.relative_path, first.relative_path, "a new file");
+
+    // The library shows the current version only; the history shows both, newest first.
+    let listed = list_library_documents(&db, None, None).await.expect("list");
+    assert_eq!(listed.iter().map(|d| d.id).collect::<Vec<_>>(), vec![second.id]);
+    let history = list_library_document_versions(&db, second.id).await.expect("history");
+    assert_eq!(
+        history.iter().map(|d| d.id).collect::<Vec<_>>(),
+        vec![second.id, first.id]
+    );
+    assert!(history[1].superseded_at.is_some());
+    // The earlier file is still readable.
+    assert_eq!(
+        read_library_document_file(&db, dir.path(), first.id)
+            .await
+            .expect("old file"),
+        b"%PDF-1.7 test".to_vec()
+    );
+
+    // The earlier version is kept as it is: no edit, no new version from it, no deletion.
+    let err = update_library_document_metadata(
+        &db,
+        UpdateLibraryDocumentInput {
+            title: Some("Changed".to_string()),
+            ..edit(first.id)
+        },
+    )
+    .await
+    .expect_err("earlier version");
+    assert!(refusal(&err).starts_with(GATE_NOT_CURRENT));
+    let err = save_library_document_version(&db, dir.path(), new_version(first.id, Some("D"), user))
+        .await
+        .expect_err("earlier version");
+    assert!(refusal(&err).starts_with(GATE_NOT_CURRENT));
+    let err = delete_library_document_record(&db, first.id)
+        .await
+        .expect_err("earlier version");
+    assert!(refusal(&err).starts_with(GATE_NOT_CURRENT));
+
+    // The number stays the document's own: a new document cannot take it.
+    let err = save_library_document(&db, dir.path(), upload(Some("PR-ELEC-012"), None, user))
+        .await
+        .expect_err("number used");
+    assert!(refusal(&err).starts_with(GATE_NUMBER_TAKEN));
+}
+
+/// Deleting a version uploaded by mistake makes the replaced one current again.
+#[tokio::test]
+async fn deleting_the_current_version_restores_the_previous_one() {
+    let db = crate::db::test_db::seeded().await;
+    let dir = tempfile::tempdir().expect("temp dir");
+    let user = seeded_user(&db).await;
+    let first = save_library_document(&db, dir.path(), upload(Some("PR-7"), None, user))
+        .await
+        .expect("first");
+    let second = save_library_document_version(&db, dir.path(), new_version(first.id, Some("C"), user))
+        .await
+        .expect("new version");
+
+    delete_library_document_record(&db, second.id).await.expect("withdrawn");
+    let listed = list_library_documents(&db, None, None).await.expect("list");
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].id, first.id);
+    assert_eq!(listed[0].superseded_at, None);
+    assert_eq!(listed[0].revision.as_deref(), Some("B"));
+}
+
+/// A revision label of an earlier version is not reused; a version that another one replaces is
+/// never current, even when its `superseded_at` came back empty (sync conflict kept an old edit).
+#[tokio::test]
+async fn the_chain_decides_what_is_current() {
+    let db = crate::db::test_db::seeded().await;
+    let dir = tempfile::tempdir().expect("temp dir");
+    let user = seeded_user(&db).await;
+    let v1 = save_library_document(&db, dir.path(), upload(Some("PR-3"), None, user))
+        .await
+        .expect("v1 (revision B)");
+    let v2 = save_library_document_version(&db, dir.path(), new_version(v1.id, Some("C"), user))
+        .await
+        .expect("v2");
+    let err = save_library_document_version(&db, dir.path(), new_version(v2.id, Some(" b "), user))
+        .await
+        .expect_err("B was v1's label");
+    assert!(refusal(&err).starts_with(GATE_REVISION_UNCHANGED));
+
+    db.execute_unprepared(&format!(
+        "UPDATE library_documents SET superseded_at = NULL WHERE id = {}",
+        v1.id
+    ))
+    .await
+    .expect("drift");
+    let listed = list_library_documents(&db, None, None).await.expect("list");
+    assert_eq!(listed.iter().map(|d| d.id).collect::<Vec<_>>(), vec![v2.id]);
+    let err = delete_library_document_record(&db, v1.id)
+        .await
+        .expect_err("v2 replaces it");
+    assert!(refusal(&err).starts_with(GATE_NOT_CURRENT));
+}

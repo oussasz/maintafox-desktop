@@ -134,3 +134,54 @@ pub async fn list_document_categories(
     );
     library_documents::list_document_categories(&state.db).await
 }
+
+/// A new version of a document (L7-17): a new file with its revision label; the replaced version
+/// stays in the history.
+#[tauri::command]
+pub async fn upload_library_document_version(
+    app: tauri::AppHandle,
+    id: i64,
+    file_name: String,
+    file_bytes: Vec<u8>,
+    mime_type: String,
+    notes: Option<String>,
+    revision: Option<String>,
+    valid_until: Option<String>,
+    state: State<'_, AppState>,
+) -> AppResult<LibraryDocumentRow> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::DOC_MANAGE,
+        PermissionScope::Global
+    );
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| crate::errors::AppError::Internal(anyhow::anyhow!("app_data_dir: {e}")))?;
+    let input = library_documents::LibraryDocumentVersionInput {
+        id,
+        file_name,
+        file_bytes,
+        mime_type,
+        notes,
+        uploaded_by_id: i64::from(user.user_id),
+        revision,
+        valid_until,
+    };
+    library_documents::save_library_document_version(&state.db, &app_data_dir, input).await
+}
+
+/// The versions of a document, newest first. Same right as the library list.
+#[tauri::command]
+pub async fn list_library_document_versions(id: i64, state: State<'_, AppState>) -> AppResult<Vec<LibraryDocumentRow>> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::DOC_VIEW,
+        PermissionScope::Global
+    );
+    library_documents::list_library_document_versions(&state.db, id).await
+}

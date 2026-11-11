@@ -298,6 +298,8 @@ pub fn run() {
         commands::library_documents::get_library_document_file,
         commands::library_documents::delete_library_document,
         commands::library_documents::update_library_document,
+        commands::library_documents::upload_library_document_version,
+        commands::library_documents::list_library_document_versions,
         commands::product_license::get_product_license_onboarding_state,
         commands::product_license::submit_product_license_key,
         commands::product_license::check_product_license_key_entry,

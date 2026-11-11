@@ -428,7 +428,12 @@ pub const ROW_SPECS: &[RowSpec] = &[
     ),
     spec(
         "library_documents",
-        &[r("equipment_id", "equipment"), r("uploaded_by_id", USER)],
+        // `previous_version_id`: the version a document replaces (L7-17), sent by its identity.
+        &[
+            r("equipment_id", "equipment"),
+            r("uploaded_by_id", USER),
+            r("previous_version_id", "library_documents"),
+        ],
     ),
     // `relative_path` travels: it names the file's place under the app data directory (unique by a
     // UUID) on every device, the same value the attachment row carries; the bytes travel through

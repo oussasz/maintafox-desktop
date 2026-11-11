@@ -79,7 +79,8 @@
   "confirm": {
     "delete": "« {{title}} » sera retiré de la bibliothèque. Le fichier reste conservé sur le disque pour l'audit.",
     "deleteTitle": "Supprimer ce document ?",
-    "deleteAction": "Supprimer le document"
+    "deleteAction": "Supprimer le document",
+    "deleteVersion": "La révision {{revision}} de « {{title}} » sera retirée ; la version précédente redevient la version actuelle. Le fichier reste conservé sur le disque pour l'audit."
   },
   "errors": {
     "fileTooLarge": "Le fichier dépasse {{mb}} Mo."
@@ -92,5 +93,29 @@
     "expired_other": "{{count}} documents expirés",
     "soon_one": "{{count}} document expire dans les {{days}} jours",
     "soon_other": "{{count}} documents expirent dans les {{days}} jours"
+  },
+  "versions": {
+    "new": "Nouvelle version",
+    "newNamed": "Nouvelle version de {{title}}",
+    "newTitle": "Nouvelle version du document",
+    "newDescription": "« {{title}} » — version actuelle : {{revision}}. Le nouveau fichier remplace l'actuel dans la bibliothèque.",
+    "noRevision": "sans révision",
+    "sameRevision": "Saisissez une révision différente de la version actuelle.",
+    "changes": "Ce qui change",
+    "changesPlaceholder": "Facultatif — ex. ajout d'une étape de vérification",
+    "keepsHistory": "La version actuelle reste consultable et téléchargeable dans l'historique du document ; elle n'est plus modifiable.",
+    "submit": "Téléverser la version",
+    "done": "« {{title}} » : révision {{revision}} enregistrée",
+    "history": "Historique des versions",
+    "historyNamed": "Historique des versions de {{title}}",
+    "historyTitle": "Versions de « {{title}} »",
+    "historyDescription": "De la plus récente à la plus ancienne. Les versions précédentes sont conservées telles quelles.",
+    "loadError": "Impossible de lire l'historique des versions",
+    "current": "Actuelle",
+    "uploaded": "Téléversée le {{date}} par {{by}}",
+    "replaced": "remplacée le {{date}}",
+    "unknownUser": "utilisateur inconnu",
+    "downloadNamed": "Télécharger la révision {{revision}}",
+    "close": "Fermer"
   }
 }

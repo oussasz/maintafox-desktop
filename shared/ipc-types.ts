@@ -2479,6 +2479,12 @@ export interface LibraryDocument {
   revision: string | null;
   /** Last valid day `YYYY-MM-DD`; null when it never expires. */
   validUntil: string | null;
+  /** The version this one replaces; null for a first version. */
+  previousVersionId: number | null;
+  /** When a newer version replaced this one; null for the current version. */
+  supersededAt: string | null;
+  /** Who uploaded this version. */
+  uploadedByName: string | null;
 }
 
 export interface UpdateLibraryDocumentPayload {

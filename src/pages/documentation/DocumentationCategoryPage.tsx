@@ -9,7 +9,7 @@
  * downloads go through the native Save dialog.
  */
 import type { ColumnDef } from "@tanstack/react-table";
-import { Download, FilePlus2, Pencil, Trash2 } from "lucide-react";
+import { Download, FilePlus2, FileUp, History, Pencil, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link, Navigate, useParams } from "react-router-dom";
@@ -17,6 +17,10 @@ import { Link, Navigate, useParams } from "react-router-dom";
 import { PermissionGate } from "@/components/PermissionGate";
 import { AssetPicker } from "@/components/assets/AssetPicker";
 import { DataTable } from "@/components/data/DataTable";
+import {
+  DocumentHistoryDialog,
+  DocumentNewVersionDialog,
+} from "@/components/documentation/DocumentVersionDialogs";
 import {
   EXPIRY_WARNING_DAYS,
   documentValidity,
@@ -576,6 +580,8 @@ export function DocumentationCategoryPage() {
   const [loadError, setLoadError] = useState<unknown>(null);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [editing, setEditing] = useState<LibraryDocument | null>(null);
+  const [newVersionOf, setNewVersionOf] = useState<LibraryDocument | null>(null);
+  const [historyOf, setHistoryOf] = useState<LibraryDocument | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<LibraryDocument | null>(null);
   const [downloadingId, setDownloadingId] = useState<number | null>(null);
 
@@ -783,8 +789,30 @@ export function DocumentationCategoryPage() {
               >
                 <Download className="h-4 w-4" aria-hidden />
               </Button>
+              {doc.previousVersionId != null ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="h-10 w-10 p-0"
+                  aria-label={t("versions.historyNamed", { title: doc.title })}
+                  title={t("versions.history")}
+                  onClick={() => setHistoryOf(doc)}
+                >
+                  <History className="h-4 w-4" aria-hidden />
+                </Button>
+              ) : null}
               {canManage ? (
                 <>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="h-10 w-10 p-0"
+                    aria-label={t("versions.newNamed", { title: doc.title })}
+                    title={t("versions.new")}
+                    onClick={() => setNewVersionOf(doc)}
+                  >
+                    <FileUp className="h-4 w-4" aria-hidden />
+                  </Button>
                   <Button
                     type="button"
                     variant="ghost"
@@ -918,11 +946,28 @@ export function DocumentationCategoryPage() {
         onOpenChange={(o) => !o && setEditing(null)}
         onSaved={() => void load()}
       />
+      <DocumentNewVersionDialog
+        doc={newVersionOf}
+        onOpenChange={(o) => !o && setNewVersionOf(null)}
+        onUploaded={() => void load()}
+      />
+      <DocumentHistoryDialog
+        doc={historyOf}
+        onOpenChange={(o) => !o && setHistoryOf(null)}
+        onDownload={(v) => void handleDownload(v)}
+      />
       <ConfirmDialog
         open={deleteTarget != null}
         onOpenChange={(o) => !o && setDeleteTarget(null)}
         title={t("confirm.deleteTitle")}
-        description={t("confirm.delete", { title: deleteTarget?.title ?? "" })}
+        description={
+          deleteTarget?.previousVersionId != null
+            ? t("confirm.deleteVersion", {
+                title: deleteTarget.title,
+                revision: deleteTarget.revision ?? "",
+              })
+            : t("confirm.delete", { title: deleteTarget?.title ?? "" })
+        }
         confirmLabel={t("confirm.deleteAction")}
         destructive
         onConfirm={confirmDelete}
