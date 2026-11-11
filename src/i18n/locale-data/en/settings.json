@@ -538,6 +538,14 @@
     "history": "History",
     "historyError": "The history could not be loaded",
     "noHistory": "No change at this site.",
+    "depannageValidation": {
+      "title": "Breakdown validation",
+      "label": "Approve breakdowns automatically at their close",
+      "help": "Off (recommended): each breakdown is validated after the fact by an approver of the site other than the person who started it, before its close. Turn on only for a site without a second approver: the breakdown is then marked \"approved automatically (site rule)\", with no validator.",
+      "active": "Breakdowns approved automatically at this site",
+      "confirmOnBody": "At {{site}}, breakdowns not validated will be approved automatically at their close, with no validator. Other sites keep the validation.",
+      "confirmOffBody": "At {{site}}, each breakdown must again be validated by an approver of the site before its close."
+    },
     "selfApproval": {
       "label": "Allow self-approval of reliability decisions and work permits",
       "help": "Off (recommended): a second person approves every reliability decision and every work permit of this site (four-eyes: not the person who wrote or submitted the permit). Turn on only for a site where one person both prepares and approves; such approvals are marked \"self-approval (site without four-eyes)\" on the permit and \"Self-approved\" on the decision.",

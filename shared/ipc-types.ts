@@ -5892,6 +5892,23 @@ export interface WoBreakdownAtInput {
   breakdown_at: string;
 }
 
+/** After-the-fact validation of a dépannage (`validate_depannage_wo`, ot.approve, never its starter). */
+export interface WoDepannageValidateInput {
+  wo_id: number;
+  expected_row_version: number;
+}
+
+/** Times of a dépannage in hours (EN 13306, `get_depannage_times`); null while an end is unknown. */
+export interface DepannageTimes {
+  breakdown_at: string | null;
+  downtime_start: string | null;
+  restored_at: string | null;
+  response_hours: number | null;
+  active_repair_hours: number | null;
+  restore_hours: number | null;
+  stopped_hours: number | null;
+}
+
 export interface WoPauseInput {
   wo_id: number;
   actor_id: number;
