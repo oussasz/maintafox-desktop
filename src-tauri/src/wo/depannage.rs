@@ -206,7 +206,7 @@ pub fn checked_breakdown_at(raw: Option<&str>, now: DateTime<Utc>) -> Result<(St
 fn checked_facts(input: &WoDepannageInput, now: DateTime<Utc>) -> AppResult<(String, bool, bool)> {
     let mut errors = Vec::new();
     if input.title.trim().is_empty() {
-        errors.push(refused(CODE_TITLE_REQUIRED, "Le titre est obligatoire."));
+        errors.push(format!("{CODE_TITLE_REQUIRED}: Le titre est obligatoire."));
     }
     let breakdown = match checked_breakdown_at(input.breakdown_at.as_deref(), now) {
         Ok(found) => Some(found),
@@ -216,9 +216,8 @@ fn checked_facts(input: &WoDepannageInput, now: DateTime<Utc>) -> AppResult<(Str
         }
     };
     if input.machine_stopped.is_none() {
-        errors.push(refused(
-            CODE_MACHINE_STOPPED_REQUIRED,
-            "Indiquez si la machine est arrêtée (oui ou non).",
+        errors.push(format!(
+            "{CODE_MACHINE_STOPPED_REQUIRED}: Indiquez si la machine est arrêtée (oui ou non)."
         ));
     }
     match (breakdown, input.machine_stopped) {
@@ -754,9 +753,8 @@ pub async fn set_breakdown_at(db: &DatabaseConnection, input: WoBreakdownAtInput
             id: input.wo_id.to_string(),
         })?;
     if !current.is_depannage {
-        return Err(AppError::ValidationFailed(vec![refused(
-            CODE_NOT_A_DEPANNAGE,
-            "Cet OT n'est pas un dépannage.",
+        return Err(AppError::ValidationFailed(vec![format!(
+            "{CODE_NOT_A_DEPANNAGE}: Cet OT n'est pas un dépannage."
         )]));
     }
     if status.is_terminal() {
