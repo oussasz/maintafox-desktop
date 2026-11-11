@@ -255,9 +255,9 @@ pub fn checked_valid_until(value: Option<String>) -> AppResult<Option<String>> {
     chrono::NaiveDate::parse_from_str(&date, "%Y-%m-%d")
         .map(|d| Some(d.format("%Y-%m-%d").to_string()))
         .map_err(|_| {
-            AppError::ValidationFailed(vec![format!(
-                "{GATE_VALID_UNTIL_INVALID}: The validity date must be a calendar date (YYYY-MM-DD)."
-            )])
+            AppError::ValidationFailed(vec![
+                "GATE_LIB_DOC_VALID_UNTIL_INVALID: The validity date must be a calendar date (YYYY-MM-DD).".to_string(),
+            ])
         })
 }
 
@@ -277,9 +277,9 @@ async fn ensure_number_free(db: &impl ConnectionTrait, number: Option<&str>, exc
         .await?
         .is_some();
     if taken {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "{GATE_NUMBER_TAKEN}: Another document of the library already has this reference number."
-        )]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_LIB_DOC_NUMBER_TAKEN: Another document of the library already has this reference number.".to_string(),
+        ]));
     }
     Ok(())
 }
@@ -480,7 +480,7 @@ pub async fn save_library_document(
     let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!("{SELECT_DOCUMENT} WHERE ld.relative_path = ?"),
+            format!("{SELECT_DOCUMENT} WHERE ld.relative_path = ?"),
             [relative_path.into()],
         ))
         .await?
@@ -662,7 +662,7 @@ pub async fn update_library_document_metadata(
         values.push(input.id.into());
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!("UPDATE library_documents SET {} WHERE id = ?", sets.join(", ")),
+            format!("UPDATE library_documents SET {} WHERE id = ?", sets.join(", ")),
             values,
         ))
         .await?;
@@ -671,7 +671,7 @@ pub async fn update_library_document_metadata(
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!("{SELECT_DOCUMENT} WHERE ld.id = ?"),
+            format!("{SELECT_DOCUMENT} WHERE ld.id = ?"),
             [input.id.into()],
         ))
         .await?
