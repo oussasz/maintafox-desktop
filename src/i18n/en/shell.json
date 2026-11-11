@@ -178,6 +178,8 @@
       "WO_COMPLETION_GATE": "A work order completed on another PC fails the completion checks here — check, then keep the correct version",
       "WO_CLOSE_GATE": "A work order closed on another PC fails the close-out checks here",
       "WO_CANCEL_PERMIT_GATE": "A work order cancelled on another PC still has an open permit or a fitted lock here",
+      "WO_EXECUTION_UNAUTHORISED": "A work-order execution action (start, hold, resume, task result, completion, close, cancellation) made on another PC by someone who does not carry out this work order, or no longer holds the right here — not applied; if it was intended, an authorised person makes it again",
+      "WO_EXECUTION_AUTHOR_UNKNOWN": "A work-order execution action received without saying who made it — not applied; an authorised person makes it again",
       "PERMIT_ENDED_BEFORE_START": "A permit closed, cancelled or suspended on another PC before its work order's work started here — applied; stop the work, then dismiss with the reason (or escalate)",
       "PERMIT_ENDED_DURING_WORK": "A permit closed, cancelled or suspended on another PC while its work order's work runs here — applied; stop the work, then dismiss with the reason (or escalate)",
       "WO_DOWNTIME_END_LOCKS_FITTED": "A downtime end received while a lock is still fitted here under the work order's permits — not applied; the downtime ends when the removal of the last lock is verified",

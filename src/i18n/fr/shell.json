@@ -178,6 +178,8 @@
       "WO_COMPLETION_GATE": "Un OT terminé sur un autre poste ne passe pas ici les contrôles de fin (tâches obligatoires, main-d'œuvre, pièces, arrêts, codification) — vérifiez, puis gardez la version qui est juste",
       "WO_CLOSE_GATE": "Un OT clôturé sur un autre poste ne passe pas ici les contrôles de clôture",
       "WO_CANCEL_PERMIT_GATE": "Un OT annulé sur un autre poste a encore ici un permis ouvert ou un cadenas posé",
+      "WO_EXECUTION_UNAUTHORISED": "Une action d'exécution d'OT (démarrage, mise en attente, reprise, résultat de tâche, fin, clôture, annulation) faite sur un autre poste par une personne qui n'exécute pas cet OT, ou qui n'a plus le droit ici — non appliquée ; si elle était voulue, une personne autorisée la refait",
+      "WO_EXECUTION_AUTHOR_UNKNOWN": "Une action d'exécution d'OT reçue sans dire qui l'a faite — non appliquée ; une personne autorisée la refait",
       "PERMIT_ENDED_BEFORE_START": "Un permis clôturé, annulé ou suspendu sur un autre poste avant que le travail de son OT commence ici — appliqué ; arrêtez le travail, puis « Ignorer » avec le motif (ou « Escalader »)",
       "PERMIT_ENDED_DURING_WORK": "Un permis clôturé, annulé ou suspendu sur un autre poste pendant que le travail de son OT est en cours ici — appliqué ; arrêtez le travail, puis « Ignorer » avec le motif (ou « Escalader »)",
       "WO_DOWNTIME_END_LOCKS_FITTED": "Une fin d'arrêt reçue alors qu'un cadenas est encore posé ici sous les permis de l'OT — non appliquée ; l'arrêt se termine à la vérification de la dépose du dernier cadenas",
