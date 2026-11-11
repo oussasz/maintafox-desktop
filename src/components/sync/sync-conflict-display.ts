@@ -153,6 +153,10 @@ export const KNOWN_CONFLICT_KINDS = new Set([
   "WO_CLOSE_GATE",
   // A cancellation received while a permit or a lock of the work order holds the plant here (AU-02).
   "WO_CANCEL_PERMIT_GATE",
+  // An execution change received from someone who does not carry out the work order, or without
+  // the right here now; or whose status history names nobody (L5-08c).
+  "WO_EXECUTION_UNAUTHORISED",
+  "WO_EXECUTION_AUTHOR_UNKNOWN",
   // A permit ended on another PC before or while its work ran here: applied, to review (AU-101, D9).
   "PERMIT_ENDED_BEFORE_START",
   "PERMIT_ENDED_DURING_WORK",

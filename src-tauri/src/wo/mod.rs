@@ -12,6 +12,7 @@ pub mod depannage;
 pub mod domain;
 pub mod execution;
 pub mod execution_actor;
+pub(crate) mod execution_actor_sync;
 pub mod execution_log;
 pub mod failure_catalogue;
 pub mod labor;
@@ -46,6 +47,8 @@ mod closeout_sync_tests;
 mod closeout_tests;
 #[cfg(test)]
 mod depannage_tests;
+#[cfg(test)]
+mod execution_actor_sync_tests;
 #[cfg(test)]
 mod execution_actor_tests;
 #[cfg(test)]

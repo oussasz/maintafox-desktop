@@ -49,6 +49,14 @@ const RUNTIME_TYPES: &[(&str, &str)] = &[
         "planning::sync_check::audit_closed (break-in conflict)",
     ),
     ("team", "planning::sync_check::audit_closed (crew site change conflict)"),
+    (
+        "work_order",
+        "wo::execution_actor_sync::record_author_not_received (author not received)",
+    ),
+    (
+        "work_order_task",
+        "wo::execution_actor_sync::record_author_not_received (author not received)",
+    ),
 ];
 
 /// Files that build an audit event with a target type set at run time, and where the types they
@@ -69,6 +77,10 @@ const DYNAMIC_SITES: &[(&str, &str)] = &[
     (
         "planning/sync_check.rs",
         "audit_closed (planning conflict closed by itself): RUNTIME_TYPES",
+    ),
+    (
+        "wo/execution_actor_sync.rs",
+        "record_author_not_received (execution change without its author): RUNTIME_TYPES",
     ),
 ];
 
