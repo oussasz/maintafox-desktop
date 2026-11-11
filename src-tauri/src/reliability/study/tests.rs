@@ -2235,6 +2235,55 @@ async fn fmeca_worksheet_proposes_modes_saves_rows_and_feeds_rcm_and_decisions()
         !r.prefilled.scheduled_restoration_feasible,
         "no fit: not pre-answered yes"
     );
+    // L2-15 (b): the RCM row is written with the logic in one transaction. With this row critical
+    // and the logic recommending run to failure, a save refused by the logic (redesign without a
+    // justification) and a save of run to failure both leave no RCM row behind.
+    let rcm_rows = |item: i64| {
+        let db = &f.db;
+        async move {
+            scalar(
+                db,
+                &format!("SELECT COUNT(*) FROM rcm_decisions WHERE fmeca_item_id = {item}"),
+            )
+            .await
+        }
+    };
+    assert_eq!(
+        crate::reliability::rcm_loop::recommend_tactic(&r.prefilled).recommended_tactic,
+        "run_to_failure"
+    );
+    exec(
+        &f.db,
+        &format!(
+            "UPDATE app_settings SET setting_value_json = '{}' WHERE setting_key = 'ram.fmeca_rpn_critical_threshold'",
+            row.rpn
+        ),
+    )
+    .await;
+    for (tactic, code) in [
+        ("redesign", "GATE_REL_TACTIC_JUSTIFICATION_REQUIRED"),
+        ("run_to_failure", "GATE_REL_RCM_RUN_TO_FAILURE_CRITICAL"),
+    ] {
+        assert_eq!(
+            refusal_code(
+                crate::reliability::study::rcm::save_decision(
+                    &f.db,
+                    crate::reliability::study::rcm::SaveRcmInput {
+                        study_id,
+                        fmeca_item_id: row.item_id,
+                        answers: r.prefilled.clone(),
+                        selected_tactic: Some(tactic.into()),
+                        justification: None,
+                        pf_interval_hours: None,
+                    },
+                    admin,
+                )
+                .await
+            ),
+            code
+        );
+        assert_eq!(rcm_rows(row.item_id).await, 0, "{tactic}: nothing stored");
+    }
     let mut answers = r.prefilled.clone();
     answers.on_condition_feasible = true;
     let rcm = crate::reliability::study::rcm::save_decision(
@@ -2288,6 +2337,50 @@ async fn fmeca_worksheet_proposes_modes_saves_rows_and_feeds_rcm_and_decisions()
         ),
         "GATE_REL_RCM_RUN_TO_FAILURE_CRITICAL"
     );
+    // L2-15 (a): the same rule in the shared RCM logic and in the RCM row edit (advanced RAMS
+    // commands), for a decision that answers this critical row.
+    assert_eq!(
+        refusal_code(
+            crate::reliability::rcm_loop::apply_rcm_decision_logic(
+                &f.db,
+                crate::reliability::rcm_loop::ApplyRcmLogicInput {
+                    decision_id: saved.decision_id,
+                    expected_row_version: saved.row_version,
+                    answers: critical.rows[0].answers.clone(),
+                    selected_tactic: Some("run_to_failure".into()),
+                    justification: Some("Pièce de rechange en stock".into()),
+                },
+            )
+            .await
+        ),
+        "GATE_REL_RCM_RUN_TO_FAILURE_CRITICAL"
+    );
+    assert_eq!(
+        refusal_code(
+            crate::reliability::advanced_rams::queries::upsert_rcm_decision(
+                &f.db,
+                crate::reliability::advanced_rams::domain::UpsertRcmDecisionInput {
+                    id: Some(saved.decision_id),
+                    study_id: rcm.rcm_study_id.expect("rcm study"),
+                    expected_row_version: Some(saved.row_version),
+                    function_description: None,
+                    functional_failure: None,
+                    failure_mode_id: None,
+                    consequence_category: None,
+                    selected_tactic: "run_to_failure".into(),
+                    justification: Some("Pièce de rechange en stock".into()),
+                    review_due_at: None,
+                    linked_pm_plan_id: None,
+                },
+            )
+            .await
+        ),
+        "GATE_REL_RCM_RUN_TO_FAILURE_CRITICAL"
+    );
+    let still = crate::reliability::rcm_loop::get_rcm_decision_logic(&f.db, saved.decision_id)
+        .await
+        .expect("logic");
+    assert_eq!(still.selected_tactic, "condition_based");
 
     // Step 6 decision linked to the FMECA row and the RCM decision.
     let d = create_decision(
@@ -3735,7 +3828,9 @@ async fn a_decision_needs_a_justification_and_is_edited_by_its_proposer() {
         .into_iter()
         .filter(|d| d.status == "proposed")
         .count();
-    assert_eq!(open, 1, "the edit refused, its corrected copy is withdrawn too");
+    assert_eq!(open, 1, "a refused edit records nothing");
+    let total = list_decisions(&f.db, study_id).await.expect("list").len();
+    assert_eq!(total, 2, "the replaced decision and its correction only");
 }
 
 #[path = "decision_sync_tests.rs"]

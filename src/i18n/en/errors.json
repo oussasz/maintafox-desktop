@@ -1002,6 +1002,7 @@
     "GATE_REL_DECISION_JUSTIFICATION_REQUIRED": "Decision refused: enter the justification (what the decision rests on).",
     "GATE_REL_DECISION_REVISE_REASON_REQUIRED": "Change refused: say what changes in the decision.",
     "GATE_REL_DECISION_REVISE_NOT_PROPOSER": "Change refused: only the person who proposed the decision can edit it.",
+    "GATE_REL_DECISION_REVISE_OTHER_STUDY": "Change refused: the corrected decision must belong to the study of the decision it replaces. Reload the study and try again.",
     "GATE_REL_DECISION_SYNC_REFUSED": "Action refused: this decision was refused at synchronisation (its approval is not valid on a PC). It can no longer be approved or applied. Propose a new decision and have it approved.",
     "GATE_PM_SOURCE_DECISION_REFUSED": "Publication refused: this version comes from a reliability study decision refused at synchronisation. It cannot be published.",
     "GATE_REL_MODE_RATIO_REQUIRED": "Criticality impossible: there is no failure history for this mode. Enter the failure mode ratio α.",

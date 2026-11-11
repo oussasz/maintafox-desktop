@@ -1001,6 +1001,7 @@
     "GATE_REL_DECISION_JUSTIFICATION_REQUIRED": "Décision refusée : indiquez la justification (ce qui motive la décision).",
     "GATE_REL_DECISION_REVISE_REASON_REQUIRED": "Modification refusée : indiquez ce qui change dans la décision.",
     "GATE_REL_DECISION_REVISE_NOT_PROPOSER": "Modification refusée : seule la personne qui a proposé la décision peut la modifier.",
+    "GATE_REL_DECISION_REVISE_OTHER_STUDY": "Modification refusée : la décision corrigée doit appartenir à l'étude de la décision qu'elle remplace. Rechargez l'étude et recommencez.",
     "GATE_REL_DECISION_SYNC_REFUSED": "Action refusée : cette décision a été refusée à la synchronisation (son approbation n'est pas valable sur un poste). Elle ne peut plus être approuvée ni appliquée. Proposez et faites approuver une nouvelle décision.",
     "GATE_PM_SOURCE_DECISION_REFUSED": "Publication refusée : cette version provient d'une décision d'étude de fiabilité refusée à la synchronisation. Elle ne peut pas être publiée.",
     "GATE_REL_MODE_RATIO_REQUIRED": "Criticité impossible : aucun historique de défaillance pour ce mode. Saisissez la part du mode de défaillance α.",

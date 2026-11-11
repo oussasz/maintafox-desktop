@@ -12,14 +12,14 @@
 //! The decision is recorded in `rcm_decisions` (linked to the FMECA item) and sent to the study
 //! decision log by the analyst.
 
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
 use crate::errors::{AppError, AppResult};
 use crate::reliability::advanced_rams::domain::{CreateRcmStudyInput, UpsertRcmDecisionInput};
 use crate::reliability::advanced_rams::queries as rams_queries;
 use crate::reliability::rcm_loop::{
-    apply_rcm_decision_logic, get_rcm_decision_logic, recommend_tactic, ApplyRcmLogicInput, RcmAnswers,
+    apply_rcm_decision_logic_in, get_rcm_decision_logic, recommend_tactic, ApplyRcmLogicInput, RcmAnswers,
     RcmRecommendation,
 };
 use crate::reliability::study::analysis::life_analysis;
@@ -93,7 +93,7 @@ pub struct RcmWorksheet {
     /// FMECA rows still to review (ratings nobody chose): not offered for an RCM decision.
     pub rows_to_review: i64,
     /// The plant's critical RPN (setting `ram.fmeca_rpn_critical_threshold`): a row at or above it
-    /// is never left to run to failure ([`run_to_failure_refused`]).
+    /// is never left to run to failure (`rcm_loop::run_to_failure_refused`).
     pub rpn_threshold: i64,
     /// Set while the plant's FMECA grids must be reviewed (`scales::RatingScales::review`): the
     /// consequences and ratings read here come from the Maintafox grids standing in.
@@ -112,16 +112,6 @@ pub struct SaveRcmInput {
     pub justification: Option<String>,
     #[serde(default)]
     pub pf_interval_hours: Option<f64>,
-}
-
-/// Tactic of the RCM logic that leaves the failure happen.
-pub const TACTIC_RUN_TO_FAILURE: &str = "run_to_failure";
-
-/// Running to failure is refused for a critical row: its RPN is at or above the plant's critical
-/// RPN (the threshold the FMECA step and the work-order close use). L2-15.
-#[must_use]
-pub fn run_to_failure_refused(tactic: &str, rpn: i64, rpn_threshold: i64) -> bool {
-    tactic == TACTIC_RUN_TO_FAILURE && rpn >= rpn_threshold
 }
 
 /// Pre-filled answers for an FMECA row (pure).
@@ -373,7 +363,7 @@ pub async fn save_decision(db: &DatabaseConnection, input: SaveRcmInput, actor_i
     let item = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT component_label, functional_failure, failure_mode_id, review_required, COALESCE(rpn, severity * occurrence * detectability) AS rpn FROM fmeca_items WHERE id = ? AND analysis_id = ?",
+            "SELECT component_label, functional_failure, failure_mode_id, review_required FROM fmeca_items WHERE id = ? AND analysis_id = ?",
             [input.fmeca_item_id.into(), analysis.into()],
         ))
         .await?
@@ -387,22 +377,11 @@ pub async fn save_decision(db: &DatabaseConnection, input: SaveRcmInput, actor_i
             return Err(invalid("RCM_PF_INTERVAL_INVALID"));
         }
     }
-    // A critical mode is never left to run to failure, whether the logic recommends it or the
-    // analyst picks it (L2-15).
-    let tactic = input
-        .selected_tactic
-        .clone()
-        .unwrap_or_else(|| recommend_tactic(&input.answers).recommended_tactic);
-    let rpn: i64 = get::<Option<i64>>(&item, "rpn")?.unwrap_or(0);
-    let threshold = rams_queries::fmeca_rpn_critical_threshold_i64(db).await?;
-    if run_to_failure_refused(&tactic, rpn, threshold) {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "GATE_REL_RCM_RUN_TO_FAILURE_CRITICAL: RPN {rpn} is at or above the critical RPN {threshold}: running \
-             to failure is not accepted for this mode. Choose a task or a modification."
-        )]));
-    }
     let rcm_study = ensure_rcm_study(db, &study, actor_id).await?;
-    let existing = db
+    // The RCM row, its link to the FMECA row and the logic are written together: a refusal of the
+    // logic (a critical mode run to failure, L2-15; a missing justification) leaves nothing stored.
+    let txn = db.begin().await?;
+    let existing = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id, row_version FROM rcm_decisions WHERE fmeca_item_id = ? AND study_id = ? ORDER BY id DESC LIMIT 1",
@@ -413,8 +392,8 @@ pub async fn save_decision(db: &DatabaseConnection, input: SaveRcmInput, actor_i
     let (decision_id, row_version) = match existing {
         Some(r) => (get::<i64>(&r, "id")?, get::<i64>(&r, "row_version")?),
         None => {
-            let d = rams_queries::upsert_rcm_decision(
-                db,
+            let d = rams_queries::upsert_rcm_decision_in(
+                &txn,
                 UpsertRcmDecisionInput {
                     id: None,
                     study_id: rcm_study,
@@ -430,7 +409,7 @@ pub async fn save_decision(db: &DatabaseConnection, input: SaveRcmInput, actor_i
                 },
             )
             .await?;
-            db.execute(Statement::from_sql_and_values(
+            txn.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "UPDATE rcm_decisions SET fmeca_item_id = ? WHERE id = ?",
                 [input.fmeca_item_id.into(), d.id.into()],
@@ -439,8 +418,8 @@ pub async fn save_decision(db: &DatabaseConnection, input: SaveRcmInput, actor_i
             (d.id, d.row_version)
         }
     };
-    let logic = apply_rcm_decision_logic(
-        db,
+    let logic = apply_rcm_decision_logic_in(
+        &txn,
         ApplyRcmLogicInput {
             decision_id,
             expected_row_version: row_version,
@@ -450,18 +429,20 @@ pub async fn save_decision(db: &DatabaseConnection, input: SaveRcmInput, actor_i
         },
     )
     .await?;
-    db.execute(Statement::from_sql_and_values(
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE rcm_decisions SET pf_interval_hours = ? WHERE id = ?",
         [opt_f64(input.pf_interval_hours), logic.decision_id.into()],
     ))
     .await?;
+    txn.commit().await?;
     get_worksheet(db, input.study_id).await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::reliability::rcm_loop::{run_to_failure_refused, TACTIC_RUN_TO_FAILURE};
     use crate::reliability::study::scales::default_scales;
 
     #[test]

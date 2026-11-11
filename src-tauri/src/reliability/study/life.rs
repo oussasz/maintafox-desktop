@@ -444,20 +444,31 @@ mod tests {
             recommended_replacement(100.0, 10_000.0, 0.9, 0.5, 1000.0).err(),
             Some(AgeReplacementRejection::NoWearOut)
         );
-        // Through the analysis: whenever the reading is not wear-out, nothing is proposed.
+        // Through the analysis: β ≈ 1.36 with a 90 % lower bound ≈ 0.73 (observed-information
+        // bounds, checked against an independent computation): the reading is "random" and no
+        // interval nor saving is proposed, although the cost ratio is 100.
         let r = analyse_life(&LifeInputs {
-            observations: obs(&[300.0, 900.0, 1500.0, 2100.0, 2600.0], &[]),
+            observations: obs(&[200.0, 700.0, 1500.0, 2300.0, 3200.0], &[]),
             planned_cost: Some(100.0),
             failure_cost: Some(10_000.0),
             current_interval: Some(1000.0),
             hours_per_year: Some(8000.0),
         });
         let f = r.fit.expect("fit");
+        assert!(f.beta > 1.2 && f.beta < 1.5, "β = {}", f.beta);
+        assert!(
+            f.beta_lower < 0.9 && f.beta_upper > 1.0,
+            "bounds {} – {}",
+            f.beta_lower,
+            f.beta_upper
+        );
+        assert_eq!(f.pattern, PATTERN_RANDOM);
         let c = r.cost.expect("cost");
-        if f.pattern != PATTERN_WEAR_OUT {
-            assert!(c.proposed.is_none(), "no interval against a no-wear-out reading");
-            assert!(c.annual_saving_vs_current.is_none());
-        }
+        assert!(c.proposed.is_none(), "no interval against a no-wear-out reading");
+        assert_eq!(c.rejection, Some(AgeReplacementRejection::WearOutNotProven));
+        assert!(c.saving_vs_run_to_failure.is_none());
+        assert!(c.annual_saving_vs_current.is_none());
+        assert!(c.current.is_some(), "the current plan is still costed for comparison");
     }
 
     #[test]
