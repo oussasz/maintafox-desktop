@@ -826,6 +826,7 @@ pub fn run() {
         commands::assets::link_asset_hierarchy,
         commands::assets::unlink_asset_hierarchy,
         commands::assets::move_asset_org_node,
+        commands::assets::move_asset_component,
         commands::assets::list_asset_lifecycle_events,
         commands::assets::record_lifecycle_event,
         commands::assets::decommission_asset,

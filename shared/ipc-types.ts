@@ -2313,6 +2313,23 @@ export interface LinkAssetPayload {
   effective_from?: string | null;
 }
 
+/** "Déplacer le composant" (L2-03): the same asset record goes under another parent. */
+export interface MoveAssetComponentPayload {
+  asset_id: number;
+  /** The new parent; null removes the component to stock. */
+  new_parent_asset_id: number | null;
+  /** Effective date YYYY-MM-DD; null is today. */
+  effective_date: string | null;
+  notes: string | null;
+  expected_row_version: number;
+}
+
+export interface MoveAssetComponentResult {
+  ended_relation: AssetHierarchyRow | null;
+  new_relation: AssetHierarchyRow | null;
+  event: AssetLifecycleEvent;
+}
+
 // â”€â”€â”€ Asset â€” Lifecycle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface AssetLifecycleEvent {
