@@ -377,7 +377,10 @@ export function TemplateBuilderDialog({ target, onClose, onSaved }: TemplateBuil
       .filter((l) => l !== "");
     if (lines.length === 0) return;
     setRows((rs) => {
-      const base = rs.filter((r) => r.code.trim() !== "" || r.description.trim() !== "");
+      // An untouched suggested row (P1 with nothing else) makes way for the pasted points.
+      const untouched = (r: CheckRow) =>
+        /^P\d+$/.test(r.code.trim()) && r.description.trim() === "" && r.assetId == null;
+      const base = rs.filter((r) => !untouched(r));
       const next = [...base];
       for (const line of lines) {
         next.push({ ...emptyRow(nextCode(next)), description: line });

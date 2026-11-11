@@ -374,9 +374,10 @@ describe("TemplateBuilderDialog", () => {
       target: { value: "Oil pressure\nBearing temperature" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Add these checks" }));
-    expect(await screen.findByLabelText("Code of checkpoint 3")).toBeInTheDocument();
+    expect(await screen.findByLabelText("Code of checkpoint 2")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Code of checkpoint 3")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Duplicate check 1" }));
-    expect(await screen.findByLabelText("Code of checkpoint 4")).toBeInTheDocument();
+    expect(await screen.findByLabelText("Code of checkpoint 3")).toBeInTheDocument();
   });
 
   it("names the invalid rows and the reason instead of saving silently", async () => {
