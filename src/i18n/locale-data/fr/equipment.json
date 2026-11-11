@@ -38,7 +38,8 @@
       "criticality": "Criticité",
       "family": "Famille",
       "parentName": "Équipement parent",
-      "primaryMeter": "Compteur principal"
+      "primaryMeter": "Compteur principal",
+      "repeatFailures": "Pannes répétitives"
     },
     "filters": {
       "status": "Statut",
@@ -91,7 +92,8 @@
       "spares": "Pièces de rechange",
       "documents": "Documents et photos",
       "criticality": "Criticité",
-      "history": "Historique"
+      "history": "Historique",
+      "repeatFailures": "Pannes répétitives"
     }
   },
   "form": {
@@ -834,7 +836,34 @@
     "rateHint": "Sert à prévoir la maintenance basée sur le compteur.",
     "rollover": "Valeur de retour à zéro",
     "rolloverHint": "Valeur à laquelle le compteur repart de zéro, le cas échéant.",
-    "primary": "Compteur principal de l’équipement"
+    "primary": "Compteur principal de l’équipement",
+    "thresholds": {
+      "edit": "Seuils d'alarme",
+      "title": "Seuils d'alarme — {{name}}",
+      "description": "Un relevé qui franchit un seuil crée une demande d'intervention (une seule par seuil tant qu'elle est ouverte).",
+      "direction": "Le seuil est franchi",
+      "directionPlaceholder": "Choisir le sens",
+      "above": "Par le haut (valeur trop haute : température, vibration…)",
+      "below": "Par le bas (valeur trop basse : niveau, débit…)",
+      "alert": "Seuil d'alerte {{unit}}",
+      "critical": "Seuil critique {{unit}}",
+      "hint": "Laissez les deux seuils vides pour ne plus surveiller ce compteur. Le seuil critique crée une demande urgente, le seuil d'alerte une demande de priorité haute.",
+      "save": "Enregistrer les seuils",
+      "none": "—",
+      "orderError": "Le seuil d'alerte doit être atteint avant le seuil critique.",
+      "summary": {
+        "above": "Alerte à partir de {{alert}} {{unit}} · critique à partir de {{critical}} {{unit}}",
+        "below": "Alerte sous {{alert}} {{unit}} · critique sous {{critical}} {{unit}}"
+      },
+      "level": {
+        "alert": "d'alerte",
+        "critical": "critique"
+      },
+      "raised": "Seuil {{level}} franchi : demande {{code}} créée.",
+      "alreadyOpen": "Seuil {{level}} franchi : la demande {{code}} est déjà ouverte, aucune nouvelle demande.",
+      "notRaised": "Seuil {{level}} franchi, mais aucune demande n'a été créée.",
+      "raisedChip": "Seuil {{level}} → {{code}}"
+    }
   },
   "spares": {
     "searchFailed": "La recherche d'articles a échoué (ce n'est pas une absence de résultat).",
@@ -948,5 +977,66 @@
     "ASSET_RECOMMISSION_REASON_REQUIRED": "Indiquez le motif de la remise en service.",
     "ASSET_RECOMMISSION_TARGET_RETIRED": "Choisissez un statut en service : un statut retiré n'est pas une remise en service.",
     "ASSET_RECOMMISSION_VERSION_REQUIRED": "Rechargez l'équipement avant de le remettre en service."
+  },
+  "characteristics": {
+    "title": "Caractéristiques techniques",
+    "noFamily": "Choisissez une famille pour cet équipement : ses caractéristiques s'affichent ici.",
+    "none": "Aucune caractéristique n'est définie pour la famille {{family}}. Ajoutez-les dans Données de référence (Caractéristiques techniques par famille).",
+    "hint": "Définies pour la famille {{family}} dans Données de référence.",
+    "edit": "Modifier",
+    "save": "Enregistrer",
+    "cancel": "Annuler",
+    "yes": "Oui",
+    "no": "Non",
+    "notSet": "Non renseigné",
+    "required": "obligatoire",
+    "definitionProblem": "Définition à corriger dans Données de référence : {{problem}}",
+    "unlisted": "Valeurs dont la caractéristique n'est plus dans la liste de la famille",
+    "saved": "Caractéristiques enregistrées.",
+    "numberError": "Saisissez un nombre.",
+    "requiredError": "Obligatoire pour cette famille."
+  },
+  "repeatFailures": {
+    "badge": "Pannes répétitives",
+    "badgeCount": "Pannes répétitives ({{count}})",
+    "badgeTitle": "{{count}} défaillances non planifiées en {{days}} jours (seuil : {{min}}).",
+    "listUnavailable": "Pannes répétitives indisponibles : {{reason}}",
+    "status": {
+      "flagged": "Pannes répétitives : {{count}} défaillances non planifiées en {{days}} jours (seuil : {{min}} — Paramètres > Fiabilité).",
+      "notFlagged": "{{count}} défaillance(s) non planifiée(s) en {{days}} jours (pannes répétitives à partir de {{min}}).",
+      "actions": "{{open}} action(s) ouverte(s), dont {{overdue}} en retard."
+    },
+    "fiveWhy": {
+      "title": "5 pourquoi",
+      "add": "Nouvelle analyse",
+      "empty": "Aucune analyse « 5 pourquoi » pour cet équipement.",
+      "problem": "Problème analysé",
+      "why": "Pourquoi {{n}} ?",
+      "rootCause": "Cause racine",
+      "save": "Enregistrer l'analyse",
+      "edit": "Modifier",
+      "cancel": "Annuler",
+      "by": "Par {{name}}, le {{date}}",
+      "saved": "Analyse enregistrée."
+    },
+    "actions": {
+      "title": "Actions correctives",
+      "add": "Nouvelle action",
+      "empty": "Aucune action corrective pour cet équipement.",
+      "action": "Action",
+      "owner": "Responsable",
+      "dueDate": "Échéance",
+      "status": "Statut",
+      "overdue": "En retard",
+      "save": "Enregistrer l'action",
+      "cancel": "Annuler",
+      "edit": "Modifier",
+      "saved": "Action enregistrée.",
+      "statuses": {
+        "open": "Ouverte",
+        "done": "Réalisée",
+        "cancelled": "Annulée"
+      }
+    }
   }
 }

@@ -268,11 +268,19 @@
       "scope": "tenant"
     },
     {
+      "entity_type": "asset_corrective_actions",
+      "scope": "tenant"
+    },
+    {
       "entity_type": "asset_document_links",
       "scope": "tenant"
     },
     {
       "entity_type": "asset_external_ids",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "asset_five_why_analyses",
       "scope": "tenant"
     },
     {

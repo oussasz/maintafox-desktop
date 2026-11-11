@@ -22,6 +22,7 @@ import {
   Package,
   Pencil,
   Receipt,
+  Repeat,
   RotateCcw,
   ShieldAlert,
   Wrench,
@@ -45,6 +46,7 @@ import { AssetDocumentsTab } from "@/components/assets/detail/AssetDocumentsTab"
 import { AssetMaintenanceTab } from "@/components/assets/detail/AssetMaintenanceTab";
 import { AssetMetersTab } from "@/components/assets/detail/AssetMetersTab";
 import { AssetOverviewTab } from "@/components/assets/detail/AssetOverviewTab";
+import { AssetRepeatFailureTab } from "@/components/assets/detail/AssetRepeatFailureTab";
 import { AssetSparePartsTab } from "@/components/assets/detail/AssetSparePartsTab";
 import { AssetStructureTab } from "@/components/assets/detail/AssetStructureTab";
 import { useLoad } from "@/components/assets/detail/use-load";
@@ -89,6 +91,7 @@ const TAB_IDS = [
   "spares",
   "documents",
   "criticality",
+  "repeatFailures",
   "history",
 ] as const;
 type AssetTab = (typeof TAB_IDS)[number];
@@ -101,6 +104,7 @@ const TAB_ICON: Record<AssetTab, typeof Info> = {
   spares: Package,
   documents: FileText,
   criticality: ShieldAlert,
+  repeatFailures: Repeat,
   history: History,
 };
 
@@ -344,6 +348,9 @@ export function AssetDetailDialog({ onBackToOrigin }: { onBackToOrigin?: () => v
                 </TabsContent>
                 <TabsContent value="criticality" className="pt-3">
                   <AssetCriticalityTab asset={asset} onAssetChanged={onAssetChanged} />
+                </TabsContent>
+                <TabsContent value="repeatFailures" className="pt-3">
+                  <AssetRepeatFailureTab assetId={asset.id} />
                 </TabsContent>
                 <TabsContent value="history" className="pt-3">
                   <AssetHistoryView assetId={asset.id} />

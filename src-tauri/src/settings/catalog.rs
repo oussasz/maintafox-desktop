@@ -171,6 +171,26 @@ pub const SETTINGS_CATALOG: &[SettingDefinition] = &[
         editor: SettingEditor::Section,
         risk: "low",
     },
+    // Repeat failures (L2-09): an equipment is flagged when it has at least this many unplanned
+    // failures within the window below (`assets::repeat_failures`).
+    SettingDefinition {
+        key: crate::assets::repeat_failures::SETTING_COUNT,
+        category: "reliability",
+        scope: "tenant",
+        shipped_value_json: r"3",
+        kind: SettingKind::Integer { min: 2, max: 100 },
+        editor: SettingEditor::Section,
+        risk: "low",
+    },
+    SettingDefinition {
+        key: crate::assets::repeat_failures::SETTING_WINDOW_DAYS,
+        category: "reliability",
+        scope: "tenant",
+        shipped_value_json: r"90",
+        kind: SettingKind::Integer { min: 1, max: 3650 },
+        editor: SettingEditor::Section,
+        risk: "low",
+    },
     // Former home of the FMECA rating grids: read once to seed Données de référence
     // (`reliability::study::scales::ensure_fmeca_rating_scales`), then no longer used.
     SettingDefinition {
@@ -663,6 +683,27 @@ pub async fn decimal_setting<C: ConnectionTrait>(db: &C, key: &str) -> AppResult
     let raw: String = row.try_get("", "setting_value_json")?;
     let canonical = validate_value(def, &raw)?;
     serde_json::from_str(&canonical).map_err(|_| invalid(key, "GATE_SET_VALUE_NOT_NUMBER", "expected a number"))
+}
+
+/// An integer setting's value, checked against its catalog bounds. A missing or out-of-bounds
+/// value is an error: nothing is computed on a guessed value.
+pub async fn integer_setting<C: ConnectionTrait>(db: &C, key: &str) -> AppResult<i64> {
+    let def = definition(key)
+        .filter(|d| matches!(d.kind, SettingKind::Integer { .. }))
+        .ok_or_else(|| AppError::ValidationFailed(vec![format!("{key}: not an integer setting of the catalog")]))?;
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT setting_value_json FROM app_settings WHERE setting_key = ? AND setting_scope = ?",
+            [def.key.into(), def.scope.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::ValidationFailed(vec![format!("{key}: the setting is missing")]))?;
+    let raw: String = row.try_get("", "setting_value_json")?;
+    let canonical = validate_value(def, &raw)?;
+    canonical
+        .parse::<i64>()
+        .map_err(|_| invalid(key, "GATE_SET_VALUE_NOT_INTEGER", "expected a whole number"))
 }
 
 /// An optional decimal setting's value: `None` when blank (no row), never read as zero. A stored
