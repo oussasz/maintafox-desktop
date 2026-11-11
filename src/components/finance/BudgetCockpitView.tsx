@@ -305,11 +305,12 @@ export function BudgetCockpitView({
   const totals = cockpit.totals;
   const toDate = budgetToDate(cockpit);
   // During the current year the consumption is read against the budget of the months already
-  // started (an annual percentage looks low all year); the annual share stays in the hint.
+  // started (an annual percentage looks low all year), with the actual of those same months (the
+  // figures of the chart's sentence); the annual share stays in the hint.
   const annualConsumed = totals.budget > 0 ? (totals.actual / totals.budget) * 100 : null;
   const consumed = toDate
     ? toDate.budget > 0
-      ? (totals.actual / toDate.budget) * 100
+      ? (toDate.actual / toDate.budget) * 100
       : null
     : annualConsumed;
   const forecastShare = totals.budget > 0 ? (totals.forecast / totals.budget) * 100 : null;
