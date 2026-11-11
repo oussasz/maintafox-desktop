@@ -17,6 +17,8 @@ const SYSTEM_META: &str = r#"{"origin":"system"}"#;
 /// Ensure all system-governed reference catalogs exist after wipe/drift.
 pub async fn ensure_system_reference_catalog_integrity(db: &DatabaseConnection) -> AppResult<()> {
     taxonomy_reference::ensure_equipment_taxonomy_reference_integrity(db).await?;
+    // Technical characteristics per family (COMPANY list), after the families they hang under.
+    crate::assets::characteristics::ensure_characteristic_catalog(db).await?;
     ensure_di_reference_catalog(db).await?;
     ensure_personnel_skills_reference_catalog(db).await?;
     ensure_work_failure_modes_reference_catalog(db).await?;

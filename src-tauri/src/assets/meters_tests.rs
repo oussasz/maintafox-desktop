@@ -1095,4 +1095,203 @@ mod tests {
             .expect_err("reserved quality");
         assert!(format!("{err:?}").contains("GATE_ASSET_METER_QUALITY_RESERVED"));
     }
+
+    // ── L2-08 — alarm thresholds raise an intervention request ───────────
+
+    #[test]
+    fn l2_08_threshold_rules() {
+        use meters::{checked_thresholds, crossed_level, ThresholdDirection, ThresholdLevel};
+        // No threshold: nothing stored, nothing crossed.
+        assert_eq!(
+            checked_thresholds(None, None, Some("above")).expect("clear"),
+            (None, None, None)
+        );
+        assert_eq!(crossed_level(1e9, None, None, None), None);
+        // A threshold needs its direction.
+        let err = checked_thresholds(Some(80.0), None, None).expect_err("direction");
+        assert!(format!("{err:?}").contains("GATE_ASSET_METER_THRESHOLD_DIRECTION_REQUIRED"));
+        // The alert comes before the critical threshold, on the side of the direction.
+        let err = checked_thresholds(Some(90.0), Some(80.0), Some("above")).expect_err("order");
+        assert!(format!("{err:?}").contains("GATE_ASSET_METER_THRESHOLD_ORDER"));
+        let err = checked_thresholds(Some(10.0), Some(20.0), Some("below")).expect_err("order below");
+        assert!(format!("{err:?}").contains("GATE_ASSET_METER_THRESHOLD_ORDER"));
+        assert_eq!(
+            checked_thresholds(Some(20.0), Some(10.0), Some("below")).expect("below"),
+            (Some(20.0), Some(10.0), Some(ThresholdDirection::Below))
+        );
+        // Critical wins over alert; the threshold value itself crosses.
+        let above = Some(ThresholdDirection::Above);
+        assert_eq!(crossed_level(79.9, Some(80.0), Some(100.0), above), None);
+        assert_eq!(
+            crossed_level(80.0, Some(80.0), Some(100.0), above),
+            Some(ThresholdLevel::Alert)
+        );
+        assert_eq!(
+            crossed_level(150.0, Some(80.0), Some(100.0), above),
+            Some(ThresholdLevel::Critical)
+        );
+        let below = Some(ThresholdDirection::Below);
+        assert_eq!(
+            crossed_level(5.0, Some(20.0), Some(10.0), below),
+            Some(ThresholdLevel::Critical)
+        );
+        assert_eq!(
+            crossed_level(15.0, Some(20.0), Some(10.0), below),
+            Some(ThresholdLevel::Alert)
+        );
+        assert_eq!(crossed_level(25.0, Some(20.0), Some(10.0), below), None);
+        // Only a critical threshold: below it nothing is raised.
+        assert_eq!(crossed_level(90.0, None, Some(100.0), above), None);
+    }
+
+    async fn threshold_requests(db: &sea_orm::DatabaseConnection, meter_id: i64) -> Vec<(i64, String, String)> {
+        db.query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT ir.source_meter_reading_id AS rid, ir.source_threshold_level AS lvl, ir.request_type AS rt \
+               FROM intervention_requests ir JOIN asset_meter_readings r ON r.id = ir.source_meter_reading_id \
+              WHERE r.meter_id = ? ORDER BY ir.id",
+            [meter_id.into()],
+        ))
+        .await
+        .expect("query")
+        .iter()
+        .map(|r| {
+            (
+                r.try_get::<i64>("", "rid").expect("rid"),
+                r.try_get::<String>("", "lvl").expect("lvl"),
+                r.try_get::<String>("", "rt").expect("rt"),
+            )
+        })
+        .collect()
+    }
+
+    #[tokio::test]
+    async fn l2_08_crossing_a_threshold_raises_one_request_per_level_while_open() {
+        let db = setup().await;
+        let meter = hours_meter(&db, "L208-A", None).await;
+        let set = meters::set_meter_thresholds(
+            &db,
+            meters::SetMeterThresholdsPayload {
+                meter_id: meter.id,
+                alert_threshold: Some(100.0),
+                critical_threshold: Some(200.0),
+                threshold_direction: Some("above".into()),
+            },
+            1,
+        )
+        .await
+        .expect("set thresholds");
+        assert_eq!(set.alert_threshold, Some(100.0));
+        assert_eq!(set.threshold_direction.as_deref(), Some("above"));
+
+        let r = meters::record_meter_reading(&db, reading(meter.id, 50.0, "2026-05-01T08:00:00Z"), 1)
+            .await
+            .expect("below the thresholds");
+        assert!(r.threshold_level.is_none() && r.raised_request_id.is_none());
+
+        let alert = meters::record_meter_reading(&db, reading(meter.id, 150.0, "2026-05-02T08:00:00Z"), 1)
+            .await
+            .expect("alert reading");
+        assert_eq!(alert.threshold_level.as_deref(), Some("alert"));
+        assert!(alert.raised_request_code.is_some(), "{:?}", alert.threshold_problem);
+
+        // Still open: the next reading above the alert threshold raises nothing new.
+        let again = meters::record_meter_reading(&db, reading(meter.id, 160.0, "2026-05-03T08:00:00Z"), 1)
+            .await
+            .expect("second alert reading");
+        assert!(again.raised_request_id.is_none());
+        assert_eq!(again.open_request_code, alert.raised_request_code);
+
+        // The critical level is a request of its own.
+        let critical = meters::record_meter_reading(&db, reading(meter.id, 250.0, "2026-05-04T08:00:00Z"), 1)
+            .await
+            .expect("critical reading");
+        assert_eq!(critical.threshold_level.as_deref(), Some("critical"));
+        assert!(critical.raised_request_id.is_some());
+
+        let raised = threshold_requests(&db, meter.id).await;
+        assert_eq!(
+            raised,
+            vec![
+                (alert.id, "alert".to_string(), "inspection".to_string()),
+                (critical.id, "critical".to_string(), "inspection".to_string()),
+            ],
+            "each request records the reading that raised it"
+        );
+
+        // The history shows which reading raised which request.
+        let history = meters::list_meter_readings(&db, meter.id, None).await.expect("history");
+        let shown = history.iter().find(|h| h.id == critical.id).expect("critical reading");
+        assert_eq!(shown.raised_request_code, critical.raised_request_code);
+        assert_eq!(shown.threshold_level.as_deref(), Some("critical"));
+
+        // Once the alert request is closed, a new crossing raises a new one.
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE intervention_requests SET status = 'closed' WHERE id = ?",
+            [alert.raised_request_id.expect("alert id").into()],
+        ))
+        .await
+        .expect("close");
+        let critical_again = meters::record_meter_reading(&db, reading(meter.id, 260.0, "2026-05-05T08:00:00Z"), 1)
+            .await
+            .expect("critical again");
+        assert!(
+            critical_again.raised_request_id.is_none(),
+            "critical request still open"
+        );
+        assert!(critical_again.open_request_code.is_some());
+    }
+
+    #[tokio::test]
+    async fn l2_08_a_request_that_cannot_be_raised_never_loses_the_reading() {
+        let db = setup().await;
+        let meter = hours_meter(&db, "L208-B", None).await;
+        meters::set_meter_thresholds(
+            &db,
+            meters::SetMeterThresholdsPayload {
+                meter_id: meter.id,
+                alert_threshold: None,
+                critical_threshold: Some(10.0),
+                threshold_direction: Some("above".into()),
+            },
+            1,
+        )
+        .await
+        .expect("set");
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE equipment SET installed_at_node_id = NULL WHERE id = ?",
+            [meter.asset_id.into()],
+        ))
+        .await
+        .expect("remove location");
+        let r = meters::record_meter_reading(&db, reading(meter.id, 50.0, "2026-05-01T08:00:00Z"), 1)
+            .await
+            .expect("the reading is recorded");
+        assert_eq!(r.threshold_level.as_deref(), Some("critical"));
+        assert!(r.raised_request_id.is_none());
+        assert!(r
+            .threshold_problem
+            .as_deref()
+            .is_some_and(|p| p.contains("GATE_ASSET_METER_THRESHOLD_NO_LOCATION")));
+        assert!(threshold_requests(&db, meter.id).await.is_empty());
+        let m = meters::list_asset_meters(&db, meter.asset_id).await.expect("list")[0].clone();
+        assert!((m.current_reading - 50.0).abs() < 1e-6);
+
+        // Clearing the thresholds clears the direction too.
+        let cleared = meters::set_meter_thresholds(
+            &db,
+            meters::SetMeterThresholdsPayload {
+                meter_id: meter.id,
+                alert_threshold: None,
+                critical_threshold: None,
+                threshold_direction: Some("above".into()),
+            },
+            1,
+        )
+        .await
+        .expect("clear");
+        assert!(cleared.critical_threshold.is_none() && cleared.threshold_direction.is_none());
+    }
 }

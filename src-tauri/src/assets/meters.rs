@@ -64,6 +64,12 @@ pub struct AssetMeter {
     pub is_active: bool,
     pub created_at: String,
     pub updated_at: String,
+    /// Alarm thresholds (migration 289): a valid reading that crosses one raises an intervention
+    /// request (`raise_threshold_request`). NULL = no threshold.
+    pub alert_threshold: Option<f64>,
+    pub critical_threshold: Option<f64>,
+    /// `above` (the value must stay below the thresholds) or `below`; NULL when no threshold.
+    pub threshold_direction: Option<String>,
 }
 
 /// Payload for creating a new meter definition on an asset.
@@ -102,6 +108,19 @@ pub struct MeterReading {
     pub cancel_reason: Option<String>,
     pub cancelled_by_name: Option<String>,
     pub cancelled_at: Option<String>,
+    /// The intervention request this reading raised by crossing a threshold, if any.
+    pub raised_request_id: Option<i64>,
+    pub raised_request_code: Option<String>,
+    /// Level the reading crossed (`alert` / `critical`): the raised request's level in the
+    /// history, the level just crossed when the reading is recorded.
+    pub threshold_level: Option<String>,
+    /// Recording only: the threshold was crossed but a request for this meter and level is still
+    /// open, so none was raised; its code.
+    #[serde(default)]
+    pub open_request_code: Option<String>,
+    /// Recording only: the threshold was crossed but the request could not be raised (why).
+    #[serde(default)]
+    pub threshold_problem: Option<String>,
 }
 
 /// How a reading continues the meter's lifetime count (migration 183).
@@ -232,6 +251,15 @@ fn map_meter(row: &QueryResult) -> AppResult<AssetMeter> {
         updated_at: row
             .try_get::<String>("", "updated_at")
             .map_err(|e| decode_err("updated_at", e))?,
+        alert_threshold: row
+            .try_get::<Option<f64>>("", "alert_threshold")
+            .map_err(|e| decode_err("alert_threshold", e))?,
+        critical_threshold: row
+            .try_get::<Option<f64>>("", "critical_threshold")
+            .map_err(|e| decode_err("critical_threshold", e))?,
+        threshold_direction: row
+            .try_get::<Option<String>>("", "threshold_direction")
+            .map_err(|e| decode_err("threshold_direction", e))?,
     })
 }
 
@@ -282,6 +310,17 @@ fn map_reading(row: &QueryResult) -> AppResult<MeterReading> {
         cancelled_at: row
             .try_get::<Option<String>>("", "cancelled_at")
             .map_err(|e| decode_err("cancelled_at", e))?,
+        raised_request_id: row
+            .try_get::<Option<i64>>("", "raised_request_id")
+            .map_err(|e| decode_err("raised_request_id", e))?,
+        raised_request_code: row
+            .try_get::<Option<String>>("", "raised_request_code")
+            .map_err(|e| decode_err("raised_request_code", e))?,
+        threshold_level: row
+            .try_get::<Option<String>>("", "threshold_level")
+            .map_err(|e| decode_err("threshold_level", e))?,
+        open_request_code: None,
+        threshold_problem: None,
     })
 }
 
@@ -391,7 +430,8 @@ fn meter_select() -> String {
     format!(
         "em.id, em.entity_sync_id, em.equipment_id, em.name, em.meter_code, em.meter_type, em.unit_value_id, \
          {} AS unit, em.current_reading, em.last_read_at, em.expected_rate_per_day, em.rollover_value, \
-         em.is_primary, em.is_active, em.created_at, em.updated_at",
+         em.is_primary, em.is_active, em.created_at, em.updated_at, \
+         em.alert_threshold, em.critical_threshold, em.threshold_direction",
         crate::reference::units::symbol_sql("mu")
     )
 }
@@ -401,7 +441,7 @@ const METER_FROM: &str = "equipment_meters em LEFT JOIN reference_values mu ON m
 
 /// Reading columns over `asset_meter_readings mr` with its author, and the cancellation that points
 /// at it, if any (`c`, see [`READING_FROM`]).
-const READING_SELECT: &str = "mr.id, mr.meter_id, mr.reading_value, mr.reading_at, mr.source_type,      mr.source_reference, mr.quality_flag, mr.created_by_id, mr.created_at, mr.entity_sync_id,      COALESCE(au.display_name, au.username) AS created_by_name,      CASE WHEN c.id IS NULL THEN 0 ELSE 1 END AS is_cancelled,      c.cancel_reason AS cancel_reason, c.created_at AS cancelled_at,      COALESCE(cu.display_name, cu.username) AS cancelled_by_name";
+const READING_SELECT: &str = "mr.id, mr.meter_id, mr.reading_value, mr.reading_at, mr.source_type,      mr.source_reference, mr.quality_flag, mr.created_by_id, mr.created_at, mr.entity_sync_id,      COALESCE(au.display_name, au.username) AS created_by_name,      CASE WHEN c.id IS NULL THEN 0 ELSE 1 END AS is_cancelled,      c.cancel_reason AS cancel_reason, c.created_at AS cancelled_at,      COALESCE(cu.display_name, cu.username) AS cancelled_by_name,      (SELECT ir.id FROM intervention_requests ir WHERE ir.source_meter_reading_id = mr.id ORDER BY ir.id LIMIT 1) AS raised_request_id,      (SELECT ir.code FROM intervention_requests ir WHERE ir.source_meter_reading_id = mr.id ORDER BY ir.id LIMIT 1) AS raised_request_code,      (SELECT ir.source_threshold_level FROM intervention_requests ir WHERE ir.source_meter_reading_id = mr.id ORDER BY ir.id LIMIT 1) AS threshold_level";
 
 /// `FROM` clause matching [`READING_SELECT`].
 const READING_FROM: &str = "asset_meter_readings mr      LEFT JOIN user_accounts au ON au.id = mr.created_by_id      LEFT JOIN asset_meter_readings c ON c.id = (SELECT MIN(x.id) FROM asset_meter_readings x WHERE x.cancels_sync_id = mr.entity_sync_id)     LEFT JOIN user_accounts cu ON cu.id = c.created_by_id";
@@ -770,7 +810,14 @@ async fn record_reading_inner(
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("meter reading created but not found after insert")))?;
-    let reading = map_reading(&row)?;
+    let mut reading = map_reading(&row)?;
+
+    // ── 9. Alarm thresholds (migration 289) ──────────────────────────────
+    // A counted reading that crosses a threshold raises an intervention request, in a savepoint:
+    // a request that cannot be raised never loses the reading (the reason is returned).
+    if counts {
+        apply_threshold_outcome(&txn, &mut reading, equipment_id, actor_id).await?;
+    }
 
     txn.commit().await?;
 
@@ -1155,4 +1202,360 @@ pub async fn list_meter_readings(
         ))
         .await?;
     rows.iter().map(map_reading).collect()
+}
+
+// ─── Alarm thresholds (L2-08, migration 289) ─────────────────────────────────────
+
+/// Stable gate codes of the threshold settings and of a request that could not be raised.
+pub const GATE_ASSET_METER_THRESHOLD_DIRECTION_REQUIRED: &str = "GATE_ASSET_METER_THRESHOLD_DIRECTION_REQUIRED";
+pub const GATE_ASSET_METER_THRESHOLD_ORDER: &str = "GATE_ASSET_METER_THRESHOLD_ORDER";
+pub const GATE_ASSET_METER_THRESHOLD_NOT_FINITE: &str = "GATE_ASSET_METER_THRESHOLD_NOT_FINITE";
+pub const GATE_ASSET_METER_THRESHOLD_NO_LOCATION: &str = "GATE_ASSET_METER_THRESHOLD_NO_LOCATION";
+
+/// Which side of a threshold is abnormal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ThresholdDirection {
+    /// A value at or above the threshold crosses it (temperature, vibration…).
+    Above,
+    /// A value at or below the threshold crosses it (oil level, flow…).
+    Below,
+}
+
+impl ThresholdDirection {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Above => "above",
+            Self::Below => "below",
+        }
+    }
+
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw.trim() {
+            "above" => Some(Self::Above),
+            "below" => Some(Self::Below),
+            _ => None,
+        }
+    }
+}
+
+/// The threshold a reading crossed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ThresholdLevel {
+    Alert,
+    Critical,
+}
+
+impl ThresholdLevel {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Alert => "alert",
+            Self::Critical => "critical",
+        }
+    }
+
+    /// Urgency of the request raised at this level (shared DI / OT scale `WORK.URGENCY`).
+    pub const fn urgency(self) -> crate::reference::urgency_scale::UrgencyCode {
+        match self {
+            Self::Alert => crate::reference::urgency_scale::UrgencyCode::High,
+            Self::Critical => crate::reference::urgency_scale::UrgencyCode::Urgent,
+        }
+    }
+
+    const fn label_fr(self) -> &'static str {
+        match self {
+            Self::Alert => "d'alerte",
+            Self::Critical => "critique",
+        }
+    }
+}
+
+/// The highest threshold `value` crosses (critical wins over alert), `None` when it crosses none
+/// or the meter has no threshold.
+pub fn crossed_level(
+    value: f64,
+    alert: Option<f64>,
+    critical: Option<f64>,
+    direction: Option<ThresholdDirection>,
+) -> Option<ThresholdLevel> {
+    let direction = direction?;
+    let crosses = |t: f64| match direction {
+        ThresholdDirection::Above => value >= t,
+        ThresholdDirection::Below => value <= t,
+    };
+    if critical.is_some_and(crosses) {
+        return Some(ThresholdLevel::Critical);
+    }
+    if alert.is_some_and(crosses) {
+        return Some(ThresholdLevel::Alert);
+    }
+    None
+}
+
+/// New alarm thresholds of a meter. Both empty clears them (and the direction).
+#[derive(Debug, Deserialize)]
+pub struct SetMeterThresholdsPayload {
+    pub meter_id: i64,
+    pub alert_threshold: Option<f64>,
+    pub critical_threshold: Option<f64>,
+    pub threshold_direction: Option<String>,
+}
+
+/// Checks the thresholds; returns what to store `(alert, critical, direction)`.
+pub fn checked_thresholds(
+    alert: Option<f64>,
+    critical: Option<f64>,
+    direction: Option<&str>,
+) -> AppResult<(Option<f64>, Option<f64>, Option<ThresholdDirection>)> {
+    if alert.is_none() && critical.is_none() {
+        return Ok((None, None, None));
+    }
+    if alert.is_some_and(|v| !v.is_finite()) || critical.is_some_and(|v| !v.is_finite()) {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "{GATE_ASSET_METER_THRESHOLD_NOT_FINITE}: Un seuil doit être un nombre."
+        )]));
+    }
+    let direction = direction.and_then(ThresholdDirection::parse).ok_or_else(|| {
+        AppError::ValidationFailed(vec![format!(
+            "{GATE_ASSET_METER_THRESHOLD_DIRECTION_REQUIRED}: Indiquez si le seuil est franchi par le haut ou par le bas."
+        )])
+    })?;
+    if let (Some(a), Some(c)) = (alert, critical) {
+        let ordered = match direction {
+            ThresholdDirection::Above => a < c,
+            ThresholdDirection::Below => a > c,
+        };
+        if !ordered {
+            return Err(AppError::ValidationFailed(vec![format!(
+                "{GATE_ASSET_METER_THRESHOLD_ORDER}:alert={a}:critical={c}: Le seuil d'alerte ({a}) doit être atteint avant le seuil critique ({c})."
+            )]));
+        }
+    }
+    Ok((alert, critical, Some(direction)))
+}
+
+/// Set (or clear) the alarm thresholds of an active meter.
+pub async fn set_meter_thresholds(
+    db: &DatabaseConnection,
+    payload: SetMeterThresholdsPayload,
+    actor_id: i32,
+) -> AppResult<AssetMeter> {
+    let (alert, critical, direction) = checked_thresholds(
+        payload.alert_threshold,
+        payload.critical_threshold,
+        payload.threshold_direction.as_deref(),
+    )?;
+    let txn = db.begin().await?;
+    assert_meter_exists(&txn, payload.meter_id).await?;
+    let now = crate::clock::now().to_rfc3339();
+    txn.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE equipment_meters SET alert_threshold = ?, critical_threshold = ?, threshold_direction = ?, updated_at = ? WHERE id = ?",
+        [
+            alert.into(),
+            critical.into(),
+            direction.map(|d| d.as_str().to_string()).into(),
+            now.into(),
+            payload.meter_id.into(),
+        ],
+    ))
+    .await?;
+    let row = txn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!("SELECT {} FROM {METER_FROM} WHERE em.id = ?", meter_select()),
+            [payload.meter_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("meter updated but not found")))?;
+    let meter = map_meter(&row)?;
+    txn.commit().await?;
+    tracing::info!(meter_id = meter.id, "meter thresholds set (actor={})", actor_id);
+    Ok(meter)
+}
+
+/// What crossing a threshold led to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ThresholdOutcome {
+    /// A request was raised: `(id, code)`.
+    Raised(i64, String),
+    /// A request raised by this meter at this level is still open: its code.
+    AlreadyOpen(String),
+}
+
+/// Code of a request raised by `meter_id` at `level` that is still open: not closed and not
+/// converted, or converted to a work order that is not closed yet.
+pub async fn open_threshold_request(
+    db: &impl ConnectionTrait,
+    meter_id: i64,
+    level: ThresholdLevel,
+) -> AppResult<Option<String>> {
+    let sql = format!(
+        "SELECT ir.code FROM intervention_requests ir \
+           JOIN asset_meter_readings r ON r.id = ir.source_meter_reading_id \
+          WHERE r.meter_id = ? AND ir.source_threshold_level = ? \
+            AND ({open} OR EXISTS (SELECT 1 FROM work_orders wo JOIN work_order_statuses s ON s.id = wo.status_id \
+                                    WHERE wo.source_di_id = ir.id AND {not_closed})) \
+          ORDER BY ir.id DESC LIMIT 1",
+        open = crate::di::stats::OPEN_SQL,
+        not_closed = crate::wo::backlog::NOT_CLOSED_SQL,
+    );
+    db.query_one(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        sql,
+        [meter_id.into(), level.as_str().into()],
+    ))
+    .await?
+    .map(|r| r.try_get::<String>("", "code"))
+    .transpose()
+    .map_err(|e| decode_err("code", e))
+}
+
+/// Raises the intervention request of a reading that crossed `level` (or names the open one).
+/// The request is filed by the person who recorded the reading, on the equipment's location, as an
+/// inspection request (condition-based work, EN 13306) of origin `iot` (measure / sensor), with the
+/// urgency of the level; it records the reading that raised it.
+pub async fn raise_threshold_request(
+    db: &impl ConnectionTrait,
+    reading: &MeterReading,
+    equipment_id: i64,
+    level: ThresholdLevel,
+    actor_id: i32,
+) -> AppResult<ThresholdOutcome> {
+    if let Some(code) = open_threshold_request(db, reading.meter_id, level).await? {
+        return Ok(ThresholdOutcome::AlreadyOpen(code));
+    }
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT {}, e.installed_at_node_id AS node_id, e.asset_id_code AS asset_code \
+                   FROM {METER_FROM} JOIN equipment e ON e.id = em.equipment_id WHERE em.id = ?",
+                meter_select()
+            ),
+            [reading.meter_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "equipment_meters".into(),
+            id: reading.meter_id.to_string(),
+        })?;
+    let node_id: Option<i64> = row.try_get("", "node_id").map_err(|e| decode_err("node_id", e))?;
+    let asset_code: String = row.try_get("", "asset_code").map_err(|e| decode_err("asset_code", e))?;
+    let meter = map_meter(&row)?;
+    let Some(org_node_id) = node_id else {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "{GATE_ASSET_METER_THRESHOLD_NO_LOCATION}:asset={asset_code}: L'équipement {asset_code} n'a pas d'emplacement : \
+             aucune demande d'intervention ne peut être créée pour le seuil franchi."
+        )]));
+    };
+    let threshold = match level {
+        ThresholdLevel::Alert => meter.alert_threshold,
+        ThresholdLevel::Critical => meter.critical_threshold,
+    }
+    .unwrap_or_default();
+    let unit = meter.unit.clone().map(|u| format!(" {u}")).unwrap_or_default();
+    let side = match meter.threshold_direction.as_deref().and_then(ThresholdDirection::parse) {
+        Some(ThresholdDirection::Below) => "inférieur ou égal",
+        _ => "supérieur ou égal",
+    };
+    let symptom = crate::di::reference_catalog::resolve_system_di_symptom_id(db, &meter.meter_type).await?;
+    let input = crate::di::queries::DiCreateInput {
+        equipment_id,
+        org_node_id,
+        title: format!(
+            "Seuil {} franchi — {} : {}{unit}",
+            level.label_fr(),
+            meter.name,
+            reading.reading_value
+        ),
+        description: format!(
+            "Relevé du {} sur le compteur « {} » : {}{unit}, {side} au seuil {} ({threshold}{unit}). \
+             Demande créée automatiquement par le relevé.",
+            reading.reading_at,
+            meter.name,
+            reading.reading_value,
+            level.label_fr()
+        ),
+        origin_type: "iot".into(),
+        request_type: "inspection".into(),
+        symptom_code_id: Some(symptom),
+        // A reading tells nothing about production impact: the reviewer assesses it.
+        impact_level: "unknown".into(),
+        production_impact: false,
+        safety_flag: false,
+        environmental_flag: false,
+        quality_flag: false,
+        reported_urgency: level.urgency().as_str().to_string(),
+        observed_at: Some(reading.reading_at.clone()),
+        submitter_id: i64::from(actor_id),
+        source_inspection_anomaly_id: None,
+    };
+    let di = crate::di::queries::create_intervention_request_in(db, input).await?;
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE intervention_requests SET source_meter_reading_id = ?, source_threshold_level = ? WHERE id = ?",
+        [reading.id.into(), level.as_str().into(), di.id.into()],
+    ))
+    .await?;
+    Ok(ThresholdOutcome::Raised(di.id, di.code))
+}
+
+/// Evaluates the thresholds of the reading's meter and writes the outcome on `reading`. The
+/// request is raised in a savepoint of `txn`: if it cannot be raised, nothing of it is kept and the
+/// reason is returned on the reading, which is recorded anyway.
+async fn apply_threshold_outcome(
+    txn: &sea_orm::DatabaseTransaction,
+    reading: &mut MeterReading,
+    equipment_id: i64,
+    actor_id: i32,
+) -> AppResult<()> {
+    let row = txn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT alert_threshold, critical_threshold, threshold_direction FROM equipment_meters WHERE id = ?",
+            [reading.meter_id.into()],
+        ))
+        .await?;
+    let Some(row) = row else { return Ok(()) };
+    let alert: Option<f64> = row
+        .try_get("", "alert_threshold")
+        .map_err(|e| decode_err("alert_threshold", e))?;
+    let critical: Option<f64> = row
+        .try_get("", "critical_threshold")
+        .map_err(|e| decode_err("critical_threshold", e))?;
+    let direction: Option<String> = row
+        .try_get("", "threshold_direction")
+        .map_err(|e| decode_err("threshold_direction", e))?;
+    let direction = direction.as_deref().and_then(ThresholdDirection::parse);
+    let Some(level) = crossed_level(reading.reading_value, alert, critical, direction) else {
+        return Ok(());
+    };
+    reading.threshold_level = Some(level.as_str().to_string());
+    let savepoint = txn.begin().await?;
+    match raise_threshold_request(&savepoint, reading, equipment_id, level, actor_id).await {
+        Ok(outcome) => {
+            savepoint.commit().await?;
+            match outcome {
+                ThresholdOutcome::Raised(id, code) => {
+                    reading.raised_request_id = Some(id);
+                    reading.raised_request_code = Some(code);
+                }
+                ThresholdOutcome::AlreadyOpen(code) => reading.open_request_code = Some(code),
+            }
+        }
+        Err(e) => {
+            savepoint.rollback().await?;
+            tracing::warn!(
+                meter_id = reading.meter_id,
+                "threshold crossed, request not raised: {e}"
+            );
+            reading.threshold_problem = Some(match e {
+                AppError::ValidationFailed(msgs) => msgs.join(" "),
+                other => other.to_string(),
+            });
+        }
+    }
+    Ok(())
 }

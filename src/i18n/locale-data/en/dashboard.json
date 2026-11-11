@@ -330,6 +330,15 @@
         "noDownStatus": "no status marked “down”",
         "listAria": "Critical assets down",
         "empty": "No critical asset is down."
+      },
+      "repeatFailures": {
+        "title": "Repeat failures",
+        "count": "Equipment with repeat failures",
+        "listAria": "Equipment with repeat failures",
+        "empty": "No equipment with repeat failures.",
+        "failures_one": "{{count}} failure",
+        "failures_other": "{{count}} failures",
+        "error": "Repeat failures unavailable: {{reason}}"
       }
     },
     "indicators": {
@@ -377,7 +386,9 @@
       "chartDi": "Requests submitted that day.",
       "chartWo": "Work orders closed that day.",
       "chartPm": "PM occurrences due that day, cancelled excluded.",
-      "weekOvertime": "Overtime hours planning may still add over the week (the crews' overtime ceiling). Above 100 %, the schedule relies on them."
+      "weekOvertime": "Overtime hours planning may still add over the week (the crews' overtime ceiling). Above 100 %, the schedule relies on them.",
+      "repeatFailures": "Equipment with at least {{min}} unplanned failures in the last {{days}} days (rule set in Settings > Reliability).",
+      "repeatFailuresRule": "Equipment with at least N unplanned failures in the last D days (rule set in Settings > Reliability)."
     },
     "more_one": "+{{count}} more — full list in the module",
     "more_other": "+{{count}} more — full list in the module"

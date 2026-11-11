@@ -77,7 +77,9 @@
     "inventory.count_four_eyes_value_threshold": "Tolérance de double validation d'un comptage : valeur de l'écart",
     "inventory.count_four_eyes_percent_threshold": "Tolérance de double validation d'un comptage : part de la quantité théorique",
     "inventory.reconciliation_drift_break": "Écart de rupture du rapprochement de stock",
-    "locale.fiscal_year_start_month": "Début de l'exercice comptable"
+    "locale.fiscal_year_start_month": "Début de l'exercice comptable",
+    "reliability.repeat_failure_count": "Pannes répétitives : nombre de défaillances",
+    "reliability.repeat_failure_window_days": "Pannes répétitives : période (jours)"
   },
   "documentHeader": {
     "removeLogoConfirmTitle": "Retirer le logo ?",
@@ -384,7 +386,9 @@
       "ram.fmeca_rpn_critical_threshold": "À partir de cet indice de priorité de risque (G × O × D), un mode de défaillance AMDEC est critique.",
       "backup.retention_daily": "Nombre de sauvegardes planifiées quotidiennes conservées (au moins une).",
       "backup.retention_weekly": "Nombre de sauvegardes hebdomadaires conservées en plus.",
-      "backup.retention_monthly": "Nombre de sauvegardes mensuelles conservées en plus."
+      "backup.retention_monthly": "Nombre de sauvegardes mensuelles conservées en plus.",
+      "reliability.repeat_failure_count": "Un équipement est signalé « pannes répétitives » à partir de ce nombre de défaillances non planifiées dans la période ci-dessous.",
+      "reliability.repeat_failure_window_days": "Période, en jours jusqu'à aujourd'hui, sur laquelle les défaillances non planifiées sont comptées pour le signalement « pannes répétitives »."
     },
     "units": {
       "wo.reopen_window_days_one": "{{count}} jour",
@@ -398,7 +402,11 @@
       "backup.retention_weekly_one": "{{count}} semaine",
       "backup.retention_weekly_other": "{{count}} semaines",
       "backup.retention_monthly_one": "{{count}} mois",
-      "backup.retention_monthly_other": "{{count}} mois"
+      "backup.retention_monthly_other": "{{count}} mois",
+      "reliability.repeat_failure_count_one": "{{count}} défaillance",
+      "reliability.repeat_failure_count_other": "{{count}} défaillances",
+      "reliability.repeat_failure_window_days_one": "{{count}} jour",
+      "reliability.repeat_failure_window_days_other": "{{count}} jours"
     },
     "currencyLoadError": "La liste des devises (Données de référence › Devises) n'a pas pu être chargée : la devise ne peut pas être modifiée.",
     "currencyLoading": "Chargement des devises…",

@@ -39,6 +39,8 @@ pub(crate) const FOUNDATION_TYPES: &[&str] = &[
     "equipment_hierarchy",
     "equipment_meters",
     "asset_meter_readings",
+    "asset_five_why_analyses",
+    "asset_corrective_actions",
     "equipment_lifecycle_events",
     "asset_document_links",
     "asset_external_ids",

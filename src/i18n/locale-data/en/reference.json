@@ -416,7 +416,8 @@
     "WORK_PART_UNUSED_REASON": "Unused part reasons",
     "WORK_PRIORITY": "Work order priorities",
     "WORK_SYMPTOMS": "Symptoms",
-    "WORK_URGENCY": "Urgency"
+    "WORK_URGENCY": "Urgency",
+    "EQUIPMENT_CHARACTERISTICS": "Technical characteristics per family"
   },
   "combobox": {
     "searchPlaceholder": "Search…",
@@ -566,5 +567,20 @@
     "reasonMin": "Write at least {{min}} characters.",
     "cancel": "Cancel",
     "save": "Save"
+  },
+  "characteristics": {
+    "colType": "Value type",
+    "colUnit": "Unit",
+    "colRequired": "Required",
+    "chooseType": "Choose…",
+    "noUnit": "No unit",
+    "typeMissing": "Type missing",
+    "yes": "Yes",
+    "no": "No",
+    "types": {
+      "number": "Number",
+      "text": "Text",
+      "boolean": "Yes / no"
+    }
   }
 }

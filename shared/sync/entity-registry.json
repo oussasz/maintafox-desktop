@@ -101,6 +101,18 @@
       "sync_status": "synced"
     },
     {
+      "entity_type": "asset_corrective_actions",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 6,
+      "parents": [
+        "equipment",
+        "personnel",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
       "entity_type": "asset_document_links",
       "scope": "tenant",
       "conflict_policy": "operator_review",
@@ -118,6 +130,17 @@
       "apply_priority": 5,
       "parents": [
         "equipment"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "asset_five_why_analyses",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 5,
+      "parents": [
+        "equipment",
+        "user_accounts"
       ],
       "sync_status": "synced"
     },
@@ -761,7 +784,8 @@
         "org_nodes",
         "user_accounts",
         "reference_values",
-        "di_sla_rules"
+        "di_sla_rules",
+        "asset_meter_readings"
       ],
       "sync_status": "synced"
     },

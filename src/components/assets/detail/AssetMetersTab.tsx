@@ -1,10 +1,13 @@
 /**
  * Meters tab: the asset's counters (running hours, cycles, distance…), recording a reading and
  * the reading history, plus adding a meter. Readings feed meter-based preventive plans; the
- * backend refuses a value below the previous one unless the meter rolls over.
+ * backend refuses a value below the previous one unless the meter rolls over. A meter may carry
+ * an alert and a critical threshold: a reading that crosses one raises an intervention request
+ * (one per meter and level while it is open), said when the reading is saved.
  */
 
-import { Ban, Gauge, History, Plus } from "lucide-react";
+import type { TFunction } from "i18next";
+import { Ban, BellRing, Gauge, History, Plus } from "lucide-react";
 import { useId, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -31,6 +34,7 @@ import { StatusChip } from "@/components/ui/status-chip";
 import { Textarea } from "@/components/ui/textarea";
 import { mfTable } from "@/design-system/tokens";
 import { useFormatters } from "@/hooks/use-formatters";
+import { gateSentenceText } from "@/lib/app-error";
 import { cn } from "@/lib/utils";
 import {
   assessMeterReading,
@@ -39,14 +43,17 @@ import {
   listAssetMeters,
   listMeterReadings,
   recordMeterReading,
+  setMeterThresholds,
 } from "@/services/asset-lifecycle-service";
 import { getLookupValues } from "@/services/lookup-service";
+import { pushAppToast } from "@/store/app-toast-store";
 import type {
   Asset,
   AssetMeter,
   LookupValueOption,
   MeterReading,
   MeterReadingWarning,
+  MeterThresholdDirection,
 } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
@@ -99,6 +106,7 @@ export function AssetMetersTab({ asset }: { asset: Asset }) {
   const [reopenFor, setReopenFor] = useState<number | null>(null);
   const [historyFor, setHistoryFor] = useState<number | null>(null);
   const [addOpen, setAddOpen] = useState(false);
+  const [thresholdsFor, setThresholdsFor] = useState<AssetMeter | null>(null);
 
   if (loading && !data) return <LoadingState />;
   if (error || !data) {
@@ -155,6 +163,22 @@ export function AssetMetersTab({ asset }: { asset: Asset }) {
                   })}`
                 : ""}
             </p>
+            {m.threshold_direction ? (
+              <p className="flex items-center gap-1.5 text-xs">
+                <BellRing className="h-3.5 w-3.5 text-tone-warning-fg" aria-hidden />
+                {t(`meters.thresholds.summary.${m.threshold_direction}`, {
+                  alert:
+                    m.alert_threshold != null
+                      ? formatDecimal(m.alert_threshold, 1)
+                      : t("meters.thresholds.none"),
+                  critical:
+                    m.critical_threshold != null
+                      ? formatDecimal(m.critical_threshold, 1)
+                      : t("meters.thresholds.none"),
+                  unit: m.unit ?? "",
+                })}
+              </p>
+            ) : null}
             <div className="flex flex-wrap gap-2 pt-1">
               <PermissionGate permission={P.EQ_MANAGE}>
                 <Button
@@ -175,6 +199,17 @@ export function AssetMetersTab({ asset }: { asset: Asset }) {
                 <History className="h-4 w-4" aria-hidden />
                 {historyFor === m.id ? t("meters.hideHistory") : t("meters.showHistory")}
               </Button>
+              <PermissionGate permission={P.EQ_MANAGE}>
+                <Button
+                  variant="outline"
+                  className="h-9 gap-1.5"
+                  disabled={!m.is_active}
+                  onClick={() => setThresholdsFor(m)}
+                >
+                  <BellRing className="h-4 w-4" aria-hidden />
+                  {t("meters.thresholds.edit")}
+                </Button>
+              </PermissionGate>
             </div>
             {historyFor === m.id ? (
               <MeterHistory
@@ -197,6 +232,16 @@ export function AssetMetersTab({ asset }: { asset: Asset }) {
           onClose={() => setReadingFor(null)}
           onSaved={() => {
             setReadingFor(null);
+            void reload();
+          }}
+        />
+      ) : null}
+      {thresholdsFor ? (
+        <ThresholdsDialog
+          meter={thresholdsFor}
+          onClose={() => setThresholdsFor(null)}
+          onSaved={() => {
+            setThresholdsFor(null);
             void reload();
           }}
         />
@@ -296,6 +341,17 @@ function MeterHistory({
                   ) : (
                     (r.source_reference ?? "—")
                   )}
+                  {r.raised_request_code ? (
+                    <span className="mt-0.5 block">
+                      <StatusChip
+                        tone={r.threshold_level === "critical" ? "danger" : "warning"}
+                        label={t("meters.thresholds.raisedChip", {
+                          code: r.raised_request_code,
+                          level: t(`meters.thresholds.level.${r.threshold_level ?? "alert"}`),
+                        })}
+                      />
+                    </span>
+                  ) : null}
                 </td>
                 <td className="py-1 text-right">
                   {r.id === latestValidId ? (
@@ -459,7 +515,7 @@ function RecordReadingDialog({
           return;
         }
       }
-      await recordMeterReading(
+      const saved = await recordMeterReading(
         {
           meter_id: meter.id,
           reading_value: parsed,
@@ -469,6 +525,7 @@ function RecordReadingDialog({
         },
         confirmJump,
       );
+      announceThreshold(saved, t);
       onSaved();
     } catch {
       // Reported by the global IPC toast.
@@ -756,6 +813,149 @@ function AddMeterDialog({
           <Checkbox checked={primary} onCheckedChange={(v) => setPrimary(v === true)} />
           {t("meters.primary")}
         </label>
+      </form>
+    </EntityFormDialog>
+  );
+}
+
+/** Says what crossing a threshold led to, once the reading is saved. */
+function announceThreshold(reading: MeterReading, t: TFunction<"equipment">): void {
+  if (!reading.threshold_level) return;
+  const level = t(`meters.thresholds.level.${reading.threshold_level}`);
+  if (reading.raised_request_code) {
+    pushAppToast({
+      title: t("meters.thresholds.raised", { level, code: reading.raised_request_code }),
+      variant: "success",
+    });
+  } else if (reading.open_request_code) {
+    pushAppToast({
+      title: t("meters.thresholds.alreadyOpen", { level, code: reading.open_request_code }),
+    });
+  } else if (reading.threshold_problem) {
+    pushAppToast({
+      title: t("meters.thresholds.notRaised", { level }),
+      description: gateSentenceText(reading.threshold_problem),
+      variant: "destructive",
+    });
+  }
+}
+
+/** Alert and critical thresholds of a meter, and the side that is abnormal. */
+function ThresholdsDialog({
+  meter,
+  onClose,
+  onSaved,
+}: {
+  meter: AssetMeter;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const { t } = useTranslation("equipment");
+  const formId = useId();
+  const [alert, setAlert] = useState(meter.alert_threshold?.toString() ?? "");
+  const [critical, setCritical] = useState(meter.critical_threshold?.toString() ?? "");
+  const [direction, setDirection] = useState<MeterThresholdDirection | "">(
+    meter.threshold_direction ?? "",
+  );
+  const [saving, setSaving] = useState(false);
+  const alertValue = parseNumber(alert);
+  const criticalValue = parseNumber(critical);
+  const anySet = alertValue !== null || criticalValue !== null;
+  const notNumber = Number.isNaN(alertValue) || Number.isNaN(criticalValue);
+  const orderError =
+    alertValue !== null &&
+    criticalValue !== null &&
+    !notNumber &&
+    direction !== "" &&
+    (direction === "above" ? alertValue >= criticalValue : alertValue <= criticalValue)
+      ? t("meters.thresholds.orderError")
+      : undefined;
+  const invalid = notNumber || !!orderError || (anySet && direction === "");
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (invalid) return;
+    setSaving(true);
+    try {
+      await setMeterThresholds({
+        meter_id: meter.id,
+        alert_threshold: alertValue,
+        critical_threshold: criticalValue,
+        threshold_direction: anySet && direction !== "" ? direction : null,
+      });
+      onSaved();
+    } catch {
+      // Reported by the global IPC toast.
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <EntityFormDialog
+      open
+      onOpenChange={(next) => {
+        if (!next) onClose();
+      }}
+      title={t("meters.thresholds.title", { name: meter.name })}
+      description={t("meters.thresholds.description")}
+      footer={
+        <EntityFormFooter
+          cancelLabel={t("commercial.cancel")}
+          primaryLabel={t("meters.thresholds.save")}
+          onCancel={onClose}
+          formId={formId}
+          primaryDisabled={invalid}
+          primaryLoading={saving}
+        />
+      }
+    >
+      <form id={formId} onSubmit={(e) => void submit(e)} className="grid gap-4 sm:grid-cols-2">
+        <div className="sm:col-span-2">
+          <FormField
+            name={`${formId}-direction`}
+            label={t("meters.thresholds.direction")}
+            required={anySet}
+          >
+            <Select
+              value={direction}
+              onValueChange={(v) => setDirection(v as MeterThresholdDirection)}
+            >
+              <SelectTrigger id={`${formId}-direction`} className="h-10">
+                <SelectValue placeholder={t("meters.thresholds.directionPlaceholder")} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="above">{t("meters.thresholds.above")}</SelectItem>
+                <SelectItem value="below">{t("meters.thresholds.below")}</SelectItem>
+              </SelectContent>
+            </Select>
+          </FormField>
+        </div>
+        <FormField
+          name={`${formId}-alert`}
+          label={t("meters.thresholds.alert", { unit: meter.unit ?? "" })}
+          error={Number.isNaN(alertValue) ? t("meters.errors.number") : undefined}
+        >
+          <Input
+            id={`${formId}-alert`}
+            inputMode="decimal"
+            value={alert}
+            onChange={(e) => setAlert(e.target.value)}
+          />
+        </FormField>
+        <FormField
+          name={`${formId}-critical`}
+          label={t("meters.thresholds.critical", { unit: meter.unit ?? "" })}
+          error={Number.isNaN(criticalValue) ? t("meters.errors.number") : orderError}
+        >
+          <Input
+            id={`${formId}-critical`}
+            inputMode="decimal"
+            value={critical}
+            onChange={(e) => setCritical(e.target.value)}
+          />
+        </FormField>
+        <p className="text-xs text-text-muted sm:col-span-2">{t("meters.thresholds.hint")}</p>
       </form>
     </EntityFormDialog>
   );

@@ -10,7 +10,9 @@
 use tauri::{AppHandle, Manager, State};
 
 use crate::assets::{
-    bindings, criticality,
+    bindings,
+    characteristics::{self, SaveAssetCharacteristicsPayload},
+    criticality,
     decommission::{self, DecommissionAssetPayload},
     documents::{self, UpsertDocumentLinkPayload},
     health,
@@ -20,8 +22,9 @@ use crate::assets::{
     import::{self, ApplyPolicy},
     lifecycle::{self, RecordLifecycleEventPayload},
     maintenance_profile,
-    meters::{self, CreateAssetMeterPayload, RecordMeterReadingPayload},
+    meters::{self, CreateAssetMeterPayload, RecordMeterReadingPayload, SetMeterThresholdsPayload},
     photos, registry_metrics,
+    repeat_failures::{self, SaveCorrectiveActionPayload, SaveFiveWhyPayload},
     search::{self, AssetPickerSuggestFilters, AssetSearchFilters},
     spare_parts, taxonomy_reference, EquipmentTaxonomyCatalog,
 };
@@ -330,6 +333,121 @@ pub async fn record_meter_reading(
         PermissionScope::Global
     );
     meters::record_meter_reading_checked(&state.db, payload, confirm_jump.unwrap_or(false), user.user_id).await
+}
+
+/// Set or clear the alarm thresholds of a meter (L2-08): a reading that crosses one raises an
+/// intervention request.
+#[tauri::command]
+pub async fn set_meter_thresholds(
+    payload: SetMeterThresholdsPayload,
+    state: State<'_, AppState>,
+) -> AppResult<meters::AssetMeter> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::EQ_MANAGE,
+        PermissionScope::Global
+    );
+    meters::set_meter_thresholds(&state.db, payload, user.user_id).await
+}
+
+// ─── Technical characteristics (eq.view / eq.manage, L2-07) ──────────────────
+
+#[tauri::command]
+pub async fn get_asset_characteristics(
+    asset_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<characteristics::AssetCharacteristicSheet> {
+    let user = require_session!(state);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_VIEW, PermissionScope::Global);
+    characteristics::get_asset_characteristics(&state.db, asset_id).await
+}
+
+#[tauri::command]
+pub async fn save_asset_characteristics(
+    payload: SaveAssetCharacteristicsPayload,
+    state: State<'_, AppState>,
+) -> AppResult<characteristics::AssetCharacteristicSheet> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::EQ_MANAGE,
+        PermissionScope::Global
+    );
+    characteristics::save_asset_characteristics(&state.db, payload, user.user_id).await
+}
+
+// ─── Repeat failures (eq.view / eq.manage, L2-09) ─────────────────────────────
+
+#[tauri::command]
+pub async fn list_repeat_failure_assets(
+    state: State<'_, AppState>,
+) -> AppResult<repeat_failures::RepeatFailureOverview> {
+    let user = require_session!(state);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_VIEW, PermissionScope::Global);
+    repeat_failures::list_repeat_failure_assets(&state.db).await
+}
+
+#[tauri::command]
+pub async fn get_asset_repeat_failure_status(
+    asset_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<repeat_failures::AssetRepeatFailureStatus> {
+    let user = require_session!(state);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_VIEW, PermissionScope::Global);
+    repeat_failures::asset_repeat_failure_status(&state.db, asset_id).await
+}
+
+#[tauri::command]
+pub async fn list_asset_five_whys(
+    asset_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<repeat_failures::FiveWhyAnalysis>> {
+    let user = require_session!(state);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_VIEW, PermissionScope::Global);
+    repeat_failures::list_five_whys(&state.db, asset_id).await
+}
+
+#[tauri::command]
+pub async fn save_asset_five_why(
+    payload: SaveFiveWhyPayload,
+    state: State<'_, AppState>,
+) -> AppResult<repeat_failures::FiveWhyAnalysis> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::EQ_MANAGE,
+        PermissionScope::Global
+    );
+    repeat_failures::save_five_why(&state.db, payload, user.user_id).await
+}
+
+#[tauri::command]
+pub async fn list_asset_corrective_actions(
+    asset_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<repeat_failures::CorrectiveAction>> {
+    let user = require_session!(state);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_VIEW, PermissionScope::Global);
+    repeat_failures::list_corrective_actions(&state.db, asset_id).await
+}
+
+#[tauri::command]
+pub async fn save_asset_corrective_action(
+    payload: SaveCorrectiveActionPayload,
+    state: State<'_, AppState>,
+) -> AppResult<repeat_failures::CorrectiveAction> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::EQ_MANAGE,
+        PermissionScope::Global
+    );
+    repeat_failures::save_corrective_action(&state.db, payload, user.user_id).await
 }
 
 /// Warning a reading would raise (far above the usual use), asked before saving it.
