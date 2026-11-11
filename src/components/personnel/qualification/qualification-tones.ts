@@ -50,6 +50,7 @@ export const DAY_REASON_TONE: Record<string, Tone> = {
 export const CAPACITY_BASIS_TONE: Record<string, Tone> = {
   roster: "success",
   rest_day: "neutral",
+  site_rest_day: "neutral",
   holiday: "info",
   no_schedule: "warning",
   no_members: "warning",

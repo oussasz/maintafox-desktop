@@ -2313,6 +2313,23 @@ export interface LinkAssetPayload {
   effective_from?: string | null;
 }
 
+/** "Déplacer le composant" (L2-03): the same asset record goes under another parent. */
+export interface MoveAssetComponentPayload {
+  asset_id: number;
+  /** The new parent; null removes the component to stock. */
+  new_parent_asset_id: number | null;
+  /** Effective date YYYY-MM-DD; null is today. */
+  effective_date: string | null;
+  notes: string | null;
+  expected_row_version: number;
+}
+
+export interface MoveAssetComponentResult {
+  ended_relation: AssetHierarchyRow | null;
+  new_relation: AssetHierarchyRow | null;
+  event: AssetLifecycleEvent;
+}
+
 // â”€â”€â”€ Asset â€” Lifecycle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface AssetLifecycleEvent {
@@ -5692,8 +5709,18 @@ export interface WoListFilter {
   /** Only work completed in `[completed_from, completed_to)` (ISO instants): the SMRP work-mix population. */
   completed_from?: string | null;
   completed_to?: string | null;
+  /** Only the work orders behind the failures a RAMS figure counts (same period, class, site). */
+  rams_failures?: WoRamsFailureScope | null;
   limit: number;
   offset: number;
+}
+
+/** Scope of a RAMS failure figure (`wo::queries::WoRamsFailureScope`). */
+export interface WoRamsFailureScope {
+  period_start: string;
+  period_end: string;
+  equipment_class_id?: number | null;
+  org_node_id?: number | null;
 }
 
 export interface WoListPage {

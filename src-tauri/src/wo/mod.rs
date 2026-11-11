@@ -13,6 +13,7 @@ pub mod domain;
 pub mod execution;
 pub mod execution_actor;
 pub mod execution_log;
+pub mod failure_catalogue;
 pub mod labor;
 pub mod lifecycle;
 pub mod parts;

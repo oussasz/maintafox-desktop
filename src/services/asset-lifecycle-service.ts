@@ -8,7 +8,7 @@
 import { z } from "zod";
 
 import { invoke } from "@/lib/ipc-invoke";
-import { AssetSchema } from "@/services/asset-service";
+import { AssetHierarchyRowSchema, AssetSchema } from "@/services/asset-service";
 import type {
   Asset,
   AssetBindingSummary,
@@ -21,6 +21,8 @@ import type {
   DecommissionAssetPayload,
   MeterReading,
   MeterReadingWarning,
+  MoveAssetComponentPayload,
+  MoveAssetComponentResult,
   RecordLifecycleEventPayload,
   RecordMeterReadingPayload,
   UploadAssetPhotoPayload,
@@ -125,6 +127,23 @@ export async function recordLifecycleEvent(
 ): Promise<AssetLifecycleEvent> {
   const raw = await invoke<unknown>("record_lifecycle_event", { payload });
   return AssetLifecycleEventSchema.parse(raw) as AssetLifecycleEvent;
+}
+
+const MoveAssetComponentResultSchema = z.object({
+  ended_relation: AssetHierarchyRowSchema.nullable(),
+  new_relation: AssetHierarchyRowSchema.nullable(),
+  event: AssetLifecycleEventSchema,
+});
+
+/**
+ * "Déplacer le composant" (L2-03): ends the component's parent relation and opens the new one at
+ * the effective date, recorded as a PARENT_CHANGED lifecycle event, in one server transaction.
+ */
+export async function moveAssetComponent(
+  payload: MoveAssetComponentPayload,
+): Promise<MoveAssetComponentResult> {
+  const raw = await invoke<unknown>("move_asset_component", { payload });
+  return MoveAssetComponentResultSchema.parse(raw) as MoveAssetComponentResult;
 }
 
 // â”€â”€ Meter commands â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

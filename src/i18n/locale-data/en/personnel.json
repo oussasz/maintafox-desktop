@@ -782,6 +782,7 @@
     "bases": {
       "roster": "Schedule classes",
       "rest_day": "Rest day",
+      "site_rest_day": "Site rest day",
       "holiday": "Holiday",
       "no_schedule": "No schedule class",
       "no_members": "No members"

@@ -37,6 +37,7 @@ import {
   checkWoPartStockAvailability,
   evaluateInventoryUnitCost,
   listInventoryArticles,
+  type InventoryArticleRow,
   listInventoryLocations,
 } from "@/services/inventory-service";
 import { listActiveTeams, listTeamMembers } from "@/services/personnel-service";
@@ -62,7 +63,6 @@ import {
 } from "@/services/wo-service";
 import { useWoStore } from "@/stores/wo-store";
 import type {
-  InventoryArticle,
   StockLocation,
   TeamMemberRow,
   UrgencyCode,
@@ -306,7 +306,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
     const [tools, setTools] = useState<WoTool[]>([]);
     const [newToolLabel, setNewToolLabel] = useState("");
     const [newToolCode, setNewToolCode] = useState("");
-    const [articleOptions, setArticleOptions] = useState<InventoryArticle[]>([]);
+    const [articleOptions, setArticleOptions] = useState<InventoryArticleRow[]>([]);
     const [locationOptions, setLocationOptions] = useState<StockLocation[]>([]);
     const [activeArticleField, setActiveArticleField] = useState<string | null>(null);
 
@@ -1651,7 +1651,23 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
                                   setActiveArticleField(null);
                                 }}
                               >
-                                {article.article_code} - {article.article_name}
+                                <span className="flex items-baseline justify-between gap-3">
+                                  <span>
+                                    {article.article_code} - {article.article_name}
+                                  </span>
+                                  <span
+                                    className={
+                                      article.available_qty > 0
+                                        ? "shrink-0 text-xs text-muted-foreground"
+                                        : "shrink-0 text-xs text-tone-warning-fg"
+                                    }
+                                  >
+                                    {t("planning.parts.available", {
+                                      qty: article.available_qty,
+                                      unit: article.unit_symbol ?? "",
+                                    })}
+                                  </span>
+                                </span>
                               </button>
                             ))
                           )}
@@ -1712,6 +1728,25 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
                       }
                       disabled={tasksPartsDisabled || part.persisted}
                     />
+                    {!part.persisted && part.article_id != null
+                      ? (() => {
+                          const chosen = articleOptions.find((a) => a.id === part.article_id);
+                          if (!chosen) return null;
+                          const asked = parseNumber(part.quantity_planned) ?? 0;
+                          return asked > chosen.available_qty ? (
+                            <p className="text-xs text-tone-warning-fg">
+                              {t("planning.parts.shortage", {
+                                available: chosen.available_qty,
+                                unit: chosen.unit_symbol ?? "",
+                              })}
+                            </p>
+                          ) : (
+                            <p className="text-xs text-muted-foreground">
+                              {t("planning.parts.willReserve")}
+                            </p>
+                          );
+                        })()
+                      : null}
                     {savedPending && part.reservation_id != null ? (
                       <p className="text-xs text-muted-foreground">{t("planning.stockReserved")}</p>
                     ) : null}

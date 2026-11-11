@@ -110,8 +110,24 @@ pub struct WoListFilter {
     pub completed_from: Option<String>,
     #[serde(default)]
     pub completed_to: Option<String>,
+    /// Only the work orders behind the failures a RAMS figure counts (L2-21): the failure records
+    /// of this scope (`reliability::study::fleet_kpis::scope_from_sql`, same period, class and
+    /// site), linked to their work order. Combined with `equipment_id` for one ranking row.
+    #[serde(default)]
+    pub rams_failures: Option<WoRamsFailureScope>,
     pub limit: i64,
     pub offset: i64,
+}
+
+/// Scope of a RAMS failure figure, as the RAMS screen computed it.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct WoRamsFailureScope {
+    pub period_start: String,
+    pub period_end: String,
+    #[serde(default)]
+    pub equipment_class_id: Option<i64>,
+    #[serde(default)]
+    pub org_node_id: Option<i64>,
 }
 
 /// Paginated list result.
@@ -386,6 +402,21 @@ pub async fn list_work_orders_in_scope(
     if let Some(to) = completed_to {
         where_clauses.push("datetime(COALESCE(wo.mechanically_completed_at, wo.closed_at)) < datetime(?)".to_string());
         binds.push(to.to_string().into());
+    }
+
+    // ── Behind a RAMS failure figure: the work orders of the failure records it counts ──────
+    if let Some(ref rams) = filter.rams_failures {
+        let scope = crate::reliability::study::fleet_kpis::FleetScope::new(
+            &rams.period_start,
+            &rams.period_end,
+            rams.equipment_class_id,
+            rams.org_node_id,
+        )?;
+        where_clauses.push(format!(
+            "wo.id IN (SELECT fe.source_id {} AND fe.source_type = 'work_order')",
+            crate::reliability::study::fleet_kpis::scope_from_sql()
+        ));
+        binds.extend(scope.binds());
     }
 
     // ── Free-text search: every word must match the code, title, description or equipment ──

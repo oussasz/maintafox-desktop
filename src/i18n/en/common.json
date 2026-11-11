@@ -336,5 +336,15 @@
     "none": "No urgency",
     "targetsShort": "Response ≤ {{response}} h · completion ≤ {{completion}} h",
     "targetsTooltip": "Target times: response ≤ {{response}} h, completion ≤ {{completion}} h"
+  },
+  "personnelLink": {
+    "message": {
+      "rounds": "Your account is not linked to a personnel record: you cannot save round readings (readings are attributed to a person). Link your account to a record first.",
+      "myWork": "Your account is not linked to a personnel record: \"My work\" cannot find your work orders, requests and rounds, which is why the figures stay at zero."
+    },
+    "linkAccount": "Link my account to a record (Administration > Users)",
+    "openPersonnel": "Open Personnel (create the record)",
+    "askAdmin": "Ask an administrator to link your account to your personnel record.",
+    "howTo": "If the record does not exist yet, create it in Personnel, then open your account in Administration > Users and choose it."
   }
 }

@@ -1,11 +1,11 @@
 {
   "page": {
     "title": "Rondes d'inspection",
-    "description": "Rondes et tournées terrain : les planifier, saisir les relevés, traiter les constats."
+    "description": "Rondes terrain : les planifier, saisir les relevés, traiter les constats."
   },
   "tabs": {
     "rounds": "Rondes",
-    "templates": "Check-lists et tournées",
+    "templates": "Modèles de ronde",
     "signals": "Signaux fiabilité",
     "anomalies": "Anomalies",
     "schedules": "Planifications"
@@ -31,7 +31,7 @@
     "overdue": "En retard maintenant",
     "period_one": "Prévues sur le dernier jour",
     "period_other": "Prévues sur les {{count}} derniers jours",
-    "search": "Rechercher une check-list, une personne, une équipe ou une planification"
+    "search": "Rechercher un modèle de ronde, une personne, une équipe ou une planification"
   },
   "rounds": {
     "empty": "Aucune ronde dans cette liste.",
@@ -55,7 +55,7 @@
     "overdue": "En retard",
     "team": "Équipe {{name}}",
     "columns": {
-      "checklist": "Check-list",
+      "checklist": "Modèle de ronde",
       "planned": "Prévue",
       "assignee": "Affectée à",
       "status": "Statut",
@@ -66,8 +66,8 @@
   },
   "schedule": {
     "title": "Planifier une ronde",
-    "template": "Check-list",
-    "templatePlaceholder": "Choisir une check-list",
+    "template": "Modèle de ronde",
+    "templatePlaceholder": "Choisir un modèle de ronde",
     "when": "Prévue le",
     "assignee": "Technicien",
     "assigneeSearch": "Rechercher une personne (nom ou matricule)",
@@ -75,11 +75,20 @@
     "assigneeSearchError": "La recherche a échoué : {{message}}",
     "clearAssignee": "Retirer",
     "submit": "Planifier",
-    "noTemplate": "Créez d'abord une check-list (onglet Modèles).",
+    "noTemplate": "Créez d'abord un modèle de ronde (onglet Modèles).",
     "team": "Équipe",
     "noTeam": "Aucune équipe",
     "teamLoadError": "Les équipes n'ont pas pu être chargées.",
     "clearAssigneeNamed": "Retirer {{name}}"
+  },
+  "trend": {
+    "show": "Courbe de ce point",
+    "hide": "Masquer la courbe",
+    "loading": "Chargement de la courbe…",
+    "failed": "La courbe n'a pas pu être chargée.",
+    "none": "Aucun relevé de ce point sur les {{months}} derniers mois.",
+    "aria": "Courbe du point {{code}} : {{count}} relevés sur {{months}} mois",
+    "legend": "Relevés en {{unit}} — pointillés verts : limites normales, orange : limites d'avertissement."
   },
   "runner": {
     "back": "Retour aux rondes",
@@ -186,14 +195,14 @@
     "decideFirst_other": "{{count}} constats attendent encore une décision."
   },
   "templates": {
-    "empty": "Aucune check-list pour le moment.",
-    "new": "Nouvelle check-list",
+    "empty": "Aucun modèle de ronde pour le moment.",
+    "new": "Nouveau modèle de ronde",
     "newVersion": "Nouvelle version",
     "version": "Version {{no}}",
     "checkpoints_one": "{{count}} contrôle",
     "checkpoints_other": "{{count}} contrôles",
     "inactive": "Inactive",
-    "builderTitle": "Check-list",
+    "builderTitle": "Modèle de ronde",
     "builderVersionTitle": "Nouvelle version de {{name}}",
     "code": "Code",
     "name": "Nom",
@@ -201,6 +210,11 @@
     "requiresReview": "Les rondes exigent toujours une revue du superviseur",
     "checks": "Contrôles",
     "addCheck": "Ajouter un contrôle",
+    "duplicateRow": "Dupliquer le contrôle {{index}}",
+    "bulkTitle": "Ajout en bloc",
+    "bulkHint": "Collez ou saisissez un contrôle par ligne : chacun reçoit son propre code (P1, P2…) ; réglez ensuite le type, l'unité et les limites.",
+    "bulkPlaceholder": "Pression huile pompe P-101 ; ... Niveau du bac",
+    "bulkAdd": "Ajouter ces contrôles",
     "remove": "Supprimer",
     "moveUp": "Monter",
     "moveDown": "Descendre",
@@ -214,7 +228,7 @@
     "warningMax": "Max alerte",
     "requiresPhoto": "Photo obligatoire",
     "commentOnException": "Commentaire exigé si non conforme",
-    "save": "Enregistrer la check-list",
+    "save": "Enregistrer le modèle de ronde",
     "publish": "Publier la version",
     "needOneCheck": "Ajoutez au moins un contrôle.",
     "invalidNumber": "Ce n'est pas un nombre",
@@ -225,8 +239,8 @@
       "observation": "Observation"
     },
     "required": "Obligatoire",
-    "builderIntro": "Les contrôles sont réalisés dans cet ordre. Rattachez chacun à son équipement ; insérez une autre check-list pour un équipement afin de composer une tournée.",
-    "emptyHint": "Créez une check-list : ses contrôles ordonnés, chacun sur son équipement, forment la tournée de la ronde.",
+    "builderIntro": "Les contrôles sont réalisés dans cet ordre. Rattachez chacun à son équipement ; insérez un autre modèle de ronde pour un équipement afin de composer le parcours.",
+    "emptyHint": "Créez un modèle de ronde : ses contrôles ordonnés, chacun sur son équipement, forment le parcours de la ronde.",
     "unpublished": "Non publiée",
     "published": "Publiée",
     "newVersionNamed": "Nouvelle version de {{name}}",
@@ -242,15 +256,15 @@
     "moveUpRow": "Monter le contrôle {{index}}",
     "moveDownRow": "Descendre le contrôle {{index}}",
     "removeRow": "Supprimer le contrôle {{index}}",
-    "addStop": "Insérer une check-list pour un équipement",
-    "addStopTitle": "Insérer une check-list",
-    "addStopIntro": "Copie les contrôles d'une autre check-list à la fin de celle-ci, par exemple un contrôle standard de pompe pour chaque pompe de la tournée.",
-    "addStopSource": "Check-list à insérer",
+    "addStop": "Insérer un modèle de ronde pour un équipement",
+    "addStopTitle": "Insérer un modèle de ronde",
+    "addStopIntro": "Copie les contrôles d'un autre modèle de ronde à la fin de celui-ci, par exemple un contrôle standard de pompe pour chaque pompe de la ronde.",
+    "addStopSource": "Modèle de ronde à insérer",
     "addStopAsset": "Pour l'équipement",
     "addStopAssetHint": "Facultatif. Chaque contrôle copié est rattaché à cet équipement et son code commence par le code de l'équipement.",
     "addStopSubmit": "Insérer les contrôles",
     "columns": {
-      "name": "Check-list",
+      "name": "Modèle de ronde",
       "state": "État"
     },
     "rowIssues": {
@@ -262,7 +276,7 @@
     }
   },
   "signals": {
-    "description": "Par équipement, sur une fenêtre glissante : alertes et défauts relevés, anomalies ouvertes et couverture des check-lists.",
+    "description": "Par équipement, sur une fenêtre glissante : alertes et défauts relevés, anomalies ouvertes et couverture des modèles de ronde.",
     "window": "Fenêtre (jours)",
     "refresh": "Recalculer",
     "empty": "Aucun signal calculé pour le moment.",
@@ -339,7 +353,7 @@
     "createdWo": "Ordre de travail créé :",
     "blocked": {
       "alreadyRouted": "Ce constat a déjà une demande ou un ordre de travail.",
-      "noEquipment": "Ce contrôle n'a pas d'équipement : une demande ou un ordre de travail en exige un. Ajoutez l'équipement au contrôle dans une nouvelle version de la check-list.",
+      "noEquipment": "Ce contrôle n'a pas d'équipement : une demande ou un ordre de travail en exige un. Ajoutez l'équipement au contrôle dans une nouvelle version du modèle de ronde.",
       "noLocation": "L'équipement n'a pas de lieu d'installation : une demande en exige un. Complétez d'abord la fiche équipement."
     },
     "title": {
@@ -371,7 +385,7 @@
     "generated": "Rondes générées : {{generated}} · déjà présentes : {{skipped}} · passées en manquées : {{missed}}.",
     "issue": "Planification {{code}} :",
     "empty": "Aucune planification récurrente pour le moment.",
-    "emptyHint": "Une planification crée les rondes d'une check-list chaque jour, semaine, mois… ou à chaque intervalle de compteur.",
+    "emptyHint": "Une planification crée les rondes d'un modèle de ronde chaque jour, semaine, mois… ou à chaque intervalle de compteur.",
     "active": "Active",
     "inactive": "Inactive",
     "edit": "Modifier",
@@ -387,7 +401,7 @@
     "missed_other": "{{count}} manquées",
     "columns": {
       "schedule": "Planification",
-      "route": "Check-list / tournée",
+      "route": "Modèle de ronde",
       "trigger": "Récurrence",
       "assignee": "Affectée à",
       "next": "Prochaine ronde",
@@ -416,11 +430,11 @@
     },
     "newTitle": "Nouvelle planification récurrente",
     "editTitle": "Planification {{name}}",
-    "intro": "Les rondes sont générées avec la version publiée de la check-list et affectées comme indiqué ici. Les rondes futures non commencées sont remplacées à l'enregistrement.",
+    "intro": "Les rondes sont générées avec la version publiée du modèle de ronde et affectées comme indiqué ici. Les rondes futures non commencées sont remplacées à l'enregistrement.",
     "code": "Code",
     "name": "Nom",
-    "route": "Check-list / tournée",
-    "routeHint": "Les contrôles de la check-list, dans leur ordre, forment la tournée parcourue sur le terrain.",
+    "route": "Modèle de ronde",
+    "routeHint": "Les contrôles du modèle de ronde, dans leur ordre, forment le parcours sur le terrain.",
     "trigger": "Déclenchement",
     "triggers": {
       "calendar": "Calendrier",
