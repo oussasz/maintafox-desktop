@@ -1099,7 +1099,7 @@
     "GATE_LIB_DOC_NUMBER_TAKEN": "Document refusé : ce numéro est déjà utilisé par un autre document de la bibliothèque. Saisissez un autre numéro.",
     "GATE_LIB_DOC_NOT_CURRENT": "Action refusée : c'est une version précédente du document, conservée telle quelle. Ouvrez la version actuelle.",
     "GATE_LIB_DOC_REVISION_REQUIRED": "Version refusée : saisissez la révision de la nouvelle version.",
-    "GATE_LIB_DOC_REVISION_UNCHANGED": "Version refusée : la révision doit être différente de celle de la version actuelle.",
+    "GATE_LIB_DOC_REVISION_UNCHANGED": "Version refusée : cette révision est déjà utilisée par une version de ce document. Saisissez une nouvelle révision.",
     "GATE_LOCALE_UNSUPPORTED": "Langue refusée : cette langue n'est pas prise en charge. Choisissez le français ou l'anglais.",
     "GATE_REF_LOOKUP_CODE_LENGTH": "Le code de la valeur doit comporter entre 1 et 64 caractères.",
     "GATE_REF_LOOKUP_CODE_CHARS": "Le code de la valeur ne peut contenir que des majuscules, des chiffres et des tirets bas (exemples : CORRECTIVE, TYPE_A).",

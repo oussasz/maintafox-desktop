@@ -1100,7 +1100,7 @@
     "GATE_LIB_DOC_NUMBER_TAKEN": "Document refused: this number is already used by another document of the library. Enter another number.",
     "GATE_LIB_DOC_NOT_CURRENT": "Action refused: this is an earlier version of the document, kept as it is. Open the current version.",
     "GATE_LIB_DOC_REVISION_REQUIRED": "Version refused: enter the revision of the new version.",
-    "GATE_LIB_DOC_REVISION_UNCHANGED": "Version refused: the revision must differ from the current version's.",
+    "GATE_LIB_DOC_REVISION_UNCHANGED": "Version refused: this revision is already used by a version of this document. Enter a new revision.",
     "GATE_LOCALE_UNSUPPORTED": "Language refused: this language is not supported. Choose French or English.",
     "GATE_REF_LOOKUP_CODE_LENGTH": "The value code must be 1 to 64 characters long.",
     "GATE_REF_LOOKUP_CODE_CHARS": "The value code can only contain uppercase letters, digits and underscores (examples: CORRECTIVE, TYPE_A).",

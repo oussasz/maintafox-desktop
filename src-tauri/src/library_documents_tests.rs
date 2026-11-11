@@ -303,3 +303,35 @@ async fn deleting_the_current_version_restores_the_previous_one() {
     assert_eq!(listed[0].superseded_at, None);
     assert_eq!(listed[0].revision.as_deref(), Some("B"));
 }
+
+/// A revision label of an earlier version is not reused; a version that another one replaces is
+/// never current, even when its `superseded_at` came back empty (sync conflict kept an old edit).
+#[tokio::test]
+async fn the_chain_decides_what_is_current() {
+    let db = crate::db::test_db::seeded().await;
+    let dir = tempfile::tempdir().expect("temp dir");
+    let user = seeded_user(&db).await;
+    let v1 = save_library_document(&db, dir.path(), upload(Some("PR-3"), None, user))
+        .await
+        .expect("v1 (revision B)");
+    let v2 = save_library_document_version(&db, dir.path(), new_version(v1.id, Some("C"), user))
+        .await
+        .expect("v2");
+    let err = save_library_document_version(&db, dir.path(), new_version(v2.id, Some(" b "), user))
+        .await
+        .expect_err("B was v1's label");
+    assert!(refusal(&err).starts_with(GATE_REVISION_UNCHANGED));
+
+    db.execute_unprepared(&format!(
+        "UPDATE library_documents SET superseded_at = NULL WHERE id = {}",
+        v1.id
+    ))
+    .await
+    .expect("drift");
+    let listed = list_library_documents(&db, None, None).await.expect("list");
+    assert_eq!(listed.iter().map(|d| d.id).collect::<Vec<_>>(), vec![v2.id]);
+    let err = delete_library_document_record(&db, v1.id)
+        .await
+        .expect_err("v2 replaces it");
+    assert!(refusal(&err).starts_with(GATE_NOT_CURRENT));
+}

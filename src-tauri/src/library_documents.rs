@@ -33,6 +33,10 @@ pub const GATE_REVISION_REQUIRED: &str = "GATE_LIB_DOC_REVISION_REQUIRED";
 /// Refusal: a new version needs a revision label different from the version it replaces.
 pub const GATE_REVISION_UNCHANGED: &str = "GATE_LIB_DOC_REVISION_UNCHANGED";
 
+/// A current version (alias `ld`): not marked superseded, and no other version replaces it.
+const CURRENT_VERSION: &str = "ld.superseded_at IS NULL \
+     AND NOT EXISTS (SELECT 1 FROM library_documents nv WHERE nv.previous_version_id = ld.id)";
+
 /// Longest reference number or revision label kept (a reference, not a description).
 const MAX_REFERENCE_LEN: usize = 64;
 
@@ -298,7 +302,7 @@ async fn ensure_number_free(db: &impl ConnectionTrait, number: Option<&str>, exc
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id FROM library_documents \
-              WHERE UPPER(TRIM(document_number)) = UPPER(?) AND id <> ?                 AND superseded_at IS NULL LIMIT 1",
+              WHERE UPPER(TRIM(document_number)) = UPPER(?) AND id <> ? AND superseded_at IS NULL LIMIT 1",
             [number.into(), except_id.unwrap_or(-1).into()],
         ))
         .await?
@@ -345,7 +349,7 @@ pub async fn list_library_documents(
     equipment_id: Option<i64>,
 ) -> AppResult<Vec<LibraryDocumentRow>> {
     // Current versions only: earlier ones are read from a document's history.
-    let mut sql = format!("{SELECT_DOCUMENT} WHERE ld.superseded_at IS NULL");
+    let mut sql = format!("{SELECT_DOCUMENT} WHERE {CURRENT_VERSION}");
     let mut params: Vec<sea_orm::Value> = Vec::new();
 
     if let Some(ref c) = category {
@@ -405,7 +409,17 @@ async fn current_version(db: &impl ConnectionTrait, id: i64) -> AppResult<QueryR
     let superseded: Option<String> = row
         .try_get("", "superseded_at")
         .map_err(|e| decode_err("superseded_at", e))?;
-    if superseded.is_some() {
+    // A version another one replaces is never current, even when its `superseded_at` came back
+    // empty (a sync conflict resolved in favour of an older edit of it).
+    let replaced = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT 1 AS replaced FROM library_documents WHERE previous_version_id = ? LIMIT 1",
+            [id.into()],
+        ))
+        .await?
+        .is_some();
+    if superseded.is_some() || replaced {
         return Err(AppError::ValidationFailed(vec![format!(
             "{GATE_NOT_CURRENT}: This is an earlier version of the document; it is kept as it is."
         )]));
@@ -599,13 +613,15 @@ pub async fn save_library_document_version(
             "{GATE_REVISION_REQUIRED}: Enter the revision label of the new version."
         )]));
     };
-    if current
-        .revision
-        .as_deref()
-        .is_some_and(|old| old.trim().eq_ignore_ascii_case(&revision))
-    {
+    // Not the label of the current version, nor of an earlier one.
+    let history = list_library_document_versions(db, input.id).await?;
+    if history.iter().any(|v| {
+        v.revision
+            .as_deref()
+            .is_some_and(|old| old.trim().eq_ignore_ascii_case(&revision))
+    }) {
         return Err(AppError::ValidationFailed(vec![format!(
-            "{GATE_REVISION_UNCHANGED}: The new version needs a revision label different from the current one."
+            "{GATE_REVISION_UNCHANGED}: The new version needs a revision label not used by this document yet."
         )]));
     }
     store_document(
