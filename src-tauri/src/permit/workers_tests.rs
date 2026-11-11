@@ -828,30 +828,33 @@ async fn a_received_delete_of_a_padlock_or_a_worker_is_refused() {
     assert_eq!(open, 1, "the padlock stays on the box");
 }
 
-/// A padlock received still on, new here, is judged as the local placement is: on a permit issued
-/// here, a worker line not withdrawn here, and a group lock box that protects something.
+/// A padlock received still on, new here, is accepted whatever its worker line, its group lock box
+/// or its permit's status here: it only adds protection, and the group lockout here then counts it.
+/// A padlock received already taken off is still placed on a permit issued here.
 #[tokio::test]
 async fn a_received_padlock_placement_is_judged_as_the_local_one() {
     let db = setup().await;
     let (wp, iso, lock) = padlock_on(&db, "EQ-L4R-P").await;
     let received = wire_of(&db, "permit_personal_locks", &lock.entity_sync_id).await;
+    let not_here = format!(
+        "DELETE FROM permit_personal_locks WHERE entity_sync_id = '{}'",
+        lock.entity_sync_id
+    );
+    let held_sql = format!(
+        "SELECT COUNT(*) FROM permit_personal_locks WHERE entity_sync_id = '{}' AND removed_at IS NULL",
+        lock.entity_sync_id
+    );
     // Not held here yet: the padlock arrives from another PC.
-    exec(
-        &db,
-        &format!("DELETE FROM permit_personal_locks WHERE id = {}", lock.id),
-    )
-    .await;
+    exec(&db, &not_here).await;
     let verified_at = scalar_text(
         &db,
         &format!("SELECT verified_at AS v FROM permit_isolations WHERE id = {}", iso.id),
     )
     .await;
-    let cases: [(String, String, &str); 4] = [
-        (
-            format!("UPDATE work_permits SET status = 'approved' WHERE id = {}", wp.id),
-            format!("UPDATE work_permits SET status = 'active' WHERE id = {}", wp.id),
-            super::workers_sync::PERSONAL_LOCK_PERMIT_NOT_ISSUED,
-        ),
+    let approved = format!("UPDATE work_permits SET status = 'approved' WHERE id = {}", wp.id);
+    let active = format!("UPDATE work_permits SET status = 'active' WHERE id = {}", wp.id);
+    let cases: [(String, String); 4] = [
+        (approved.clone(), active.clone()),
         (
             format!(
                 "UPDATE permit_workers SET withdrawn_at = '{}', withdrawn_by_id = {APPLIER} WHERE id = {}",
@@ -862,7 +865,6 @@ async fn a_received_padlock_placement_is_judged_as_the_local_one() {
                 "UPDATE permit_workers SET withdrawn_at = NULL, withdrawn_by_id = NULL WHERE id = {}",
                 lock.worker_id
             ),
-            super::workers_sync::PERSONAL_LOCK_WORKER_WITHDRAWN,
         ),
         (
             format!("UPDATE permit_isolations SET verified_at = NULL WHERE id = {}", iso.id),
@@ -870,7 +872,6 @@ async fn a_received_padlock_placement_is_judged_as_the_local_one() {
                 "UPDATE permit_isolations SET verified_at = '{verified_at}' WHERE id = {}",
                 iso.id
             ),
-            super::workers_sync::PERSONAL_LOCK_NOTHING_PROTECTED,
         ),
         (
             format!(
@@ -879,16 +880,40 @@ async fn a_received_padlock_placement_is_judged_as_the_local_one() {
                 iso.id
             ),
             format!("UPDATE permit_isolations SET removed_at = NULL WHERE id = {}", iso.id),
-            super::workers_sync::PERSONAL_LOCK_NOTHING_PROTECTED,
         ),
     ];
-    for (break_it, restore, expected) in &cases {
+    for (break_it, restore) in &cases {
         exec(&db, break_it).await;
         let outcome = apply_entity(&db, "permit_personal_locks", &lock.entity_sync_id, &received).await;
-        assert_eq!(conflict_of(&outcome), Some(*expected), "{break_it}: {outcome:?}");
+        assert!(matches!(outcome, ApplyOutcome::Applied), "{break_it}: {outcome:?}");
+        assert_eq!(
+            scalar_i64(&db, &held_sql).await,
+            1,
+            "{break_it}: the padlock is on the box here"
+        );
+        // The group lockout here counts it: no isolation lock off, no close while it is on.
+        let err = workers::ensure_no_personal_lock_on(&db, wp.id)
+            .await
+            .expect_err("a padlock on the box");
+        assert_eq!(codes(&err), vec![CODE_PERSONAL_LOCKS_ON], "{break_it}");
+        exec(&db, &not_here).await;
         exec(&db, restore).await;
     }
-    let held = scalar_i64(
+    // Received already taken off (by its owner) on a permit not issued here: refused.
+    let placer = received.get("placed_by_sync_id").cloned().expect("placer");
+    let taken_off = with_keys(
+        received.clone(),
+        &[("removed_at", json!(stamp())), ("removed_by_sync_id", placer)],
+    );
+    exec(&db, &approved).await;
+    let outcome = apply_entity(&db, "permit_personal_locks", &lock.entity_sync_id, &taken_off).await;
+    assert_eq!(
+        conflict_of(&outcome),
+        Some(super::workers_sync::PERSONAL_LOCK_PERMIT_NOT_ISSUED),
+        "{outcome:?}"
+    );
+    exec(&db, &active).await;
+    let written = scalar_i64(
         &db,
         &format!(
             "SELECT COUNT(*) FROM permit_personal_locks WHERE entity_sync_id = '{}'",
@@ -896,10 +921,7 @@ async fn a_received_padlock_placement_is_judged_as_the_local_one() {
         ),
     )
     .await;
-    assert_eq!(held, 0, "nothing written");
-    // On an active permit whose box protects the work, by its listed worker: applied.
-    let outcome = apply_entity(&db, "permit_personal_locks", &lock.entity_sync_id, &received).await;
-    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(written, 0, "nothing written");
 }
 
 /// An isolation lock received as fitted by a worker with a forced removal of their padlock they were

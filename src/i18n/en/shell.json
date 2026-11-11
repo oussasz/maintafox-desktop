@@ -268,8 +268,6 @@
       "PERMIT_PERSONAL_LOCK_PLACEMENT_INVALID": "A personal padlock placed without who or when, or at an unreadable or future time",
       "PERMIT_PERSONAL_LOCK_NOT_OWNER": "A personal padlock placed by someone other than the worker of its line",
       "PERMIT_PERSONAL_LOCK_PERMIT_NOT_ISSUED": "A personal padlock placed on another PC on a permit not issued here",
-      "PERMIT_PERSONAL_LOCK_NOTHING_PROTECTED": "A personal padlock placed on another PC on a group lock box that protects nothing here (no isolation verified, or one taken off)",
-      "PERMIT_PERSONAL_LOCK_WORKER_WITHDRAWN": "A personal padlock still on the group lock box, placed by a worker withdrawn from the permit here",
       "PERMIT_WORKER_RECORD_CHANGED": "Who a permit worker is, their induction or their withdrawal, held here, was changed",
       "PERMIT_WORKER_WITHDRAWN_LOCK_ON": "A worker withdrawn from a permit while their padlock is still on the group lock box here",
       "PERMIT_ISOLATION_PERSONAL_LOCKS_ON": "An isolation lock taken off while a personal padlock is still on the group lock box here",
