@@ -937,6 +937,10 @@ pub async fn ingest_failure_event_from_closed_wo<C: ConnectionTrait>(
         .map_err(|e| decode_err("created_at", e))?;
 
     let t_detect = actual_start.clone().or_else(|| Some(created_at.clone()));
+    // A dépannage carries its own times (EN 13306, CMMS Advisor decision 2026-11-04): found at its
+    // "panne constatée à", down from the breakdown when the machine was stopped (else from the later
+    // machine stop recorded), back in service at the verification confirming it (else the close).
+    let depannage = crate::wo::depannage_validation::depannage_times(db, wo_id).await?;
 
     let fd_row = db
         .query_one(Statement::from_sql_and_values(
@@ -982,7 +986,21 @@ pub async fn ingest_failure_event_from_closed_wo<C: ConnectionTrait>(
         ))
         .await?
         .ok_or_else(|| AppError::SyncError("downtime sum missing.".into()))?;
-    let downtime_h: f64 = dt_row.try_get("", "h").map_err(|e| decode_err("h", e))?;
+    let segments_downtime_h: f64 = dt_row.try_get("", "h").map_err(|e| decode_err("h", e))?;
+    // The machine stopped at the breakdown: down from the breakdown until it is back in service
+    // (never less than the downtime segments recorded).
+    let downtime_h = match depannage.as_ref().and_then(|d| d.stopped_hours) {
+        Some(stopped) => stopped.max(segments_downtime_h),
+        None => segments_downtime_h,
+    };
+    let (detected_at, failed_at, restored_at) = match &depannage {
+        Some(d) => (
+            d.breakdown_at.clone().or(t_detect),
+            d.downtime_start.clone().or_else(|| d.breakdown_at.clone()),
+            d.restored_at.clone().or_else(|| closed_at.clone()),
+        ),
+        None => (t_detect, actual_start.clone(), closed_at.clone()),
+    };
 
     let wh_row = db
         .query_one(Statement::from_sql_and_values(
@@ -1064,9 +1082,9 @@ pub async fn ingest_failure_event_from_closed_wo<C: ConnectionTrait>(
                 WO_FAILURE_SOURCE.into(),
                 wo_id.into(),
                 equipment_id.into(),
-                opt_string(t_detect),
-                opt_string(actual_start.clone()),
-                opt_string(closed_at.clone()),
+                opt_string(detected_at),
+                opt_string(failed_at),
+                opt_string(restored_at),
                 downtime_h.into(),
                 labor_h.into(),
                 waiting_h.into(),

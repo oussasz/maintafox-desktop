@@ -346,6 +346,18 @@ fn stored_values(wo: &WorkOrder) -> Vec<(&'static str, serde_json::Value)> {
             wo.machine_stopped
                 .map_or(serde_json::Value::Null, serde_json::Value::Bool),
         ),
+        // Its validation after the fact (`wo::depannage_validation`).
+        (
+            "validated_by_id",
+            wo.validated_by_id
+                .map_or(serde_json::Value::Null, serde_json::Value::from),
+        ),
+        ("validated_at", opt_text(wo.validated_at.as_deref())),
+        (
+            "validation_auto_approved",
+            wo.validation_auto_approved
+                .map_or(serde_json::Value::Null, serde_json::Value::Bool),
+        ),
     ]
 }
 

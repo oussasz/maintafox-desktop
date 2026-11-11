@@ -244,6 +244,7 @@
       "wo__depannage_started": "OT dépannage créé et démarré",
       "wo__depannage_waiting_permit": "OT dépannage créé, en attente de permis",
       "wo__breakdown_at_changed": "Date de constat de la panne modifiée",
+      "wo__depannage_validated": "Dépannage validé",
       "wo__started": "Travaux de l'OT démarrés",
       "wo__paused": "OT mis en pause",
       "wo__resumed": "OT repris",
