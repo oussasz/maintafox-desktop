@@ -782,6 +782,7 @@
     "bases": {
       "roster": "Classes horaires",
       "rest_day": "Repos",
+      "site_rest_day": "Repos du site",
       "holiday": "Jour férié",
       "no_schedule": "Aucune classe horaire",
       "no_members": "Aucun membre"

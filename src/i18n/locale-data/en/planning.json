@@ -141,6 +141,7 @@
     "capacityBasis": {
       "roster": "from the schedule classes",
       "rest_day": "rest day",
+      "site_rest_day": "site rest day",
       "holiday": "holiday",
       "no_schedule": "no schedule class",
       "no_members": "no team members"
@@ -406,6 +407,8 @@
     "publish": "Publish to crews",
     "requestUnfreeze": "Request unfreeze",
     "freezeDue": "Freezes automatically on {{at}}",
+    "freezeOverdue": "Automatic freeze was due on {{at}}: it applies the next time the application runs, or freeze the week yourself.",
+    "freezeOverdueNoCrews": "Automatic freeze was due on {{at}} but not applied: no crew is attached to this site.",
     "frozenAt": "Frozen on {{at}}",
     "frozenAutomatically": "Frozen automatically on {{at}}",
     "unfreezePending": "Unfreeze requested on {{at}}: {{reason}}. Another planner must decide it.",
@@ -417,7 +420,7 @@
     "crew": "Crew",
     "dayOff": "rest day",
     "frozenJob": "Frozen",
-    "noCrews": "No active crew belongs to this site.",
+    "noCrews": "No active crew belongs to this site (crews without a site are listed in the banner above: attach them to a site).",
     "history": "Week history",
     "system": "System",
     "events": {

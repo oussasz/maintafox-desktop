@@ -535,6 +535,8 @@ pub fn run() {
         commands::pm::duplicate_pm_plan,
         commands::pm::update_pm_plan,
         commands::pm::transition_pm_plan_lifecycle,
+        commands::pm::get_pm_plan_coverage,
+        commands::pm::set_pm_plan_covered_by,
         commands::pm::list_pm_plan_versions,
         commands::pm::create_pm_plan_version,
         commands::pm::update_pm_plan_version,

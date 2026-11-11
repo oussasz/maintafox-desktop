@@ -623,6 +623,8 @@ pub const ROW_SPECS: &[RowSpec] = &[
             r("assigned_team_id", "teams"),
             // A plan points to its current version, which points back to the plan.
             soft("current_version_id", "pm_plan_versions"),
+            // The plan whose work includes this plan's (nested plans, `pm::coverage`); back edge of the chain.
+            soft("covered_by_plan_id", "pm_plans"),
         ],
     ),
     RowSpec {

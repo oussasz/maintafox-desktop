@@ -532,3 +532,27 @@ mod session_actor_tests {
         assert_eq!(actor, Some(7));
     }
 }
+
+/// Nested plans (L1-15): the plan that covers this one and the plans it covers.
+#[tauri::command]
+pub async fn get_pm_plan_coverage(
+    plan_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<crate::pm::coverage::PmPlanCoverage> {
+    let user = require_session!(state);
+    require_view_plan(&state, &user, plan_id).await?;
+    crate::pm::coverage::get_coverage(&state.db, plan_id).await
+}
+
+/// Sets or clears the plan that covers this one: `pm.edit` at the plan's anchor. Both plans target
+/// the same asset, so the covering plan sits at the same anchor.
+#[tauri::command]
+pub async fn set_pm_plan_covered_by(
+    plan_id: i64,
+    covered_by_plan_id: Option<i64>,
+    state: State<'_, AppState>,
+) -> AppResult<crate::pm::coverage::PmPlanCoverage> {
+    let user = require_session!(state);
+    require_on_plan(&state, &user, crate::rbac::permissions::PM_EDIT, plan_id).await?;
+    crate::pm::coverage::set_covered_by(&state.db, plan_id, covered_by_plan_id).await
+}
