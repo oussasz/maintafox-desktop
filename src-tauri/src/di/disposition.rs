@@ -66,6 +66,13 @@ pub async fn validate_close_disposition(
         }
     }
 
+    // A rejection always says why: the requester reads it, and the planner may be asked about it.
+    if code == DISPOSITION_REJECTED_INVALID && notes.map(str::trim).unwrap_or("").is_empty() {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_DI_REJECT_REASON_REQUIRED: Un motif est obligatoire pour rejeter une demande.".into(),
+        ]));
+    }
+
     if code == DISPOSITION_DUPLICATE {
         let Some(related_id) = related_di_id else {
             return Err(AppError::ValidationFailed(vec![

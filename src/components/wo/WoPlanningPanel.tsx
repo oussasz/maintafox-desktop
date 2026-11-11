@@ -53,6 +53,7 @@ import {
 import {
   PERMIT_REQUIREMENT_EDITABLE_STATUSES,
   SHUTDOWN_FLAG_EDITABLE_STATUSES,
+  assignWo,
   emergencyReassignWo,
   evaluateWoReadiness,
   planWo,
@@ -249,6 +250,8 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
     const siteAccess = useWoAccess(wo);
     const canAtSite = siteAccess.can;
     const canEmergencyAssign = canAtSite(P.OT_EMERGENCY_ASSIGN);
+    // Routine assignment ("Affecter") needs only the right to edit the work order at its site.
+    const canAssign = canAtSite(P.OT_EDIT);
     // Naming the planner needs ot.approve or plan.confirm at the site (CMMS Advisor 2026-11-06,
     // `plan_wo`): greyed with the reason once the rights are read; the recorded planner is kept.
     const mayChoosePlanner = canAtSite(P.OT_APPROVE) || canAtSite(P.PLAN_CONFIRM);
@@ -857,8 +860,9 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
       />
     );
 
-    const handleEmergencyReassign = useCallback(
-      async (reason: string) => {
+    // `reason` null = routine assignment; a reason = the emergency override (waives the gates).
+    const submitAssignment = useCallback(
+      async (reason: string | null) => {
         if (!assignReady || !requireActor) return;
         setEmergencyBusy(true);
         setError(null);
@@ -871,15 +875,24 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
             newTeam != null && newTeam !== wo.assigned_team_id
               ? shiftSaveFields(shiftTouched, shiftVersionId, wo)
               : {};
-          const next = await emergencyReassignWo({
-            wo_id: wo.id,
-            actor_id: requireActor,
-            expected_row_version: rowVersion,
-            assigned_team_id: newTeam,
-            primary_responsible_id: parseNumber(primaryResponsibleId),
-            override_reason: reason,
-            ...shiftForNewTeam,
-          });
+          const next =
+            reason === null
+              ? await assignWo({
+                  wo_id: wo.id,
+                  actor_id: requireActor,
+                  expected_row_version: rowVersion,
+                  assigned_team_id: newTeam,
+                  primary_responsible_id: parseNumber(primaryResponsibleId),
+                })
+              : await emergencyReassignWo({
+                  wo_id: wo.id,
+                  actor_id: requireActor,
+                  expected_row_version: rowVersion,
+                  assigned_team_id: newTeam,
+                  primary_responsible_id: parseNumber(primaryResponsibleId),
+                  override_reason: reason,
+                  ...shiftForNewTeam,
+                });
           setRowVersion(next.row_version);
           setStatusCode(next.status_code ?? statusCode);
           setShiftTouched(false);
@@ -1342,9 +1355,9 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
             </Button>
           </div>
 
-          {(isPlanningEditable || isReadyScheduleEditable) && canEmergencyAssign && (
+          {(isPlanningEditable || isReadyScheduleEditable) && (canAssign || canEmergencyAssign) && (
             <div className="space-y-3 border-t pt-3">
-              <p className="text-xs text-muted-foreground">{t("planning.emergencyReassignHint")}</p>
+              <p className="text-xs text-muted-foreground">{t("planning.assignHint")}</p>
               <div className="grid gap-3 md:grid-cols-2">
                 <div className="space-y-1">
                   <Label>{t("planning.assignedTeamId")}</Label>
@@ -1402,20 +1415,44 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
               {noTeamLeadUser ? (
                 <p className="text-xs text-muted-foreground">{t("planning.noTeamLeadUser")}</p>
               ) : null}
-              <Button
-                type="button"
-                variant="destructive"
-                onClick={() => setEmergencyOpen(true)}
-                disabled={
-                  allFieldsDisabled ||
-                  scheduleFrozen ||
-                  !assignReady ||
-                  !requireActor ||
-                  emergencyBusy
-                }
-              >
-                {t("planning.emergencyReassign")}
-              </Button>
+              <div className="flex flex-wrap items-center gap-2">
+                {canAssign ? (
+                  <Button
+                    type="button"
+                    onClick={() => void submitAssignment(null)}
+                    disabled={
+                      allFieldsDisabled ||
+                      scheduleFrozen ||
+                      !assignReady ||
+                      !requireActor ||
+                      emergencyBusy
+                    }
+                  >
+                    {t("planning.assignAction")}
+                  </Button>
+                ) : null}
+                {canEmergencyAssign ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setEmergencyOpen(true)}
+                    disabled={
+                      allFieldsDisabled ||
+                      scheduleFrozen ||
+                      !assignReady ||
+                      !requireActor ||
+                      emergencyBusy
+                    }
+                  >
+                    {t("planning.emergencyReassign")}
+                  </Button>
+                ) : null}
+              </div>
+              {canEmergencyAssign ? (
+                <p className="text-xs text-muted-foreground">
+                  {t("planning.emergencyReassignHint")}
+                </p>
+              ) : null}
               {!requireActor && (
                 <span className="text-sm text-muted-foreground">
                   {t("planning.sessionRequired")}
@@ -1429,7 +1466,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
             onOpenChange={setEmergencyOpen}
             title={t("planning.emergencyOverrideTitle")}
             description={t("planning.emergencyOverrideDescription")}
-            onConfirm={(reason) => void handleEmergencyReassign(reason)}
+            onConfirm={(reason) => void submitAssignment(reason)}
           />
         </section>
 

@@ -949,7 +949,8 @@ pub async fn approve_planning(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// G) assign_wo — ot.edit (requires override_reason; prefer emergency_reassign_wo)
+// G) assign_wo — ot.edit at the work order's site (routine "Affecter", no waiver reason; the
+//    emergency override is emergency_reassign_wo)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
@@ -958,16 +959,9 @@ pub async fn assign_wo(
     state: State<'_, AppState>,
 ) -> AppResult<crate::wo::domain::WorkOrder> {
     let user = require_session!(state);
-    require_on_wo(
-        &state,
-        user.user_id,
-        crate::rbac::permissions::OT_EMERGENCY_ASSIGN,
-        input.wo_id,
-    )
-    .await?;
+    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
     // The actor is the signed-in user, never an id sent by the screen.
     input.actor_id = i64::from(user.user_id);
-    let reason = input.override_reason.clone();
     let before = queries::get_work_order(&state.db, input.wo_id).await.ok().flatten();
     let expected = input.expected_row_version;
     let wo = execution::assign_wo(&state.db, input).await?;
@@ -975,10 +969,10 @@ pub async fn assign_wo(
         &state.db,
         audit::WoAuditInput {
             wo_id: Some(wo.id),
-            action: "emergency_reassigned".into(),
+            action: "assigned".into(),
             actor_id: Some(i64::from(user.user_id)),
-            summary: Some("Work order emergency reassigned".into()),
-            details_json: Some(serde_json::json!({ "override_reason": reason }).to_string()),
+            summary: Some("Work order assigned".into()),
+            details_json: None,
             requires_step_up: false,
             apply_result: "applied".into(),
         },
