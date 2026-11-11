@@ -5,6 +5,7 @@ pub mod audit;
 pub mod backlog;
 pub mod closeout;
 pub mod closeout_reference_catalog;
+pub mod failure_catalogue;
 pub(crate) mod closeout_sync;
 pub mod costs;
 pub mod delay;
