@@ -340,6 +340,15 @@ pub async fn record_lifecycle_event(
     if payload.event_type == "DECOMMISSIONED" {
         return Err(AppError::ValidationFailed(vec![DECOMMISSION_THROUGH_DECLASSER.into()]));
     }
+    // A parent change is recorded only by "Déplacer le composant" (`hierarchy::move_asset_component`),
+    // which changes the hierarchy in the same transaction: never a bare event.
+    if payload.event_type == PARENT_CHANGED_EVENT_TYPE {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_ASSET_PARENT_CHANGE_THROUGH_MOVE: Un changement de parent s'enregistre par \
+             « Déplacer le composant »."
+                .into(),
+        ]));
+    }
     let txn = db.begin().await?;
     let event = record_lifecycle_event_in(&txn, payload, actor_id).await?;
     txn.commit().await?;
@@ -563,6 +572,90 @@ pub(crate) async fn move_asset_recorded_in(
             audit_move_in(txn, asset_id, None, to_node_id, actor_id).await
         }
     }
+}
+
+/// Lifecycle event type of a component posed on / removed from a parent asset (L2-03).
+pub(crate) const PARENT_CHANGED_EVENT_TYPE: &str = "PARENT_CHANGED";
+/// Audit action of a component move between parent assets (L2-03).
+pub(crate) const ASSET_PARENT_CHANGED_EVENT: &str = "asset.parent_changed";
+
+/// A component's parent change, as recorded by "Déplacer le composant".
+#[derive(Debug, Clone)]
+pub(crate) struct ParentChange {
+    pub asset_id: i64,
+    /// Effective date-time of the move (end of the old relation, start of the new one).
+    pub occurred_at: String,
+    /// `None`: first installation.
+    pub from_parent_asset_id: Option<i64>,
+    /// `None`: removal to stock.
+    pub to_parent_asset_id: Option<i64>,
+    pub relation_type: String,
+    pub notes: Option<String>,
+}
+
+/// Records a `PARENT_CHANGED` event (the parents in `details_json`, the new parent — else the old
+/// one — as `related_asset_id`) and its audit entry, in the caller's transaction. The hierarchy
+/// write is the caller's (`hierarchy::move_asset_component`).
+pub(crate) async fn record_parent_change_in(
+    txn: &DatabaseTransaction,
+    change: ParentChange,
+    actor_id: i32,
+) -> AppResult<AssetLifecycleEvent> {
+    validate_event_type(txn, PARENT_CHANGED_EVENT_TYPE).await?;
+    assert_asset_exists(txn, change.asset_id).await?;
+    let details = serde_json::json!({
+        "from_parent_asset_id": change.from_parent_asset_id,
+        "to_parent_asset_id": change.to_parent_asset_id,
+        "relation_type": change.relation_type,
+    })
+    .to_string();
+    let entity_sync_id = Uuid::new_v4().to_string();
+    let now = crate::clock::now().to_rfc3339();
+    txn.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO equipment_lifecycle_events (entity_sync_id, equipment_id, event_type, occurred_at, related_asset_id, details_json, notes, performed_by_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            entity_sync_id.clone().into(),
+            change.asset_id.into(),
+            PARENT_CHANGED_EVENT_TYPE.into(),
+            change.occurred_at.clone().into(),
+            change.to_parent_asset_id.or(change.from_parent_asset_id).into(),
+            details.clone().into(),
+            change.notes.clone().into(),
+            i64::from(actor_id).into(),
+            now.into(),
+        ],
+    ))
+    .await?;
+
+    let target = change.asset_id.to_string();
+    let mut audit_detail: serde_json::Value = serde_json::from_str(&details)
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("parent change details: {e}")))?;
+    audit_detail["effective_at"] = serde_json::Value::String(change.occurred_at);
+    audit_detail["notes"] = change.notes.map_or(serde_json::Value::Null, serde_json::Value::String);
+    crate::audit::emit_in(
+        txn,
+        crate::audit::AuditEvent {
+            event_type: ASSET_PARENT_CHANGED_EVENT,
+            actor_id: Some(actor_id),
+            entity_type: Some("equipment"),
+            entity_id: Some(&target),
+            summary: "Equipment component moved",
+            detail_json: Some(audit_detail.to_string()),
+            ..Default::default()
+        },
+    )
+    .await?;
+
+    let row = txn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!("SELECT {EVENT_SELECT} FROM equipment_lifecycle_events WHERE entity_sync_id = ?"),
+            [entity_sync_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("parent change event not found after insert")))?;
+    map_lifecycle_event(&row)
 }
 
 async fn audit_move_in(

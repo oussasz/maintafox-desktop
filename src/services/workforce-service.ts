@@ -48,6 +48,7 @@ export type PersonDayCapacity = z.infer<typeof PersonDayCapacitySchema>;
 export const TEAM_CAPACITY_BASES = [
   "roster",
   "rest_day",
+  "site_rest_day",
   "holiday",
   "no_schedule",
   "no_members",

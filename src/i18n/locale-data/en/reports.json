@@ -35,7 +35,12 @@
         "days90": "90 days",
         "months12": "12 months",
         "orgScope": "Organization",
-        "allOrgs": "All organizations"
+        "allOrgs": "All organizations",
+        "thisMonth": "Current month",
+        "thisYear": "Current year",
+        "custom": "Free period…",
+        "customFrom": "From",
+        "customHint": "until today (366 days at most). Current month and year: whole elapsed days, today included."
       },
       "widgets": {
         "opsKpis": "Operational KPIs",
@@ -76,7 +81,9 @@
         "overdue": "Requests open > 7 days + overdue PM + overdue work orders",
         "costSettled": "Booked to the budget by Finance, last {{days}} days",
         "costPending_one": "Last {{days}} days · {{count}} closed work order not yet costed",
-        "costPending_other": "Last {{days}} days · {{count}} closed work orders not yet costed"
+        "costPending_other": "Last {{days}} days · {{count}} closed work orders not yet costed",
+        "thisMonth": "Current month",
+        "thisYear": "Current year"
       },
       "diStatus": {
         "openList": "Open the requests",
@@ -115,7 +122,7 @@
     "name": "Title",
     "defaultFormat": "Default format",
     "actions": "Export now",
-    "subtitle": "Generate a report now as PDF or Excel. You choose where the file is saved.",
+    "subtitle": "Generate a report now as PDF or Excel. You choose where the file is saved. Each template covers a fixed period and scope (the whole plant): for another period or line, use the export of the relevant module (filtered list) or the dashboard.",
     "loading": "Loading the report templates…",
     "loadError": "The report templates could not be loaded",
     "empty": "No report template is available.",
@@ -149,7 +156,7 @@
     "delete": "Delete",
     "next": "Next run",
     "noAccess": "You do not have permission to manage report schedules.",
-    "subtitle": "Reports generated automatically and kept in the history, where you can download them.",
+    "subtitle": "Reports generated automatically and kept in the history, where you can download them. They are not sent by email and only run while Maintafox is open at the scheduled time; a missed report is generated at the next start.",
     "newTitle": "New schedule",
     "frequency": "Frequency",
     "frequencies": {

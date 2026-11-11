@@ -336,5 +336,15 @@
     "none": "Sans urgence",
     "targetsShort": "Prise en charge ≤ {{response}} h · réalisation ≤ {{completion}} h",
     "targetsTooltip": "Délais cibles : prise en charge ≤ {{response}} h, réalisation ≤ {{completion}} h"
+  },
+  "personnelLink": {
+    "message": {
+      "rounds": "Votre compte n'est lié à aucune fiche du personnel : vous ne pouvez pas enregistrer de relevés de ronde (les mesures sont attribuées à une personne). Reliez d'abord votre compte à une fiche.",
+      "myWork": "Votre compte n'est lié à aucune fiche du personnel : « Mon travail » ne peut pas retrouver vos OT, demandes et rondes, c'est pourquoi les chiffres restent à zéro."
+    },
+    "linkAccount": "Lier mon compte à une fiche (Administration > Utilisateurs)",
+    "openPersonnel": "Ouvrir le Personnel (créer la fiche)",
+    "askAdmin": "Demandez à un administrateur de lier votre compte à votre fiche du personnel.",
+    "howTo": "Si la fiche n'existe pas encore, créez-la dans Personnel, puis ouvrez votre compte dans Administration > Utilisateurs et choisissez-la."
   }
 }
