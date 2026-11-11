@@ -787,3 +787,72 @@ pub async fn add_inspection_evidence(
     txn.commit().await?;
     Ok(ev)
 }
+
+/// One reading of a measurement point in a past round (L1-19: the trend of a point over months).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct InspectionPointReading {
+    pub round_id: i64,
+    pub recorded_at: String,
+    pub numeric_value: f64,
+    pub result_status: String,
+    pub normal_min: Option<f64>,
+    pub normal_max: Option<f64>,
+    pub warning_min: Option<f64>,
+    pub warning_max: Option<f64>,
+    pub measurement_unit: Option<String>,
+}
+
+/// The numeric readings recorded for the point `checkpoint_code` of a checklist over the last
+/// `days` days (all versions of the checklist), oldest first. The limits are those of the version
+/// each reading was taken with.
+pub async fn list_point_trend(
+    db: &impl ConnectionTrait,
+    template_id: i64,
+    checkpoint_code: &str,
+    days: i64,
+) -> AppResult<Vec<InspectionPointReading>> {
+    let days = days.clamp(1, 1830);
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            concat!(
+                "SELECT r.round_id, r.recorded_at, r.numeric_value, r.result_status, c.normal_min, c.normal_max, \
+                 c.warning_min, c.warning_max, ",
+                crate::reference::units::unit_symbol_of!("c.measurement_unit_id"),
+                " AS measurement_unit \
+                 FROM inspection_results r \
+                 JOIN inspection_checkpoints c ON c.id = r.checkpoint_id \
+                 JOIN inspection_template_versions v ON v.id = c.template_version_id \
+                 WHERE v.template_id = ? AND c.checkpoint_code = ? AND r.numeric_value IS NOT NULL \
+                   AND r.recorded_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ?) \
+                 ORDER BY r.recorded_at ASC, r.id ASC"
+            ),
+            [
+                template_id.into(),
+                checkpoint_code.trim().to_string().into(),
+                format!("-{days} days").into(),
+            ],
+        ))
+        .await?;
+    rows.iter()
+        .map(|r| {
+            Ok(InspectionPointReading {
+                round_id: r.try_get("", "round_id").map_err(|e| decode_err("round_id", e))?,
+                recorded_at: r.try_get("", "recorded_at").map_err(|e| decode_err("recorded_at", e))?,
+                numeric_value: r
+                    .try_get("", "numeric_value")
+                    .map_err(|e| decode_err("numeric_value", e))?,
+                result_status: r
+                    .try_get("", "result_status")
+                    .map_err(|e| decode_err("result_status", e))?,
+                normal_min: r.try_get("", "normal_min").map_err(|e| decode_err("normal_min", e))?,
+                normal_max: r.try_get("", "normal_max").map_err(|e| decode_err("normal_max", e))?,
+                warning_min: r.try_get("", "warning_min").map_err(|e| decode_err("warning_min", e))?,
+                warning_max: r.try_get("", "warning_max").map_err(|e| decode_err("warning_max", e))?,
+                measurement_unit: r
+                    .try_get("", "measurement_unit")
+                    .map_err(|e| decode_err("measurement_unit", e))?,
+            })
+        })
+        .collect()
+}

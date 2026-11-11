@@ -652,3 +652,26 @@ export function recordPmMeterReading(input: RecordPmMeterReadingInput): Promise<
 export function createPmRevisionFromFinding(findingId: number): Promise<PmPlanVersion> {
   return invokeParsed("create_pm_revision_from_finding", { findingId }, PmPlanVersionSchema);
 }
+
+const PmPlanRefSchema = z.object({ id: z.number(), code: z.string(), title: z.string() });
+const PmPlanCoverageSchema = z.object({
+  plan_id: z.number(),
+  covered_by: PmPlanRefSchema.nullable(),
+  covers: z.array(PmPlanRefSchema),
+});
+
+export type PmPlanCoverage = z.infer<typeof PmPlanCoverageSchema>;
+export type PmPlanRef = z.infer<typeof PmPlanRefSchema>;
+
+/** Nested plans (L1-15): the plan that covers this one, and the plans it covers. */
+export function getPmPlanCoverage(planId: number): Promise<PmPlanCoverage> {
+  return invokeParsed("get_pm_plan_coverage", { planId }, PmPlanCoverageSchema);
+}
+
+/** Sets (or clears, with null) the plan that covers this one. */
+export function setPmPlanCoveredBy(
+  planId: number,
+  coveredByPlanId: number | null,
+): Promise<PmPlanCoverage> {
+  return invokeParsed("set_pm_plan_covered_by", { planId, coveredByPlanId }, PmPlanCoverageSchema);
+}

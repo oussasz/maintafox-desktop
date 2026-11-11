@@ -142,7 +142,11 @@ export function WeeklySchedulePanel() {
 
   let freezeLine: string | null = null;
   if (view && (status === "draft" || status === "approved")) {
-    freezeLine = t("weekly.freezeDue", { at: formatDateTime(view.freeze_due_at) });
+    const at = formatDateTime(view.freeze_due_at);
+    const overdue = new Date(view.freeze_due_at).getTime() < Date.now();
+    freezeLine = overdue
+      ? t(view.crews.length === 0 ? "weekly.freezeOverdueNoCrews" : "weekly.freezeOverdue", { at })
+      : t("weekly.freezeDue", { at });
   } else if (schedule?.frozen_at) {
     freezeLine =
       schedule.frozen_by_id == null

@@ -340,7 +340,18 @@ export function AssetDetailDialog({ onBackToOrigin }: { onBackToOrigin?: () => v
                   />
                 </TabsContent>
                 <TabsContent value="structure" className="pt-3">
-                  <AssetStructureTab asset={asset} onOpenAsset={selectAsset} />
+                  <AssetStructureTab
+                    asset={asset}
+                    onOpenAsset={selectAsset}
+                    onMoved={async () => {
+                      pushAppToast({
+                        title: t("moveComponent.done", { code: asset.asset_code }),
+                        variant: "success",
+                      });
+                      await reload();
+                      void runSearch();
+                    }}
+                  />
                 </TabsContent>
                 <TabsContent value="maintenance" className="pt-3">
                   <AssetMaintenanceTab asset={asset} />

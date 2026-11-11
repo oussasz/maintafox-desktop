@@ -458,7 +458,7 @@ describe("BudgetPeriodsPanel", () => {
     ]);
     render(<BudgetPeriodsPanel fiscalYear={2025} currency="DZD" />);
     await screen.findByText("January 2025");
-    expect(screen.queryByRole("button", { name: "Close" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Close the month" })).not.toBeInTheDocument();
   });
 
   it("closes an ended month and keeps a month with pending OTs locked", async () => {
@@ -481,13 +481,17 @@ describe("BudgetPeriodsPanel", () => {
     svc.listBudgetPeriods.mockResolvedValue(months);
     svc.closeBudgetPeriod.mockResolvedValue(months);
     render(<BudgetPeriodsPanel fiscalYear={2025} currency="DZD" />);
-    const buttons = await screen.findAllByRole("button", { name: "Close" });
+    const buttons = await screen.findAllByRole("button", { name: "Close the month" });
     expect(buttons).toHaveLength(12);
+    // L7-13: the twelve ended months still open are announced above the table.
+    expect(screen.getByRole("status").textContent).toContain(
+      "12 months have ended and are still open",
+    );
     expect(buttons[1]).toBeDisabled();
     fireEvent.click(buttons[0] as HTMLElement);
     const dialog = await screen.findByRole("dialog");
     const confirm = Array.from(dialog.querySelectorAll("button")).find(
-      (b) => b.textContent === "Close",
+      (b) => b.textContent === "Close the month",
     );
     fireEvent.click(confirm as HTMLElement);
     await waitFor(() =>

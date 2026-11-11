@@ -61,7 +61,7 @@
       "history": "Historique"
     },
     "fields": {
-      "sourceInspectionRound": "Tournée d'inspection",
+      "sourceInspectionRound": "Ronde d'inspection",
       "number": "Numéro",
       "subject": "Objet",
       "description": "Description",

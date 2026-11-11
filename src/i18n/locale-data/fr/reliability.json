@@ -788,6 +788,7 @@
       "colData": "Données",
       "noStudy": "Aucune",
       "selectAsset": "Sélectionner {{code}}",
+      "openFailures": "Voir les OT des pannes de {{code}}",
       "shareLabel": "{{share}} de l'arrêt du parc",
       "handedError": "L'équipement transmis n'a pas pu être chargé",
       "handedSelected": "{{code}} est sélectionné pour une étude."

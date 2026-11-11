@@ -15,7 +15,7 @@ use crate::reliability::study::fleet_kpis::{fleet_kpis, horizon_start, FleetScop
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct AnalyticsExecutiveFilter {
-    /// Inclusive horizon length in days (7, 30, 90 or 365 = 12 months).
+    /// Inclusive period length in days (1 to 366; 365 = 12 calendar months).
     pub horizon_days: i64,
     /// Optional org node scope (`org_nodes.id`). Applied as DI.org_node_id / WO.entity_id / equipment.installed_at_node_id.
     pub org_node_id: Option<i64>,
@@ -117,13 +117,13 @@ pub struct AnalyticsExecutiveDashboard {
     pub smrp: Option<SmrpKpis>,
 }
 
-/// The horizon selector's choices (7, 30, 90 days or 12 months = 365 days); anything else is
+/// The period selector's choices: 1 to 366 days (365 = 12 calendar months); anything else is
 /// refused, never silently replaced by a default.
 fn checked_horizon(days: i64) -> AppResult<i64> {
     match days {
-        7 | 30 | 90 | 365 => Ok(days),
+        1..=366 => Ok(days),
         other => Err(AppError::ValidationFailed(vec![format!(
-            "GATE_ANA_HORIZON_INVALID:value={other}: analytics horizon must be 7, 30, 90 or 365 days (got {other})"
+            "GATE_ANA_HORIZON_INVALID:value={other}: analytics horizon must be 1 to 366 days (got {other})"
         )])),
     }
 }
