@@ -2,6 +2,7 @@
 
 pub mod access;
 pub mod compliance;
+pub mod coverage;
 pub mod domain;
 pub mod duplicate;
 pub mod generation;

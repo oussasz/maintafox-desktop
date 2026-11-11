@@ -184,13 +184,13 @@
         "awaiting": "Attendent ma réponse"
       },
       "rounds": {
-        "title": "Mes tournées d'inspection",
+        "title": "Mes rondes d'inspection",
         "overdue": "En retard",
         "today": "Aujourd'hui",
         "next7": "7 prochains jours",
-        "listAria": "Mes tournées à faire",
-        "empty": "Aucune tournée à faire ne vous est attribuée.",
-        "notLinked": "Votre compte n'est relié à aucune fiche du personnel : aucune tournée ne peut vous être attribuée. Demandez à l'administrateur de relier votre compte (Personnel)."
+        "listAria": "Mes rondes à faire",
+        "empty": "Aucune ronde à faire ne vous est attribuée.",
+        "notLinked": "Votre compte n'est relié à aucune fiche du personnel : aucune ronde ne peut vous être attribuée. Demandez à l'administrateur de relier votre compte (Personnel)."
       },
       "pm": {
         "title": "Mes MP",
@@ -344,9 +344,9 @@
       "myWoDeisolation": "OT terminés dont un cadenas est encore posé sous leurs permis, dont vous êtes responsable ou dont vous avez posé un cadenas : ils restent ici jusqu'à la vérification de la dépose du dernier cadenas.",
       "myDiOpen": "Demandes que vous avez soumises, ni clôturées ni transformées en OT (file « Mes demandes »).",
       "myDiAwaiting": "Vos demandes renvoyées pour complément : elles attendent votre réponse.",
-      "roundOverdue": "Tournées qui vous sont attribuées, à faire (planifiée, lancée, en cours) et dont l'heure prévue est passée (même règle que le module Inspections).",
-      "roundToday": "Tournées à faire prévues plus tard aujourd'hui (jour local).",
-      "roundNext7": "Tournées à faire prévues dans les 7 prochains jours, après aujourd'hui.",
+      "roundOverdue": "Rondes qui vous sont attribuées, à faire (planifiée, lancée, en cours) et dont l'heure prévue est passée (même règle que le module Inspections).",
+      "roundToday": "Rondes à faire prévues plus tard aujourd'hui (jour local).",
+      "roundNext7": "Rondes à faire prévues dans les 7 prochains jours, après aujourd'hui.",
       "pmOverdue": "Occurrences de MP en attente dont la fin de la fenêtre de tolérance (ou l'échéance sans fenêtre) est dépassée (même règle que la page MP).",
       "pmNext7": "Occurrences de MP en attente dues dans les 7 prochains jours.",
       "pmToday": "Occurrences de MP en attente dues aujourd'hui.",

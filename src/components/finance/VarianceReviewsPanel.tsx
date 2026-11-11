@@ -64,12 +64,15 @@ export interface VarianceReviewsPanelProps {
   budgetVersionId: number | null;
   currency: string | null;
   reloadToken?: number;
+  /** Opens the Pilotage tab, where an analysis is started from a line that overruns. */
+  onOpenCockpit?: () => void;
 }
 
 export function VarianceReviewsPanel({
   budgetVersionId,
   currency,
   reloadToken = 0,
+  onOpenCockpit,
 }: VarianceReviewsPanelProps) {
   const { t } = useTranslation("budget");
   const { categoryLabel, reasonLabel, periodLabel } = useFinanceCatalogs();
@@ -137,7 +140,13 @@ export function VarianceReviewsPanel({
     <div className="space-y-3">
       <p className="max-w-3xl text-sm text-text-secondary">{t("reviews.intro")}</p>
       {reviews.length === 0 ? (
-        <EmptyState title={t("reviews.empty")} description={t("reviews.emptyBody")} />
+        <EmptyState
+          title={t("reviews.empty")}
+          description={t("reviews.emptyBody")}
+          {...(onOpenCockpit
+            ? { actionLabel: t("reviews.openCockpit"), onAction: onOpenCockpit }
+            : {})}
+        />
       ) : (
         <ul className="space-y-2">
           {reviews.map((r) => {

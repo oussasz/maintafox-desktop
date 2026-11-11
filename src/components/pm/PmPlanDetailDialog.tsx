@@ -39,6 +39,7 @@ import type {
 } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
+import { PmPlanCoveragePanel } from "./PmPlanCoveragePanel";
 import {
   PmAssetCell,
   PmDueLabel,
@@ -507,6 +508,7 @@ export function PmPlanDetailDialog({
                 <dt className="text-text-muted">{t("fields.description")}</dt>
                 <dd className="whitespace-pre-line">{plan.description || t("labels.none")}</dd>
               </dl>
+              <PmPlanCoveragePanel plan={plan} canEdit={!editAction.disabled && editAction.show} />
               <div className="space-y-2 rounded-lg border border-dashed p-4">
                 <h3 className="font-medium">{t("guidance.activationTitle")}</h3>
                 <p className="text-sm text-text-muted">{t("guidance.activationPath")}</p>

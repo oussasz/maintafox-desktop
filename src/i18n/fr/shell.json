@@ -47,7 +47,7 @@
     "resolveRemote": "Prendre la version du serveur",
     "noConflicts": "Aucun élément à traiter.",
     "dismissConflict": "Ignorer",
-    "conflictVersions": "Cet appareil : {{local}} · Serveur : {{remote}}",
+    "conflictVersions": "Versions : cet appareil {{local}} · serveur {{remote}}",
     "versionUnknown": "inconnue",
     "conflictRef": "conflit n° {{id}}",
     "conflictNumber": "Conflit n° {{id}}",
@@ -272,7 +272,7 @@
       "runsInBackground": "La synchronisation continue quand la fenêtre est fermée (Maintafox reste dans la zone de notification).",
       "state": {
         "starting": "Démarrage…",
-        "idle": "À jour",
+        "idle": "Synchronisé",
         "running": "Synchronisation en cours…",
         "paused": "En pause",
         "offline": "Hors ligne : nouvel essai automatique",
@@ -323,10 +323,10 @@
       }
     },
     "indicator": {
-      "idle": "À jour",
+      "idle": "Synchronisé",
       "scheduled": "Démarrage de la synchronisation",
       "running": "Synchronisation",
-      "degraded": "À vérifier",
+      "degraded": "À examiner",
       "paused": "En pause",
       "blocked": "Sync arrêtée",
       "error": "Erreur de sync",
@@ -361,7 +361,7 @@
     "inboxLoading": "Chargement des conflits…",
     "versionNumber": "version {{version}}",
     "detectedAt": "détecté le {{date}}",
-    "recordUnidentified": "(numéro non disponible)",
+    "recordUnidentified": "(sans numéro : voir « Détails techniques »)",
     "technicalDetails": "Détails techniques",
     "noRemoteVersion": "Le serveur n'a envoyé aucune version de cet enregistrement",
     "resolveNeedsRight": "Vous pouvez consulter ce conflit. Choisir une version demande le droit de résoudre les conflits de synchronisation.",
@@ -391,7 +391,8 @@
       "renumber_local": "L'enregistrement de cet appareil reçoit un nouveau numéro ; l'enregistrement reçu garde le sien (« {{record}} »).",
       "dismiss": "Le conflit sur « {{record}} » sera écarté sans appliquer aucune des deux versions.",
       "retry_later": "Le conflit sur « {{record}} » reste ouvert et sera réexaminé plus tard ; rien n'est appliqué.",
-      "escalate": "Le conflit sur « {{record}} » est signalé pour examen par un responsable ; rien n'est appliqué."
+      "escalate": "Le conflit sur « {{record}} » est marqué « Escaladé » et reste ouvert avec votre motif, pour examen par une personne habilitée ; aucun message n'est envoyé et rien n'est appliqué.",
+      "dismissWarning": "Attention : le conflit disparaît de la liste et aucune des deux versions n'est appliquée. Les deux PC peuvent rester différents sur cet enregistrement."
     },
     "reason": {
       "label": "Motif de ce choix",
@@ -447,7 +448,28 @@
     "doubleCount": "{{count}} emplacement(s) de stock compté(s) sur deux postes sans se connaître : double comptage à vérifier (Stock › Contrôles).",
     "doublePosting": "{{count}} comptage(s) passé(s) deux fois en stock (le même inventaire sur deux postes, ancienne version) : à vérifier par un nouveau comptage (Stock › Contrôles).",
     "overReserved": "{{count}} emplacement(s) de stock avec plus de réservé que de stock (avertissement).",
-    "openNegativeStock": "Ouvrir le stock à rapprocher"
+    "openNegativeStock": "Ouvrir le stock à rapprocher",
+    "compare": {
+      "title": "Valeurs en désaccord",
+      "field": "Champ",
+      "local": "Cet appareil",
+      "remote": "Serveur",
+      "empty": "(vide)",
+      "yes": "Oui",
+      "no": "Non",
+      "more": "… et {{count}} autre(s) champ(s) — voir « Détails techniques ».",
+      "none": "Aucune valeur lisible ne diffère entre les deux versions : la différence est technique (voir « Détails techniques »)."
+    },
+    "actionHelp": {
+      "accept_local": "Votre version est conservée et renvoyée au serveur ; la version reçue est écartée.",
+      "accept_remote": "La version du serveur remplace celle de cet appareil ; vos modifications locales sur cet enregistrement sont perdues.",
+      "renumber_local": "Votre enregistrement reçoit un nouveau numéro ; celui reçu garde le sien.",
+      "retry_later": "Le conflit reste ouvert, rien n'est appliqué : à réexaminer plus tard.",
+      "escalate": "Marque le conflit comme « Escaladé » : il reste ouvert dans cette liste avec votre motif, pour qu'une personne habilitée à résoudre les conflits le traite. Aucun message n'est envoyé et rien n'est appliqué.",
+      "dismiss": "Clôt le conflit sans appliquer aucune des deux versions. À utiliser seulement si le sujet est déjà réglé."
+    },
+    "actionDisabledRemote": "Indisponible : le serveur n'a envoyé aucune version de cet enregistrement, il n'y a donc rien à prendre.",
+    "actionDisabledBusy": "Action en cours…"
   },
   "status": {
     "dbOk": "Base de données : OK",
@@ -571,14 +593,14 @@
     "lookups": "Données de référence",
     "imports": "Imports de données",
     "notifications": "Notifications",
-    "documentation": "Documentation",
+    "documentation": "Bibliothèque documentaire",
     "activity": "Journal d'activité",
     "settings": "Paramètres",
     "users": "Utilisateurs & rôles",
     "org": "Organisation",
     "diagnostics": "Diagnostics",
     "profile": "Mon profil",
-    "help": "Aide & Documentation",
+    "help": "Aide",
     "reports": "Rapports",
     "admin": "Administration"
   },

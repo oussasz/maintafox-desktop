@@ -582,3 +582,21 @@ pub async fn generate_inspection_rounds(
     );
     scheduling::generate_inspection_rounds(&state.db, input).await
 }
+
+/// L1-19: the readings of one measurement point of a checklist over the last `days` days.
+#[tauri::command]
+pub async fn list_inspection_point_trend(
+    template_id: i64,
+    checkpoint_code: String,
+    days: Option<i64>,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<results::InspectionPointReading>> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INS_VIEW,
+        PermissionScope::Global
+    );
+    results::list_point_trend(&state.db, template_id, &checkpoint_code, days.unwrap_or(365)).await
+}

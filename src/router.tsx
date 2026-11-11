@@ -133,6 +133,7 @@ const NotificationsPage = lazy(() =>
 const SettingsPage = lazy(() =>
   import("@/pages/SettingsPage").then((m) => ({ default: m.SettingsPage })),
 );
+const HelpPage = lazy(() => import("@/pages/HelpPage").then((m) => ({ default: m.HelpPage })));
 const LoginPage = lazy(() =>
   import("@/pages/auth/LoginPage").then((m) => ({ default: m.LoginPage })),
 );
@@ -388,6 +389,7 @@ const routes: RouteObject[] = [
                     element: <Navigate to="/settings?tab=activity" replace />,
                   },
                   { path: "settings", element: <SettingsPage /> },
+                  { path: "help", element: <HelpPage /> },
                   // Living design-system reference (docs/DESIGN_SYSTEM.md). Development builds only:
                   // the import is tree-shaken from production bundles.
                   ...(import.meta.env.DEV

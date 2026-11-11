@@ -174,6 +174,89 @@ fn push_event(
     });
 }
 
+/// Lifecycle event type of a component move (`assets::lifecycle::PARENT_CHANGED_EVENT_TYPE`).
+const PARENT_CHANGED: &str = crate::assets::lifecycle::PARENT_CHANGED_EVENT_TYPE;
+
+/// The old and new parent of a `PARENT_CHANGED` event (`details_json`).
+fn parent_change_parents(details: Option<&str>) -> (Option<i64>, Option<i64>) {
+    let parsed: Option<JsonValue> = details.and_then(|d| serde_json::from_str(d).ok());
+    let id_at = |key: &str| parsed.as_ref().and_then(|v| v.get(key)).and_then(JsonValue::as_i64);
+    (id_at("from_parent_asset_id"), id_at("to_parent_asset_id"))
+}
+
+/// One side of a component move in a history: the component posed or removed, and the other
+/// asset of the move (the parent on the component's history, the component on the parent's).
+struct MovementEntry {
+    id: String,
+    asset_id: i64,
+    event_type: &'static str,
+    /// `installed` (posé) or `removed` (déposé).
+    movement: &'static str,
+    occurred_at: String,
+    notes: Option<String>,
+    other_asset_id: i64,
+    /// Metadata prefix of the other asset: `parent` or `component`.
+    other_key: &'static str,
+}
+
+async fn push_movement_event(
+    db: &DatabaseConnection,
+    events: &mut Vec<AssetHistoryEvent>,
+    entry: MovementEntry,
+) -> AppResult<()> {
+    let other = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT asset_id_code, name FROM equipment WHERE id = ?",
+            [entry.other_asset_id.into()],
+        ))
+        .await?;
+    let (code, name) = match other {
+        Some(r) => (
+            r.try_get::<Option<String>>("", "asset_id_code")?,
+            r.try_get::<Option<String>>("", "name")?,
+        ),
+        None => (None, None),
+    };
+    let mut metadata = BTreeMap::new();
+    metadata.insert("movement".into(), JsonValue::String(entry.movement.into()));
+    let key = entry.other_key;
+    metadata.insert(format!("{key}_asset_id"), JsonValue::from(entry.other_asset_id));
+    if let Some(c) = code.clone() {
+        metadata.insert(format!("{key}_code"), JsonValue::String(c));
+    }
+    if let Some(n) = name {
+        metadata.insert(format!("{key}_name"), JsonValue::String(n));
+    }
+    // Fixed English title, shown translated by the screen (`history.titles.*`).
+    let title = if entry.movement == "installed" {
+        "Component installed"
+    } else {
+        "Component removed"
+    };
+    let other_id = entry.other_asset_id;
+    push_event(
+        events,
+        entry.id,
+        entry.asset_id,
+        entry.event_type,
+        entry.occurred_at,
+        title,
+        entry.notes,
+        None,
+        None,
+        None,
+        metadata,
+        Some(AssetHistoryEventRef {
+            entity_type: "asset".into(),
+            entity_id: Some(other_id),
+            entity_code: code,
+            route_hint: Some(format!("/equipment?assetId={other_id}")),
+        }),
+    );
+    Ok(())
+}
+
 pub async fn get_asset_history_summary(db: &DatabaseConnection, asset_id: i64) -> AppResult<AssetHistorySummary> {
     let row = db
         .query_one(Statement::from_sql_and_values(
@@ -258,7 +341,7 @@ pub async fn list_asset_history_events(
     let lifecycle_rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id, event_type, occurred_at, notes, from_status, to_status, reason_code \
+            "SELECT id, event_type, occurred_at, notes, from_status, to_status, reason_code, details_json \
              FROM equipment_lifecycle_events \
              WHERE equipment_id = ?",
             [asset_id.into()],
@@ -269,6 +352,30 @@ pub async fn list_asset_history_events(
         let event_type_raw: String = row.try_get("", "event_type").unwrap_or_else(|_| "EVENT".into());
         let occurred_at: String = row.try_get("", "occurred_at").unwrap_or_default();
         let notes: Option<String> = row.try_get::<Option<String>>("", "notes").unwrap_or(None);
+        if event_type_raw == PARENT_CHANGED {
+            // "Posé le … sur …" / "Déposé le … de …": one entry per parent of the move.
+            let details: Option<String> = row.try_get::<Option<String>>("", "details_json")?;
+            let (from_parent, to_parent) = parent_change_parents(details.as_deref());
+            for (movement, parent) in [("removed", from_parent), ("installed", to_parent)] {
+                let Some(parent_id) = parent else { continue };
+                push_movement_event(
+                    db,
+                    &mut events,
+                    MovementEntry {
+                        id: format!("lifecycle:{id}:{movement}"),
+                        asset_id,
+                        event_type: "parent_changed",
+                        movement,
+                        occurred_at: occurred_at.clone(),
+                        notes: notes.clone(),
+                        other_asset_id: parent_id,
+                        other_key: "parent",
+                    },
+                )
+                .await?;
+            }
+            continue;
+        }
         let from_status: Option<String> = row.try_get::<Option<String>>("", "from_status").unwrap_or(None);
         let to_status: Option<String> = row.try_get::<Option<String>>("", "to_status").unwrap_or(None);
         let reason_code: Option<String> = row.try_get::<Option<String>>("", "reason_code").unwrap_or(None);
@@ -301,6 +408,44 @@ pub async fn list_asset_history_events(
                 route_hint: Some(format!("/equipment?assetId={asset_id}")),
             }),
         );
+    }
+
+    // 1b) Components posed on / removed from this asset (it is the parent of the move).
+    let component_rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            // CASE: the JSON is read only on a move event whose details are valid JSON.
+            "SELECT id, equipment_id, occurred_at, notes, details_json FROM equipment_lifecycle_events WHERE CASE WHEN event_type = ? AND json_valid(details_json) THEN ? IN (json_extract(details_json, '$.from_parent_asset_id'), json_extract(details_json, '$.to_parent_asset_id')) ELSE 0 END",
+            [PARENT_CHANGED.into(), asset_id.into()],
+        ))
+        .await?;
+    for row in component_rows {
+        let id: i64 = row.try_get("", "id")?;
+        let component_id: i64 = row.try_get("", "equipment_id")?;
+        let occurred_at: String = row.try_get("", "occurred_at")?;
+        let notes: Option<String> = row.try_get::<Option<String>>("", "notes")?;
+        let details: Option<String> = row.try_get::<Option<String>>("", "details_json")?;
+        let (from_parent, to_parent) = parent_change_parents(details.as_deref());
+        for (movement, parent) in [("removed", from_parent), ("installed", to_parent)] {
+            if parent != Some(asset_id) {
+                continue;
+            }
+            push_movement_event(
+                db,
+                &mut events,
+                MovementEntry {
+                    id: format!("component:{id}:{movement}"),
+                    asset_id,
+                    event_type: "child_changed",
+                    movement,
+                    occurred_at: occurred_at.clone(),
+                    notes: notes.clone(),
+                    other_asset_id: component_id,
+                    other_key: "component",
+                },
+            )
+            .await?;
+        }
     }
 
     // 2) Meter readings — real table is `asset_meter_readings` (migration 011).
