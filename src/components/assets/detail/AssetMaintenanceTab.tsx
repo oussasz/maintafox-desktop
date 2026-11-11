@@ -134,23 +134,37 @@ export function AssetMaintenanceTab({ asset }: { asset: Asset }) {
               unit={t("maintenance.kpi.hours")}
               hint={t("maintenance.kpi.downtimeHint")}
             />
+            {/* No work yet: "—", not a 0 that reads like a measured cost (L2-06). The lifetime
+                tile names the date it starts from instead of an unexplained "origin". */}
             <KpiTile
-              label={t("maintenance.kpi.costLifetime")}
-              value={formatCurrency(p.cost_lifetime.total)}
-              hint={t("maintenance.kpi.costSplit", {
-                labor: formatCurrency(p.cost_lifetime.labor),
-                parts: formatCurrency(p.cost_lifetime.parts),
-                services: formatCurrency(p.cost_lifetime.services),
-              })}
+              label={
+                p.cost_since
+                  ? t("maintenance.kpi.costLifetime", { date: formatDate(p.cost_since) })
+                  : t("maintenance.kpi.costLifetimeNone")
+              }
+              value={p.work_order_count > 0 ? formatCurrency(p.cost_lifetime.total) : "—"}
+              hint={
+                p.work_order_count > 0
+                  ? t("maintenance.kpi.costSplit", {
+                      labor: formatCurrency(p.cost_lifetime.labor),
+                      parts: formatCurrency(p.cost_lifetime.parts),
+                      services: formatCurrency(p.cost_lifetime.services),
+                    })
+                  : t("maintenance.kpi.noCostYet")
+              }
             />
             <KpiTile
               label={t("maintenance.kpi.costRecent", { months: p.recent_window_months })}
-              value={formatCurrency(p.cost_recent.total)}
-              hint={t("maintenance.kpi.costSplit", {
-                labor: formatCurrency(p.cost_recent.labor),
-                parts: formatCurrency(p.cost_recent.parts),
-                services: formatCurrency(p.cost_recent.services),
-              })}
+              value={p.work_order_count > 0 ? formatCurrency(p.cost_recent.total) : "—"}
+              hint={
+                p.work_order_count > 0
+                  ? t("maintenance.kpi.costSplit", {
+                      labor: formatCurrency(p.cost_recent.labor),
+                      parts: formatCurrency(p.cost_recent.parts),
+                      services: formatCurrency(p.cost_recent.services),
+                    })
+                  : t("maintenance.kpi.noCostYet")
+              }
             />
             <KpiTile
               label={t("maintenance.kpi.costVsReplacement")}

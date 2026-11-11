@@ -2688,6 +2688,9 @@ export interface WoHistoryCodingSaved {
 export interface AssetHistorySummary {
   asset_id: number;
   created_at: string | null;
+  /** Commissioning date: the start of the asset's service life. */
+  commissioned_at: string | null;
+  /** Days in service since `commissioned_at`; null while it is not filled in. */
   age_days: number | null;
   wo_count: number;
   pm_count: number;
@@ -11532,6 +11535,8 @@ export interface AssetMaintenanceProfile {
   downtime_hours: number;
   last_failure_at: string | null;
   cost_lifetime: AssetCostBreakdown;
+  /** Date of the earliest work counted in `cost_lifetime`; null when there is none. */
+  cost_since: string | null;
   cost_recent: AssetCostBreakdown;
   recent_window_months: number;
   cost_by_year: AssetYearCost[];
