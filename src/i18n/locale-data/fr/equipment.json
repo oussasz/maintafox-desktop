@@ -838,7 +838,9 @@
     "categoryRequired": "Choisissez la catégorie du document.",
     "file": "Fichier",
     "tooBig": "Le fichier dépasse {{mb}} Mo.",
-    "docTitle": "Titre"
+    "docTitle": "Titre",
+    "onWoTitle": "Documents de l'équipement — {{asset}}",
+    "onWoHint": "Manuels, modes opératoires et certificats de cet équipement, issus de la documentation. Pour en ajouter un, ouvrez l'équipement, onglet Documents."
   },
   "critMethod": {
     "title": "Évaluation de la criticité",
