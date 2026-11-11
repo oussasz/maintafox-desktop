@@ -543,7 +543,10 @@ pub async fn validate(
         let equipment_key = key(&cell(raw, "equipment_code"));
         if !import_ref.is_empty() {
             let line_key = (import_ref.clone(), equipment_key.clone());
-            let equipment_id = l.equipment.0.get(&equipment_key).copied();
+            // An ambiguous code matches nothing here: `read_line` reports it.
+            let equipment_id = (!l.equipment.1.contains(&equipment_key))
+                .then(|| l.equipment.0.get(&equipment_key).copied())
+                .flatten();
             if let Some(f) = first_row_of.get(&line_key) {
                 err(
                     &mut messages,
@@ -558,7 +561,10 @@ pub async fn validate(
                 if equipment_id.is_some_and(|id| loaded.contains(&(import_ref.clone(), id))) {
                     messages.push(RowMessage::warning(
                         "HISTORY_IMPORT_EXISTS",
-                        format!("L'intervention « {import_ref} » est déjà importée : elle n'est pas modifiée."),
+                        format!(
+                            "L'intervention « {import_ref} » de l'équipement « {} » est déjà importée : elle n'est pas modifiée.",
+                            cell(raw, "equipment_code").trim()
+                        ),
                     ));
                     out.push(RowOutcome {
                         action: "skip",
@@ -764,7 +770,11 @@ pub async fn apply(db: &DatabaseConnection, rows: &[StagedRow], user_id: i32) ->
         if loaded.contains(&loaded_key) {
             out.push(fail(
                 row,
-                format!("L'intervention « {} » a été importée entre-temps.", record.import_ref),
+                format!(
+                    "L'intervention « {} » de l'équipement « {} » a été importée entre-temps.",
+                    record.import_ref,
+                    cell(&raw, "equipment_code").trim()
+                ),
             ));
             continue;
         }

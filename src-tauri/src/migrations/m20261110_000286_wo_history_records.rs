@@ -7,7 +7,8 @@
 //! one `failure_events` row (`source_type = 'history_record'`), so RAMS counts it with the live
 //! work orders; cost per asset reads its historical amounts.
 //!
-//! `import_ref` is the n° OT of the former system (upper case, unique): a re-run skips it.
+//! `import_ref` is the n° OT of the former system (upper case), unique per equipment: a re-run
+//! skips it.
 
 use sea_orm_migration::prelude::*;
 
