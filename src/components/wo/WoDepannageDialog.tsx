@@ -34,6 +34,7 @@ import { useSession } from "@/hooks/use-session";
 import { describeAppError } from "@/lib/app-error";
 import { listWos, startDepannageWo } from "@/services/wo-service";
 import { useWorkOrderTypesCatalog } from "@/stores/work-order-types-catalog-store";
+import { statusToI18nKey } from "@/utils/wo-status";
 import type {
   AssetSearchResult,
   UrgencyCode,
@@ -256,7 +257,7 @@ export function WoDepannageForm({ onClose, onOpenWo, onCreated }: FormProps) {
       <p className="text-xs text-text-muted">{t("depannage.intro")}</p>
 
       <FormField
-        name="equipment"
+        name="depannage-equipment"
         label={t("form.equipment.label")}
         required
         error={
@@ -278,7 +279,7 @@ export function WoDepannageForm({ onClose, onOpenWo, onCreated }: FormProps) {
               <li key={wo.id} className="flex items-center justify-between gap-2">
                 <span className="min-w-0 truncate">
                   {wo.code} — {wo.title}
-                  {wo.status_code ? ` (${t(`status.${wo.status_code}`)})` : ""}
+                  {wo.status_code ? ` (${t(`status.${statusToI18nKey(wo.status_code)}`)})` : ""}
                 </span>
                 <Button variant="outline" size="sm" onClick={() => onOpenWo(wo.id)}>
                   {t("depannage.openWos.open")}
@@ -292,7 +293,7 @@ export function WoDepannageForm({ onClose, onOpenWo, onCreated }: FormProps) {
 
       <div className="grid grid-cols-2 gap-4">
         <FormField
-          name="breakdownAt"
+          name="depannage-breakdown-at"
           label={t("depannage.breakdownAt.label")}
           required
           error={
@@ -311,7 +312,7 @@ export function WoDepannageForm({ onClose, onOpenWo, onCreated }: FormProps) {
         </FormField>
 
         <FormField
-          name="machineStopped"
+          name="depannage-machine-stopped"
           label={t("depannage.machineStopped.label")}
           required
           error={
@@ -344,7 +345,7 @@ export function WoDepannageForm({ onClose, onOpenWo, onCreated }: FormProps) {
       </div>
 
       <FormField
-        name="title"
+        name="depannage-title"
         label={t("form.title.label")}
         required
         error={triedSubmit && !title.trim() ? t("form.validation.titleRequired") : undefined}
@@ -358,7 +359,7 @@ export function WoDepannageForm({ onClose, onOpenWo, onCreated }: FormProps) {
         />
       </FormField>
 
-      <FormField name="description" label={t("form.description.label")}>
+      <FormField name="depannage-description" label={t("form.description.label")}>
         <Textarea
           id="depannage-description"
           value={description}
@@ -368,7 +369,7 @@ export function WoDepannageForm({ onClose, onOpenWo, onCreated }: FormProps) {
       </FormField>
 
       <div className="grid grid-cols-2 gap-4">
-        <FormField name="type" label={t("form.type.label")}>
+        <FormField name="depannage-type" label={t("form.type.label")}>
           <Select value={typeCode} onValueChange={setTypeCode}>
             <SelectTrigger id="depannage-type" className="w-full">
               <SelectValue />
@@ -384,7 +385,7 @@ export function WoDepannageForm({ onClose, onOpenWo, onCreated }: FormProps) {
           </Select>
         </FormField>
 
-        <FormField name="urgency" label={t("form.urgency.label")}>
+        <FormField name="depannage-urgency" label={t("form.urgency.label")}>
           <UrgencySelect
             id="depannage-urgency"
             value={urgency || null}
@@ -395,7 +396,7 @@ export function WoDepannageForm({ onClose, onOpenWo, onCreated }: FormProps) {
         </FormField>
       </div>
 
-      <FormField name="assignee" label={t("depannage.assignee.label")}>
+      <FormField name="depannage-assignee" label={t("depannage.assignee.label")}>
         <Select value={assignee} onValueChange={setAssignee} disabled={!mayAssignOther}>
           <SelectTrigger id="depannage-assignee" className="w-full">
             <SelectValue />
