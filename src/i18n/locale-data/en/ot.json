@@ -460,6 +460,9 @@
       }
     },
     "parts": {
+      "available": "Available: {{qty}} {{unit}}",
+      "shortage": "Not enough stock (available: {{available}} {{unit}}): the line is saved, the missing quantity has to be bought.",
+      "willReserve": "Available stock is reserved when the line is saved.",
       "noMatch": "No matching article",
       "stockLocation": "Stock location",
       "locationPlaceholder": "Location",
@@ -501,6 +504,15 @@
     "blockers": "Blocking issues",
     "gates": {
       "title": "Work order completion",
+      "fix": {
+        "PARTS": "Do it in the Parts tab: confirm the quantity actually used on each line.",
+        "TASKS": "Do it in the Tasks tab: complete or cancel each open task.",
+        "OPEN_LABOR": "Do it in the Labour tab: stop the time entries still running.",
+        "OPEN_DOWNTIME": "Do it in the Return to service section: close the open production stops.",
+        "FAILURE_MODE": "Do it further down, Failure analysis section: choose the failure mode.",
+        "SYMPTOM": "Do it further down, Symptom section: choose the observed symptom.",
+        "ROOT_CAUSE": "Do it further down, Action taken section: summarise the root cause, or tick “Cause not known yet”."
+      },
       "blockingCount": "{{count}} blocking items remaining ({{done}}/{{total}} ready).",
       "PARTS": "Parts confirmed",
       "TASKS": "Tasks completed",
