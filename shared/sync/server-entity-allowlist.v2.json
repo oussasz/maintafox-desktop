@@ -132,6 +132,14 @@
       "scope": "tenant"
     },
     {
+      "entity_type": "permit_personal_locks",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "permit_workers",
+      "scope": "tenant"
+    },
+    {
       "entity_type": "permit_handover_logs",
       "scope": "tenant"
     },

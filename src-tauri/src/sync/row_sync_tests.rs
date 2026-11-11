@@ -206,6 +206,8 @@ pub(crate) const INSPECTION_PERMIT_TYPES: &[&str] = &[
     "permit_isolations",
     "permit_suspensions",
     "permit_gas_tests",
+    "permit_workers",
+    "permit_personal_locks",
     "loto_card_print_jobs",
 ];
 

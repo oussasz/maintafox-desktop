@@ -11,6 +11,7 @@ pub mod requirement_rules;
 pub mod safety_content;
 pub(crate) mod sync_check;
 pub mod wo_gate;
+pub mod workers;
 
 #[cfg(test)]
 mod access_tests;
@@ -26,3 +27,5 @@ mod sync_check_tests;
 mod tests;
 #[cfg(test)]
 mod wo_lifecycle_tests;
+#[cfg(test)]
+mod workers_tests;

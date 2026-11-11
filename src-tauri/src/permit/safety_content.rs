@@ -15,10 +15,25 @@
 //!
 //! **Issue gate** ([`issue_blockers`], [`issue_ready`]): `approved → issued` (the only transition
 //! into `issued`, `permit::queries::set_work_permit_status`) is refused while the content is
-//! incomplete, while a type requiring HSE approval has none, or while a permit needing a gas test
-//! (type flagged "test atmosphérique", or the shipped confined-space type) has no reading or its
-//! latest reading is out of limits. A permit issued on another PC is judged on the same rules on
-//! arrival (`permit::sync_check::issue_check`). The screen shows the same list before the click.
+//! incomplete, while a type requiring HSE approval has none, while a permit needing a gas test
+//! (type flagged "test atmosphérique", or the shipped confined-space type) has no valid reading, or
+//! while a worker lacks an induction or a qualification (`permit::workers`, L4-05 / L4-06). A
+//! permit issued on another PC is judged on the same rules on arrival (`permit::sync_check::
+//! issue_check`). The screen shows the same list before the click.
+//!
+//! **Gas test validity** (CMMS Advisor 2026-11-11, review of L4-04): a reading counts only when it
+//! was measured after the permit was raised and after the last reset of its safety record
+//! (`safety_content_since`: a return to draft, a change of equipment or site). The latest counting
+//! reading (by its instant) must be within the limits and younger than the re-test interval
+//! (`permit.gas_test_validity_hours`, shipped 4 h) at the issue, at the activation, at the
+//! reinstatement of a suspended permit and at each start or resume of the linked work order
+//! (`gas_ready`, called by `permit::queries::activation_ready`): a break longer than the interval
+//! needs a new test.
+//!
+//! **HSE approval** (CMMS Advisor 2026-11-11): recorded with `ptw.hse_approve` by a person other than
+//! the permit's author and submitter (the four-eyes rule of the approval,
+//! `permit::queries::approver_is_second_person`); on a site that opted out of four-eyes the author
+//! may record it, flagged `hse_self_approved`. It may be the person who approved the permit.
 
 use std::collections::BTreeMap;
 
@@ -35,6 +50,8 @@ pub const SETTING_GAS_O2_MAX: &str = "permit.gas_o2_max_percent";
 pub const SETTING_GAS_LEL_MAX: &str = "permit.gas_lel_max_percent";
 pub const SETTING_GAS_H2S_MAX: &str = "permit.gas_h2s_max_ppm";
 pub const SETTING_GAS_CO_MAX: &str = "permit.gas_co_max_ppm";
+/// How long a gas test stays valid (hours): the re-test interval.
+pub const SETTING_GAS_VALIDITY_HOURS: &str = "permit.gas_test_validity_hours";
 
 /// Longest text of one content field.
 pub const MAX_CONTENT_CHARS: usize = 4000;
@@ -74,6 +91,8 @@ pub const CODE_GAS_O2_OUT_OF_LIMITS: &str = "GATE_PERMIT_GAS_O2_OUT_OF_LIMITS";
 pub const CODE_GAS_LEL_TOO_HIGH: &str = "GATE_PERMIT_GAS_LEL_TOO_HIGH";
 pub const CODE_GAS_H2S_TOO_HIGH: &str = "GATE_PERMIT_GAS_H2S_TOO_HIGH";
 pub const CODE_GAS_CO_TOO_HIGH: &str = "GATE_PERMIT_GAS_CO_TOO_HIGH";
+pub const CODE_GAS_TEST_EXPIRED: &str = "GATE_PERMIT_GAS_TEST_EXPIRED";
+pub const CODE_GAS_TEST_BEFORE_PERMIT: &str = "GATE_PERMIT_GAS_TEST_BEFORE_PERMIT";
 
 /// The acceptance limits of a gas test, read from the settings.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -97,7 +116,7 @@ pub struct IssueBlocker {
 }
 
 impl IssueBlocker {
-    fn new(code: &str, params: &[(&str, String)]) -> Self {
+    pub(crate) fn new(code: &str, params: &[(&str, String)]) -> Self {
         Self {
             code: code.to_string(),
             params: params.iter().map(|(k, v)| ((*k).to_string(), v.clone())).collect(),
@@ -121,6 +140,9 @@ pub struct PermitGasTest {
     pub row_version: i64,
     /// Judged against the current limits (never stored with the reading).
     pub within_limits: bool,
+    /// Measured after the permit was raised and after the last reset of its safety record: only
+    /// such a reading counts for the gates.
+    pub counts: bool,
 }
 
 /// The safety content of a permit as the permit screen shows it, with what still blocks its issue.
@@ -141,7 +163,12 @@ pub struct PermitSafetyContent {
     pub hse_approved_by_name: Option<String>,
     pub hse_approved_at: Option<String>,
     pub hse_approval_note: Option<String>,
+    /// The HSE approval was recorded by the permit's author or submitter on a site that opted out of
+    /// four-eyes. `None`: no approval, or recorded before this was kept.
+    pub hse_self_approved: Option<bool>,
     pub gas_limits: GasLimits,
+    /// The re-test interval of the settings (hours).
+    pub gas_validity_hours: f64,
     /// Latest first.
     pub gas_tests: Vec<PermitGasTest>,
     /// Why the permit cannot be issued now (empty: nothing in its content blocks it).
@@ -304,6 +331,12 @@ struct PermitRow {
     code: String,
     status: String,
     row_version: i64,
+    entity_id: i64,
+    created_by_id: Option<i64>,
+    submitted_by_id: Option<i64>,
+    requested_at: Option<String>,
+    safety_reset_at: Option<String>,
+    hse_self_approved: Option<bool>,
     work_description: Option<String>,
     risk_assessment: Option<String>,
     preventive_measures: Option<String>,
@@ -320,7 +353,7 @@ async fn permit_row(db: &impl ConnectionTrait, permit_id: i64) -> AppResult<Perm
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT wp.id, wp.code, wp.status, wp.row_version, wp.work_description, wp.risk_assessment, wp.preventive_measures, wp.ppe_required, wp.hse_approved_by_id, COALESCE(u.display_name, u.username) AS hse_approved_by_name, wp.hse_approved_at, wp.hse_approval_note, COALESCE(pt.requires_hse_approval, 0) AS requires_hse_approval, COALESCE(pt.requires_atmospheric_test, 0) AS requires_atmospheric_test, COALESCE(pt.entity_sync_id, '') AS type_sync_id, COALESCE(pt.code, '') AS type_code FROM work_permits wp LEFT JOIN permit_types pt ON pt.id = wp.permit_type_id LEFT JOIN user_accounts u ON u.id = wp.hse_approved_by_id WHERE wp.id = ?",
+            "SELECT wp.id, wp.code, wp.status, wp.row_version, wp.entity_id, wp.created_by_id, wp.submitted_by_id, wp.requested_at, wp.safety_reset_at, wp.hse_self_approved, wp.work_description, wp.risk_assessment, wp.preventive_measures, wp.ppe_required, wp.hse_approved_by_id, COALESCE(u.display_name, u.username) AS hse_approved_by_name, wp.hse_approved_at, wp.hse_approval_note, COALESCE(pt.requires_hse_approval, 0) AS requires_hse_approval, COALESCE(pt.requires_atmospheric_test, 0) AS requires_atmospheric_test, COALESCE(pt.entity_sync_id, '') AS type_sync_id, COALESCE(pt.code, '') AS type_code FROM work_permits wp LEFT JOIN permit_types pt ON pt.id = wp.permit_type_id LEFT JOIN user_accounts u ON u.id = wp.hse_approved_by_id WHERE wp.id = ?",
             [permit_id.into()],
         ))
         .await?
@@ -336,6 +369,12 @@ async fn permit_row(db: &impl ConnectionTrait, permit_id: i64) -> AppResult<Perm
         code: row.try_get("", "code")?,
         status: row.try_get("", "status")?,
         row_version: row.try_get("", "row_version")?,
+        entity_id: row.try_get("", "entity_id")?,
+        created_by_id: row.try_get("", "created_by_id")?,
+        submitted_by_id: row.try_get("", "submitted_by_id")?,
+        requested_at: row.try_get("", "requested_at")?,
+        safety_reset_at: row.try_get("", "safety_reset_at")?,
+        hse_self_approved: row.try_get::<Option<i64>>("", "hse_self_approved")?.map(|v| v != 0),
         work_description: row.try_get("", "work_description")?,
         risk_assessment: row.try_get("", "risk_assessment")?,
         preventive_measures: row.try_get("", "preventive_measures")?,
@@ -349,16 +388,71 @@ async fn permit_row(db: &impl ConnectionTrait, permit_id: i64) -> AppResult<Perm
     })
 }
 
-/// The gas tests of a permit, latest first, judged against `limits`.
+/// From when a gas test counts: the later of the permit's request and the last reset of its safety
+/// record. `None` when neither is readable (every reading counts, as before they were recorded).
+pub(crate) fn safety_content_since(
+    requested_at: Option<&str>,
+    safety_reset_at: Option<&str>,
+) -> Option<chrono::DateTime<Utc>> {
+    let read = |v: Option<&str>| v.and_then(crate::settings::site::instant);
+    match (read(requested_at), read(safety_reset_at)) {
+        (Some(a), Some(b)) => Some(a.max(b)),
+        (a, b) => a.or(b),
+    }
+}
+
+/// The re-test interval of the settings (hours); missing or out of bounds is an error.
+pub async fn gas_validity_hours(db: &impl ConnectionTrait) -> AppResult<f64> {
+    crate::settings::catalog::decimal_setting(db, SETTING_GAS_VALIDITY_HOURS).await
+}
+
+/// The longest age of a valid gas test.
+#[allow(clippy::cast_possible_truncation)] // bounded by the setting (at most 24 h)
+pub(crate) fn validity_duration(validity_hours: f64) -> chrono::Duration {
+    chrono::Duration::seconds((validity_hours * 3600.0).round() as i64)
+}
+
+/// The gas part of the gates, at `at`: the latest counting reading exists, is younger than the
+/// re-test interval and within the limits. `tests`: latest first.
+pub(crate) fn gas_blockers(
+    permit_code: &str,
+    limits: &GasLimits,
+    validity_hours: f64,
+    tests: &[PermitGasTest],
+    at: chrono::DateTime<Utc>,
+) -> Vec<IssueBlocker> {
+    let Some(t) = tests.iter().find(|t| t.counts) else {
+        return vec![IssueBlocker::new(
+            CODE_GAS_TEST_MISSING,
+            &[("permit", permit_code.to_string())],
+        )];
+    };
+    let measured = crate::settings::site::instant(&t.measured_at);
+    if measured.is_none_or(|m| at - m > validity_duration(validity_hours)) {
+        return vec![IssueBlocker::new(
+            CODE_GAS_TEST_EXPIRED,
+            &[
+                ("permit", permit_code.to_string()),
+                ("measured_at", t.measured_at.clone()),
+                ("hours", validity_hours.to_string()),
+            ],
+        )];
+    }
+    reading_breaches(limits, t.o2_percent, t.lel_percent, t.h2s_ppm, t.co_ppm, permit_code)
+}
+
+/// The gas tests of a permit, latest first (by instant), judged against `limits`; `since`: from
+/// when a reading counts ([`safety_content_since`]).
 pub async fn list_permit_gas_tests(
     db: &impl ConnectionTrait,
     permit_id: i64,
     limits: &GasLimits,
+    since: Option<chrono::DateTime<Utc>>,
 ) -> AppResult<Vec<PermitGasTest>> {
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT g.id, g.entity_sync_id, g.permit_id, g.o2_percent, g.lel_percent, g.h2s_ppm, g.co_ppm, g.measured_at, g.measured_by_id, COALESCE(u.display_name, u.username) AS measured_by_name, g.instrument, g.row_version FROM permit_gas_tests g LEFT JOIN user_accounts u ON u.id = g.measured_by_id WHERE g.permit_id = ? ORDER BY g.measured_at DESC, g.id DESC",
+            "SELECT g.id, g.entity_sync_id, g.permit_id, g.o2_percent, g.lel_percent, g.h2s_ppm, g.co_ppm, g.measured_at, g.measured_by_id, COALESCE(u.display_name, u.username) AS measured_by_name, g.instrument, g.row_version FROM permit_gas_tests g LEFT JOIN user_accounts u ON u.id = g.measured_by_id WHERE g.permit_id = ? ORDER BY julianday(g.measured_at) DESC, g.id DESC",
             [permit_id.into()],
         ))
         .await?;
@@ -368,6 +462,11 @@ pub async fn list_permit_gas_tests(
             let lel: f64 = r.try_get("", "lel_percent")?;
             let h2s: f64 = r.try_get("", "h2s_ppm")?;
             let co: Option<f64> = r.try_get("", "co_ppm")?;
+            let measured_at: String = r.try_get("", "measured_at")?;
+            let counts = match since {
+                None => true,
+                Some(s) => crate::settings::site::instant(&measured_at).is_some_and(|m| m >= s),
+            };
             Ok(PermitGasTest {
                 id: r.try_get("", "id")?,
                 entity_sync_id: r.try_get("", "entity_sync_id")?,
@@ -376,19 +475,26 @@ pub async fn list_permit_gas_tests(
                 lel_percent: lel,
                 h2s_ppm: h2s,
                 co_ppm: co,
-                measured_at: r.try_get("", "measured_at")?,
+                measured_at,
                 measured_by_id: r.try_get("", "measured_by_id")?,
                 measured_by_name: r.try_get("", "measured_by_name")?,
                 instrument: r.try_get("", "instrument")?,
                 row_version: r.try_get("", "row_version")?,
                 within_limits: reading_breaches(limits, o2, lel, h2s, co, "").is_empty(),
+                counts,
             })
         })
         .collect::<Result<Vec<_>, sea_orm::DbErr>>()
         .map_err(AppError::from)
 }
 
-fn blockers_of(row: &PermitRow, limits: &GasLimits, tests: &[PermitGasTest]) -> Vec<IssueBlocker> {
+impl PermitRow {
+    fn since(&self) -> Option<chrono::DateTime<Utc>> {
+        safety_content_since(self.requested_at.as_deref(), self.safety_reset_at.as_deref())
+    }
+}
+
+fn blockers_of(row: &PermitRow, limits: &GasLimits, validity_hours: f64, tests: &[PermitGasTest]) -> Vec<IssueBlocker> {
     let mut out = content_blockers(
         &row.code,
         row.work_description.as_deref(),
@@ -403,31 +509,46 @@ fn blockers_of(row: &PermitRow, limits: &GasLimits, tests: &[PermitGasTest]) -> 
         ));
     }
     if row.requires_gas_test {
-        // Latest first: the reading that describes the atmosphere now.
-        match tests.first() {
-            None => out.push(IssueBlocker::new(
-                CODE_GAS_TEST_MISSING,
-                &[("permit", row.code.clone())],
-            )),
-            Some(t) => out.extend(reading_breaches(
-                limits,
-                t.o2_percent,
-                t.lel_percent,
-                t.h2s_ppm,
-                t.co_ppm,
-                &row.code,
-            )),
-        }
+        // Latest counting reading first: the one that describes the atmosphere now.
+        out.extend(gas_blockers(
+            &row.code,
+            limits,
+            validity_hours,
+            tests,
+            crate::clock::now(),
+        ));
     }
     out
 }
 
-/// What blocks the issue of the permit now (empty: its content, HSE approval and gas test allow it).
+/// What blocks the issue of the permit now (empty: its content, HSE approval, gas test and workers
+/// allow it).
 pub async fn issue_blockers(db: &impl ConnectionTrait, permit_id: i64) -> AppResult<Vec<IssueBlocker>> {
     let row = permit_row(db, permit_id).await?;
     let limits = gas_limits(db).await?;
-    let tests = list_permit_gas_tests(db, permit_id, &limits).await?;
-    Ok(blockers_of(&row, &limits, &tests))
+    let hours = gas_validity_hours(db).await?;
+    let tests = list_permit_gas_tests(db, permit_id, &limits, row.since()).await?;
+    let mut out = blockers_of(&row, &limits, hours, &tests);
+    out.extend(crate::permit::workers::issue_blockers(db, permit_id).await?);
+    Ok(out)
+}
+
+/// The gas part of the gates outside the issue (activation, reinstatement, start or resume of the
+/// linked work order): a permit needing a gas test has a counting reading younger than the re-test
+/// interval and within the limits, now.
+pub(crate) async fn gas_ready(db: &impl ConnectionTrait, permit_id: i64) -> AppResult<()> {
+    let row = permit_row(db, permit_id).await?;
+    if !row.requires_gas_test {
+        return Ok(());
+    }
+    let limits = gas_limits(db).await?;
+    let hours = gas_validity_hours(db).await?;
+    let tests = list_permit_gas_tests(db, permit_id, &limits, row.since()).await?;
+    let blockers = gas_blockers(&row.code, &limits, hours, &tests, crate::clock::now());
+    if blockers.is_empty() {
+        return Ok(());
+    }
+    Err(crate::permit::workers::blockers_error(blockers, "Permit not usable"))
 }
 
 /// The issue gate (`approved → issued`): every blocker is refused at once, each with its code.
@@ -453,8 +574,10 @@ pub(crate) async fn issue_ready(db: &impl ConnectionTrait, permit_id: i64) -> Ap
 pub async fn get_permit_safety_content(db: &impl ConnectionTrait, permit_id: i64) -> AppResult<PermitSafetyContent> {
     let row = permit_row(db, permit_id).await?;
     let limits = gas_limits(db).await?;
-    let tests = list_permit_gas_tests(db, permit_id, &limits).await?;
-    let issue_blockers = blockers_of(&row, &limits, &tests);
+    let hours = gas_validity_hours(db).await?;
+    let tests = list_permit_gas_tests(db, permit_id, &limits, row.since()).await?;
+    let mut issue_blockers = blockers_of(&row, &limits, hours, &tests);
+    issue_blockers.extend(crate::permit::workers::issue_blockers(db, permit_id).await?);
     Ok(PermitSafetyContent {
         permit_id: row.id,
         permit_status: row.status,
@@ -469,7 +592,9 @@ pub async fn get_permit_safety_content(db: &impl ConnectionTrait, permit_id: i64
         hse_approved_by_name: row.hse_approved_by_name,
         hse_approved_at: row.hse_approved_at,
         hse_approval_note: row.hse_approval_note,
+        hse_self_approved: row.hse_self_approved,
         gas_limits: limits,
+        gas_validity_hours: hours,
         gas_tests: tests,
         issue_blockers,
     })
@@ -622,6 +747,7 @@ pub(crate) async fn record_permit_hse_approval_in(
             &[("permit", current.code.clone())],
         ));
     }
+    let self_approved = hse_four_eyes(db, &current, actor_id).await?;
     let note = match input.note.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
         Some(n) if n.chars().count() > MAX_HSE_NOTE_CHARS => {
             return Err(refused(
@@ -636,11 +762,12 @@ pub(crate) async fn record_permit_hse_approval_in(
     let affected = db
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "UPDATE work_permits SET hse_approved_by_id = ?, hse_approved_at = ?, hse_approval_note = ?, row_version = row_version + 1 WHERE id = ? AND row_version = ? AND hse_approved_at IS NULL",
+            "UPDATE work_permits SET hse_approved_by_id = ?, hse_approved_at = ?, hse_approval_note = ?, hse_self_approved = ?, row_version = row_version + 1 WHERE id = ? AND row_version = ? AND hse_approved_at IS NULL",
             [
                 actor_id.into(),
                 at.clone().into(),
                 note.clone().into(),
+                i64::from(self_approved).into(),
                 input.permit_id.into(),
                 current.row_version.into(),
             ],
@@ -654,10 +781,48 @@ pub(crate) async fn record_permit_hse_approval_in(
         "permit.hse_approved",
         input.permit_id,
         actor_id,
-        serde_json::json!({ "code": current.code, "approved_at": at, "note": note }),
+        serde_json::json!({ "code": current.code, "approved_at": at, "note": note, "hse_self_approved": self_approved }),
     )
     .await?;
     get_permit_safety_content(db, input.permit_id).await
+}
+
+/// Four-eyes on the HSE approval (CMMS Advisor 2026-11-11): the HSE approver is neither the permit's
+/// author nor its submitter (`approver_is_second_person`, the rule of the approval itself). Returns
+/// whether it is a self-approval, allowed only where the permit's site opted out of four-eyes;
+/// elsewhere refused, saying why. The person who approved the permit may record it.
+async fn hse_four_eyes(db: &impl ConnectionTrait, permit: &PermitRow, actor_id: i64) -> AppResult<bool> {
+    use crate::reliability::study::decisions::SelfApprovalRule;
+    let creator = permit.created_by_id;
+    let submitter = permit.submitted_by_id;
+    if crate::permit::queries::approver_is_second_person(creator.as_ref(), submitter.as_ref(), &actor_id) {
+        return Ok(false);
+    }
+    if crate::permit::queries::permit_four_eyes_rule(db, permit.entity_id).await? == SelfApprovalRule::Allowed {
+        return Ok(true);
+    }
+    let code = permit.code.clone();
+    Err(if creator == Some(actor_id) {
+        refused(
+            "GATE_PERMIT_HSE_APPROVER_IS_AUTHOR",
+            format!("Permit {code} was written by you: another person records its HSE approval."),
+            &[("permit", code.clone())],
+        )
+    } else if submitter == Some(actor_id) {
+        refused(
+            "GATE_PERMIT_HSE_APPROVER_IS_SUBMITTER",
+            format!("Permit {code} was submitted for review by you: another person records its HSE approval."),
+            &[("permit", code.clone())],
+        )
+    } else {
+        refused(
+            "GATE_PERMIT_HSE_AUTHOR_UNKNOWN",
+            format!(
+                "Permit {code}: its author or submitter is not recorded, so the HSE approval cannot be shown to come from another person."
+            ),
+            &[("permit", code.clone())],
+        )
+    })
 }
 
 fn checked_reading(field: &str, value: f64, max: f64) -> AppResult<f64> {
@@ -735,6 +900,20 @@ pub(crate) async fn record_permit_gas_test_in(
         })?
         .format("%Y-%m-%dT%H:%M:%SZ")
         .to_string();
+    // A reading taken before the permit was raised (or before its last reset) describes another
+    // atmosphere: refused (review of L4-04).
+    if let Some(since) = current.since() {
+        if crate::settings::site::instant(&measured_at).is_some_and(|m| m < since) {
+            return Err(refused(
+                CODE_GAS_TEST_BEFORE_PERMIT,
+                "The gas test was measured before the permit was raised or last sent back to draft.",
+                &[
+                    ("permit", current.code.clone()),
+                    ("since", since.format("%Y-%m-%dT%H:%M:%SZ").to_string()),
+                ],
+            ));
+        }
+    }
     let now = now_ts();
     let sync_id = Uuid::new_v4().to_string();
     db.execute(Statement::from_sql_and_values(
@@ -808,10 +987,12 @@ async fn audit(
 #[cfg(test)]
 pub(crate) async fn fill_issue_requirements_for_tests(db: &impl ConnectionTrait, permit_id: i64) {
     let row = permit_row(db, permit_id).await.expect("permit row");
+    // A person other than the author and submitter when the test has one (HSE four-eyes).
     let approver: i64 = db
-        .query_one(Statement::from_string(
+        .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id FROM user_accounts ORDER BY id LIMIT 1".to_string(),
+            "SELECT id FROM user_accounts ORDER BY (id = COALESCE(?, -1) OR id = COALESCE(?, -1)), id LIMIT 1",
+            [row.created_by_id.into(), row.submitted_by_id.into()],
         ))
         .await
         .expect("user")
@@ -835,12 +1016,15 @@ pub(crate) async fn fill_issue_requirements_for_tests(db: &impl ConnectionTrait,
         let o2 = (limits.o2_min_percent + limits.o2_max_percent) / 2.0;
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "INSERT INTO permit_gas_tests (entity_sync_id, permit_id, o2_percent, lel_percent, h2s_ppm, co_ppm, measured_at, measured_by_id, instrument, row_version, created_at, updated_at) VALUES (?, ?, ?, 0, 0, 0, strftime('%Y-%m-%dT%H:%M:%SZ','now'), ?, 'Détecteur 4 gaz (essai)', 1, strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'))",
+            "INSERT INTO permit_gas_tests (entity_sync_id, permit_id, o2_percent, lel_percent, h2s_ppm, co_ppm, measured_at, measured_by_id, instrument, row_version, created_at, updated_at) VALUES (?, ?, ?, 0, 0, 0, ?, ?, 'Détecteur 4 gaz (essai)', 1, ?, ?)",
             [
                 Uuid::new_v4().to_string().into(),
                 permit_id.into(),
                 o2.into(),
+                now_ts().into(),
                 approver.into(),
+                now_ts().into(),
+                now_ts().into(),
             ],
         ))
         .await

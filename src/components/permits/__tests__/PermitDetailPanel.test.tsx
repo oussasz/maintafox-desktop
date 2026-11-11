@@ -93,6 +93,8 @@ const SAFETY = {
   hse_approved_by_name: null,
   hse_approved_at: null,
   hse_approval_note: null,
+  hse_self_approved: null,
+  gas_validity_hours: 4,
   gas_limits: {
     o2_min_percent: 19.5,
     o2_max_percent: 23.5,
@@ -111,9 +113,31 @@ const safetySvc = vi.hoisted(() => ({
   recordPermitGasTest: vi.fn(),
 }));
 vi.mock("@/services/permit-safety-service", () => safetySvc);
+/** L4-05 / L4-18: the workers of the permit (none by default). */
+const workersSvc = vi.hoisted(() => ({
+  listPermitWorkers: vi.fn(),
+  addPermitWorker: vi.fn(),
+  recordPermitWorkerInduction: vi.fn(),
+  withdrawPermitWorker: vi.fn(),
+  placeMyPermitLock: vi.fn(),
+  removeMyPermitLock: vi.fn(),
+  forceRemovePermitLock: vi.fn(),
+}));
+vi.mock("@/services/permit-workers-service", () => workersSvc);
+vi.mock("@/services/personnel-service", () => ({
+  listPersonnel: vi.fn().mockResolvedValue({ items: [], total: 0 }),
+  listExternalCompanies: vi.fn().mockResolvedValue([]),
+}));
 beforeEach(() => {
   safetySvc.getPermitSafetyContent.mockResolvedValue(SAFETY);
   safetySvc.listPermitProposedIsolationPoints.mockResolvedValue([]);
+  workersSvc.listPermitWorkers.mockResolvedValue({
+    permit_id: 41,
+    permit_status: "active",
+    workers: [],
+    locks: [],
+    open_lock_count: 0,
+  });
 });
 
 const session = vi.hoisted(() => ({ userId: 10 }));

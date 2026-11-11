@@ -441,7 +441,8 @@
       "byAt": "By {{name}} on {{date}}",
       "note": "Comment (optional)",
       "record": "Record the HSE approval",
-      "confirm": "Approve (HSE)"
+      "confirm": "Approve (HSE)",
+      "selfApproved": "Recorded by the author (site without four-eyes)"
     },
     "gas": {
       "title": "Atmospheric tests",
@@ -461,7 +462,9 @@
       "instrument": "Measuring instrument",
       "invalidReading": "Enter a positive number.",
       "now": "Now",
-      "record": "Record the test"
+      "record": "Record the test",
+      "validity": "A test stays valid {{hours}} h: after that, test again before issuing, activating or resuming the work.",
+      "notCounting": "No longer counts (before the permit was raised or last sent back to draft)"
     },
     "proposed": {
       "title": "Isolation points of the equipment",
@@ -471,5 +474,56 @@
       "normalState": "Normal state: {{state}}",
       "loadError": "The isolation points of the equipment could not be read."
     }
+  },
+  "workers": {
+    "title": "Workers and personal padlocks",
+    "hint": "Each worker places their own padlock on the group lock box. No isolation lock comes off, and the permit is not closed, while a personal padlock is on.",
+    "loading": "Loading the workers…",
+    "loadError": "The workers of the permit could not be read.",
+    "empty": "No worker on this permit.",
+    "external": "External",
+    "internal": "Internal",
+    "withdrawn": "Withdrawn from the permit",
+    "role": "Role: {{role}}",
+    "company": "Company: {{company}}",
+    "inductionDone": "Safety induction on {{date}} by {{name}}",
+    "inductionMissing": "Safety induction not recorded",
+    "recordInduction": "Record the safety induction",
+    "withdraw": "Withdraw from the permit",
+    "lockOn": "Padlock {{lock}} placed on {{date}}",
+    "noLock": "No padlock placed",
+    "me": "You",
+    "openLocks": "{{count}} personal padlock(s) on the box",
+    "add": {
+      "title": "Add a worker",
+      "kindPersonnel": "Personnel (record)",
+      "kindExternal": "External worker without a record",
+      "search": "Search for a person",
+      "searchButton": "Search",
+      "noResult": "Nobody found.",
+      "person": "Person",
+      "choose": "Choose…",
+      "name": "Worker's name",
+      "company": "External company",
+      "companiesError": "The list of external companies could not be read.",
+      "role": "Role on the permit",
+      "inductionNow": "Safety induction given now by me",
+      "submit": "Add"
+    },
+    "myLock": {
+      "number": "My padlock number",
+      "place": "I place my padlock",
+      "remove": "I removed my padlock"
+    },
+    "force": {
+      "open": "Forced removal (owner absent)",
+      "reason": "Reason for the forced removal",
+      "attest": "I attest that the worker is not on site",
+      "confirm": "Remove the padlock",
+      "stepUpHint": "Your password will be asked.",
+      "forced": "Removed by force: {{reason}}"
+    },
+    "history": "Padlocks removed",
+    "removedAt": "Padlock {{lock}} of {{name}} removed on {{date}} by {{by}}"
   }
 }

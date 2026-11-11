@@ -817,6 +817,27 @@ pub const ROW_SPECS: &[RowSpec] = &[
         "permit_gas_tests",
         &[r("permit_id", "work_permits"), r("measured_by_id", USER)],
     ),
+    // Workers of a permit and their padlocks on its group lock box (L4-05 / L4-18, migration 291).
+    spec(
+        "permit_workers",
+        &[
+            r("permit_id", "work_permits"),
+            r("personnel_id", "personnel"),
+            r("external_company_id", "external_companies"),
+            r("induction_by_id", USER),
+            r("added_by_id", USER),
+            r("withdrawn_by_id", USER),
+        ],
+    ),
+    spec(
+        "permit_personal_locks",
+        &[
+            r("permit_id", "work_permits"),
+            r("worker_id", "permit_workers"),
+            r("placed_by_id", USER),
+            r("removed_by_id", USER),
+        ],
+    ),
     spec(
         "permit_isolations",
         &[

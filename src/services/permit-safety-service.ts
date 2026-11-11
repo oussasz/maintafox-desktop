@@ -34,6 +34,8 @@ const PermitGasTestSchema = z.object({
   row_version: z.number(),
   /** Judged against the current limits of the settings. */
   within_limits: z.boolean(),
+  /** Measured after the permit was raised and its last reset: only such a reading counts. */
+  counts: z.boolean(),
 });
 
 const PermitSafetyContentSchema = z.object({
@@ -50,7 +52,11 @@ const PermitSafetyContentSchema = z.object({
   hse_approved_by_name: z.string().nullable(),
   hse_approved_at: z.string().nullable(),
   hse_approval_note: z.string().nullable(),
+  /** Recorded by the author or submitter on a site that opted out of four-eyes. */
+  hse_self_approved: z.boolean().nullable(),
   gas_limits: GasLimitsSchema,
+  /** Re-test interval of the settings (hours). */
+  gas_validity_hours: z.number(),
   /** Latest first. */
   gas_tests: z.array(PermitGasTestSchema),
   /** What blocks the issue now, as the server judges it (empty: nothing). */

@@ -326,6 +326,10 @@ impl TestServer {
 /// Literal values for columns the generic generator cannot guess (enumerations checked by code,
 /// cross-column constraints). `(entity type, column, SQL literal)`.
 const VALUE_OVERRIDES: &[(&str, &str, &str)] = &[
+    // A permit worker is a personnel record or an external worker (name + company), never both
+    // (migration 291 CHECK): the generic row is a personnel record.
+    ("permit_workers", "external_name", "NULL"),
+    ("permit_workers", "external_company_id", "NULL"),
     // What a reliability decision proposes never changes once proposed (a received change is a
     // `DECISION_CONTENT_CHANGED` conflict, `reliability::study::decision_sync`, AU-76b): these are
     // set at creation and never the column the round trip edits (its decision note is).

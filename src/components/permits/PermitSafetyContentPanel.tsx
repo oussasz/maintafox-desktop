@@ -75,6 +75,8 @@ interface PermitSafetyContentPanelProps {
   loadError: unknown;
   onRetry: () => void;
   canIssue: boolean;
+  /** `ptw.hse_approve` at the permit's site (the server also refuses the author and submitter). */
+  canHseApprove: boolean;
   /** Called with the new content after a write (the permit itself changed when the content did). */
   onSaved: (content: PermitSafetyContent) => void;
 }
@@ -91,6 +93,7 @@ export function PermitSafetyContentPanel({
   loadError,
   onRetry,
   canIssue,
+  canHseApprove,
   onSaved,
 }: PermitSafetyContentPanelProps) {
   const { t } = useTranslation("permits");
@@ -293,8 +296,9 @@ export function PermitSafetyContentPanel({
                 date: formatDateTime(content.hse_approved_at),
               })}
               {content.hse_approval_note ? ` — ${content.hse_approval_note}` : ""}
+              {content.hse_self_approved === true ? ` · ${t("safety.hse.selfApproved")}` : ""}
             </p>
-          ) : canIssue && HSE_APPROVAL_STATUSES.has(status) ? (
+          ) : canHseApprove && HSE_APPROVAL_STATUSES.has(status) ? (
             hseOpen ? (
               <form className="space-y-2" onSubmit={(e) => void handleHse(e)}>
                 <FormField name="hse-note" label={t("safety.hse.note")}>
@@ -338,7 +342,8 @@ export function PermitSafetyContentPanel({
               lel: limit(limits.lel_max_percent),
               h2s: limit(limits.h2s_max_ppm),
               co: limit(limits.co_max_ppm),
-            })}
+            })}{" "}
+            {t("safety.gas.validity", { hours: limit(content.gas_validity_hours) })}
           </p>
           {content.gas_tests.length === 0 ? (
             <p className="text-xs text-text-muted">{t("safety.gas.empty")}</p>
@@ -354,6 +359,9 @@ export function PermitSafetyContentPanel({
                     label={g.within_limits ? t("safety.gas.ok") : t("safety.gas.outOfLimits")}
                     tone={g.within_limits ? "success" : "danger"}
                   />
+                  {g.counts ? null : (
+                    <StatusChip label={t("safety.gas.notCounting")} tone="neutral" />
+                  )}
                   <span>
                     {t("safety.gas.reading", {
                       o2: formatDecimal(g.o2_percent, 1),

@@ -1261,6 +1261,18 @@
       "sync_status": "synced"
     },
     {
+      "entity_type": "permit_personal_locks",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 14,
+      "parents": [
+        "work_permits",
+        "permit_workers",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
       "entity_type": "permit_suspensions",
       "scope": "tenant",
       "conflict_policy": "operator_review",
@@ -1277,6 +1289,19 @@
       "conflict_policy": "operator_review",
       "apply_priority": 1,
       "parents": [
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "permit_workers",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 13,
+      "parents": [
+        "work_permits",
+        "personnel",
+        "external_companies",
         "user_accounts"
       ],
       "sync_status": "synced"

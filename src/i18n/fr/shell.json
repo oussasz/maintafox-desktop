@@ -254,7 +254,12 @@
       "PERMIT_ISSUE_CONTENT_MISSING": "Un permis délivré sur un autre poste sans son contenu (travail, analyse des risques, mesures de prévention, EPI)",
       "PERMIT_ISSUE_HSE_APPROVAL_MISSING": "Un permis délivré sur un autre poste sans l'approbation HSE que son type exige",
       "PERMIT_ISSUE_GAS_TEST_MISSING": "Un permis délivré sur un autre poste sans le test atmosphérique qu'il exige",
-      "PERMIT_ISSUE_GAS_TEST_OUT_OF_LIMITS": "Un permis délivré sur un autre poste sur un test atmosphérique hors des limites fixées ici"
+      "PERMIT_ISSUE_GAS_TEST_OUT_OF_LIMITS": "Un permis délivré sur un autre poste sur un test atmosphérique hors des limites fixées ici",
+      "PERMIT_ISSUE_HSE_SELF_APPROVAL": "Un permis délivré sur un autre poste dont l'approbation HSE a été enregistrée par son rédacteur ou la personne qui l'a soumis, sans dérogation aux 4 yeux sur son site ici",
+      "PERMIT_ISSUE_GAS_TEST_EXPIRED": "Un permis délivré sur un autre poste sur un test atmosphérique plus ancien que la durée de validité fixée ici",
+      "PERMIT_ACTIVE_GAS_TEST_INVALID": "Un permis activé sur un autre poste sans test atmosphérique valable (manquant, périmé ou hors limites) au moment de l'activation",
+      "PERMIT_ISSUE_WORKER_INDUCTION_MISSING": "Un permis délivré sur un autre poste avec un intervenant extérieur sans accueil sécurité",
+      "PERMIT_ISSUE_WORKER_QUALIFICATION": "Un permis délivré sur un autre poste avec un intervenant sans les habilitations valables exigées par son type"
     },
     "history": {
       "fromOtherDevice": "D'un autre appareil (enregistré avant cette version) : les numéros de cette entrée sont les identifiants de cet appareil et ne désignent pas les enregistrements d'ici."
@@ -446,6 +451,8 @@
       "failure_events": "Événement de défaillance",
       "app_settings": "Paramètre",
       "permit_gas_tests": "Test atmosphérique de permis",
+      "permit_workers": "Intervenant de permis",
+      "permit_personal_locks": "Cadenas personnel de permis",
       "equipment_isolation_points": "Point d'isolement d'équipement"
     },
     "negativeStock": "{{count}} emplacement(s) de stock sous zéro après synchronisation, à rapprocher par un comptage (Stock › Contrôles).",

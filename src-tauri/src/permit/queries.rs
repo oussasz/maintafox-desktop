@@ -776,12 +776,18 @@ pub(crate) async fn activation_ready(db: &impl ConnectionTrait, wp: &WorkPermit)
             ));
         }
     }
+    // L4-04 (CMMS Advisor 2026-11-11): a permit needing a gas test is used (activated, reinstated,
+    // its work started or resumed) only on a valid reading: within the limits and younger than the
+    // re-test interval; a break longer than the interval needs a new test.
+    crate::permit::safety_content::gas_ready(db, wp.id).await?;
     Ok(())
 }
 
 /// Close gate (P0-8): every isolation must have its lock removal verified (a cancelled planned line
 /// was never fitted: nothing to remove).
 async fn close_ready(db: &impl ConnectionTrait, permit_id: i64) -> AppResult<()> {
+    // Group lockout (L4-18): every worker's padlock is off the box.
+    crate::permit::workers::ensure_no_personal_lock_on(db, permit_id).await?;
     let pending = count_isolations_where(
         db,
         permit_id,
@@ -2149,6 +2155,10 @@ async fn update_work_permit_in(
     if back_to_draft {
         clear_review_record(db, input.id).await?;
     }
+    // The HSE approval and the gas tests judged the former equipment or site (review of L4-03/04).
+    if target.equipment_changes || target.site_changes {
+        reset_safety_record(db, input.id).await?;
+    }
     let updated = require_work_permit(db, input.id).await?;
     if target.equipment_changes || target.site_changes {
         audit_equipment_change(db, &current, &updated, actor_id).await?;
@@ -2164,6 +2174,19 @@ pub(crate) async fn clear_review_record(db: &impl ConnectionTrait, permit_id: i6
         "UPDATE work_permits SET submitted_by_id = NULL, submitted_at = NULL, approved_by_id = NULL, \
          approved_at = NULL, self_approved = NULL WHERE id = ? AND status = 'draft'",
         [permit_id.into()],
+    ))
+    .await?;
+    reset_safety_record(db, permit_id).await
+}
+
+/// The permit's HSE approval is cleared and its gas tests taken until now stop counting
+/// (`safety_reset_at`, `permit::safety_content::safety_content_since`): after a return to draft or a
+/// change of equipment or site, they judged another permit. The readings stay as history.
+pub(crate) async fn reset_safety_record(db: &impl ConnectionTrait, permit_id: i64) -> AppResult<()> {
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE work_permits SET hse_approved_by_id = NULL, hse_approved_at = NULL, hse_approval_note = NULL, hse_self_approved = NULL, safety_reset_at = ? WHERE id = ?",
+        [now_ts().into(), permit_id.into()],
     ))
     .await?;
     Ok(())
@@ -3581,6 +3604,8 @@ async fn ensure_lock_removable(
         ));
     }
     ensure_linked_work_not_running(db, permit).await?;
+    // Group lockout (L4-18): no isolation lock comes off while a worker's padlock is on the box.
+    crate::permit::workers::ensure_no_personal_lock_on(db, permit.id).await?;
     Ok(applier)
 }
 

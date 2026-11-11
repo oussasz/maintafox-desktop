@@ -17,9 +17,15 @@
 //! - a permit never changes its permit type (as no local edit does);
 //! - a permit held here before its issue (draft, waiting for review, approved) and received issued
 //!   or later (`issue_check`, L4-03 / L4-04, migration 290): its content (work, risks, preventive
-//!   measures, PPE) is complete, its HSE approval is recorded when its type here requires one, and,
-//!   when it needs a gas test, its latest gas test (with those received with it) is within the
-//!   limits set here;
+//!   measures, PPE) is complete, its HSE approval is recorded when its type here requires one, by a
+//!   person other than its author and submitter (or flagged a self-approval on a site that opted out
+//!   of four-eyes here), and, when it needs a gas test, its latest counting gas test at the issue
+//!   (with those received with it; measured after the permit was raised or last reset, not after
+//!   this PC's future bound) is within the limits and the re-test interval set here; its workers
+//!   (migration 291, L4-05 / L4-06) are inducted when external and hold, on the issue day, the
+//!   qualifications its type requires here;
+//! - a permit becoming `active` that needs a gas test has, at the moment it protects the work, a
+//!   counting gas test within the limits and the re-test interval (`PERMIT_ACTIVE_GAS_TEST_INVALID`);
 //! - four-eyes on its approval (`four_eyes_check`, migration 244): the approver is neither the
 //!   author nor the submitter written on the row, unless it is flagged a self-approval and the
 //!   permit's site opted out of four-eyes here; a permit past review names who approved it; the
@@ -156,8 +162,9 @@ async fn issue_check(
     permit: &Payload,
     code: &str,
     gas_tests: &[&Payload],
+    workers: &[&Payload],
 ) -> AppResult<Option<InboundVerdict>> {
-    use crate::permit::safety_content::{content_blockers, gas_limits, needs_gas_test, reading_breaches};
+    use crate::permit::safety_content::{content_blockers, needs_gas_test};
     let missing = content_blockers(
         code,
         field(permit, "work_description"),
@@ -188,44 +195,172 @@ async fn issue_check(
     let hse: i64 = row.try_get("", "hse").map_err(sync_err)?;
     let gas: i64 = row.try_get("", "gas").map_err(sync_err)?;
     let type_code: String = row.try_get("", "code").map_err(sync_err)?;
-    if hse != 0 && (field(permit, "hse_approved_at").is_none() || field(permit, "hse_approved_by_sync_id").is_none()) {
-        return conflict(
-            "PERMIT_ISSUE_HSE_APPROVAL_MISSING",
-            format!("permit {code} was issued without the HSE approval its type requires"),
-        );
-    }
-    if needs_gas_test(gas != 0, type_sync, &type_code) {
-        let latest = gas_tests
-            .iter()
-            .filter_map(|g| time(g, "measured_at").map(|t| (t, *g)))
-            .max_by_key(|(t, _)| *t);
-        let Some((_, test)) = latest else {
+    let Some(hse_approver) =
+        field(permit, "hse_approved_by_sync_id").filter(|_| field(permit, "hse_approved_at").is_some())
+    else {
+        if hse != 0 {
             return conflict(
-                "PERMIT_ISSUE_GAS_TEST_MISSING",
-                format!("permit {code} was issued without the gas test it needs"),
+                "PERMIT_ISSUE_HSE_APPROVAL_MISSING",
+                format!("permit {code} was issued without the HSE approval its type requires"),
             );
+        }
+        return issue_gas_and_workers(conn, permit, code, type_sync, &type_code, gas != 0, gas_tests, workers).await;
+    };
+    // Four-eyes on the HSE approval (CMMS Advisor 2026-11-11), as `safety_content::hse_four_eyes`.
+    let second = crate::permit::queries::approver_is_second_person(
+        field(permit, "created_by_sync_id").as_ref(),
+        field(permit, "submitted_by_sync_id").as_ref(),
+        &hse_approver,
+    );
+    if !second {
+        let flagged = match permit.get("hse_self_approved") {
+            Some(Value::Bool(b)) => *b,
+            Some(Value::Number(n)) => n.as_i64() == Some(1),
+            _ => false,
         };
-        let limits = gas_limits(conn).await?;
-        let breaches = reading_breaches(
-            &limits,
-            num(test, "o2_percent").unwrap_or(f64::NAN),
-            num(test, "lel_percent").unwrap_or(f64::NAN),
-            num(test, "h2s_ppm").unwrap_or(f64::NAN),
-            num(test, "co_ppm"),
-            code,
-        );
-        if !breaches.is_empty() {
-            let what: Vec<&str> = breaches.iter().map(|b| b.code.as_str()).collect();
+        let allowed = if flagged {
+            match field(permit, "entity_sync_id") {
+                Some(node) => match local_id(conn, "org_nodes", node).await? {
+                    Some(node_id) => {
+                        crate::permit::queries::permit_four_eyes_rule(conn, node_id).await?
+                            == crate::reliability::study::decisions::SelfApprovalRule::Allowed
+                    }
+                    None => return wait(format!("permit {code}: its site {node} is not applied yet")),
+                },
+                None => false,
+            }
+        } else {
+            false
+        };
+        if !allowed {
             return conflict(
-                "PERMIT_ISSUE_GAS_TEST_OUT_OF_LIMITS",
+                "PERMIT_ISSUE_HSE_SELF_APPROVAL",
                 format!(
-                    "permit {code} was issued on a gas test out of the limits set here ({})",
-                    what.join(", ")
+                    "permit {code}: its HSE approval was recorded by its author or submitter (or one not recorded), \
+                     without its site opting out of four-eyes on this PC"
                 ),
             );
         }
     }
+    issue_gas_and_workers(conn, permit, code, type_sync, &type_code, gas != 0, gas_tests, workers).await
+}
+
+/// The gas part and the workers of the issue gate of a permit issued on another PC.
+#[allow(clippy::too_many_arguments)]
+async fn issue_gas_and_workers(
+    conn: &impl ConnectionTrait,
+    permit: &Payload,
+    code: &str,
+    type_sync: &str,
+    type_code: &str,
+    gas_flag: bool,
+    gas_tests: &[&Payload],
+    workers: &[&Payload],
+) -> AppResult<Option<InboundVerdict>> {
+    let issued = time(permit, "issued_at").unwrap_or_else(crate::clock::now);
+    if crate::permit::safety_content::needs_gas_test(gas_flag, type_sync, type_code) {
+        if let Some((c, m)) = gas_verdict(conn, permit, code, gas_tests, issued, "issued").await? {
+            return conflict(c, m);
+        }
+    }
+    let Some(type_id) = local_id(conn, "permit_types", type_sync).await? else {
+        return wait(format!("permit {code}: its permit type is not applied yet"));
+    };
+    let wo_id = match field(permit, "linked_work_order_sync_id") {
+        Some(wo) => match local_id(conn, "work_orders", wo).await? {
+            Some(id) => Some(id),
+            None => return wait(format!("permit {code}: its work order {wo} is not applied yet")),
+        },
+        None => None,
+    };
+    if let Some((c, m)) =
+        crate::permit::workers::received_workers_breach(conn, code, type_id, wo_id, issued.date_naive(), workers)
+            .await?
+    {
+        return conflict(c, m);
+    }
     Ok(None)
+}
+
+/// The latest gas reading that counts at `at` (measured after the permit was raised or last reset,
+/// not after `at` nor this PC's future bound), judged on the re-test interval and the limits set
+/// here. `None`: valid. `when`: what the permit became (for the message).
+async fn gas_verdict(
+    conn: &impl ConnectionTrait,
+    permit: &Payload,
+    code: &str,
+    gas_tests: &[&Payload],
+    at: DateTime<Utc>,
+    when: &str,
+) -> AppResult<Option<(&'static str, String)>> {
+    use crate::permit::safety_content::{
+        gas_limits, gas_validity_hours, reading_breaches, safety_content_since, validity_duration,
+    };
+    let since = safety_content_since(field(permit, "requested_at"), field(permit, "safety_reset_at"));
+    let bound = future_bound().min(at + Duration::minutes(MAX_CLOCK_SKEW_MINUTES));
+    let latest = gas_tests
+        .iter()
+        .filter_map(|g| time(g, "measured_at").map(|t| (t, *g)))
+        .filter(|(t, _)| since.is_none_or(|s| *t >= s) && *t <= bound)
+        .max_by_key(|(t, _)| *t);
+    let Some((measured, test)) = latest else {
+        return Ok(Some((
+            "PERMIT_ISSUE_GAS_TEST_MISSING",
+            format!("permit {code} was {when} without the gas test it needs"),
+        )));
+    };
+    let hours = gas_validity_hours(conn).await?;
+    if at - measured > validity_duration(hours) {
+        return Ok(Some((
+            "PERMIT_ISSUE_GAS_TEST_EXPIRED",
+            format!("permit {code} was {when} at {at} on a gas test of {measured}, older than {hours} h"),
+        )));
+    }
+    let limits = gas_limits(conn).await?;
+    let breaches = reading_breaches(
+        &limits,
+        num(test, "o2_percent").unwrap_or(f64::NAN),
+        num(test, "lel_percent").unwrap_or(f64::NAN),
+        num(test, "h2s_ppm").unwrap_or(f64::NAN),
+        num(test, "co_ppm"),
+        code,
+    );
+    if breaches.is_empty() {
+        return Ok(None);
+    }
+    let what: Vec<&str> = breaches.iter().map(|b| b.code.as_str()).collect();
+    Ok(Some((
+        "PERMIT_ISSUE_GAS_TEST_OUT_OF_LIMITS",
+        format!(
+            "permit {code} was {when} on a gas test out of the limits set here ({})",
+            what.join(", ")
+        ),
+    )))
+}
+
+/// Whether permits of the type named by the payload need a gas test; `None` when the type is not
+/// here yet.
+async fn type_needs_gas_test(conn: &impl ConnectionTrait, permit: &Payload) -> AppResult<Option<bool>> {
+    let Some(type_sync) = field(permit, "permit_type_sync_id") else {
+        return Ok(None);
+    };
+    let Some(row) = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT COALESCE(requires_atmospheric_test, 0) AS gas, code FROM permit_types WHERE entity_sync_id = ?",
+            [type_sync.into()],
+        ))
+        .await?
+    else {
+        return Ok(None);
+    };
+    let gas: i64 = row.try_get("", "gas").map_err(sync_err)?;
+    let type_code: String = row.try_get("", "code").map_err(sync_err)?;
+    Ok(Some(crate::permit::safety_content::needs_gas_test(
+        gas != 0,
+        type_sync,
+        &type_code,
+    )))
 }
 
 tokio::task_local! {
@@ -822,6 +957,11 @@ async fn children_with(
             .collect();
         if let Some((entity, id)) = missing.first() {
             blocked = Some(format!("{table} {sid} waits for {entity} {id}"));
+            continue;
+        }
+        // An append-only gas test already held here is never rewritten by its apply: the version held
+        // is the one judged (review of L4-04).
+        if table == "permit_gas_tests" && rows.contains_key(&sid) {
             continue;
         }
         let merged = overlay(rows.get(&sid), &received);
@@ -1557,10 +1697,11 @@ pub(crate) async fn inbound_permit_check(
     }
     if issue_crossed(from, to) {
         let gas_tests = permit_children(conn, "permit_gas_tests", entity_sync_id).await?;
-        if let Some(why) = gas_tests.blocked.clone() {
+        let workers = permit_children(conn, "permit_workers", entity_sync_id).await?;
+        if let Some(why) = gas_tests.blocked.clone().or_else(|| workers.blocked.clone()) {
             return wait(format!("permit {code}: {why}"));
         }
-        if let Some(verdict) = issue_check(conn, &permit, &code, &payloads(&gas_tests)).await? {
+        if let Some(verdict) = issue_check(conn, &permit, &code, &payloads(&gas_tests), &payloads(&workers)).await? {
             return Ok(Some(verdict));
         }
     }
@@ -1609,6 +1750,16 @@ pub(crate) async fn inbound_permit_check(
             let counted = counted_isolations(&payloads(&isolations));
             if let Some((c, m)) = isolations_ready(&code, needs, three_person, &counted, at) {
                 return conflict(c, m);
+            }
+            // L4-04 (review): the gas part of the gate at the moment it protects the work.
+            if type_needs_gas_test(conn, &permit).await? == Some(true) {
+                let gas_tests = permit_children(conn, "permit_gas_tests", entity_sync_id).await?;
+                if let Some(why) = gas_tests.blocked.clone() {
+                    return wait(format!("permit {code}: {why}"));
+                }
+                if let Some((_, m)) = gas_verdict(conn, &permit, &code, &payloads(&gas_tests), at, "active").await? {
+                    return conflict("PERMIT_ACTIVE_GAS_TEST_INVALID", m);
+                }
             }
         }
         "closed" | "handed_back" => {
@@ -1665,9 +1816,13 @@ pub(crate) async fn permit_group(
             rows.extend(permit_children(conn, table, entity_sync_id).await?.counted);
         }
     }
-    // The gas tests the issue was judged on (`issue_check`) are applied with it.
-    if issue {
+    // The gas tests and workers the issue was judged on (`issue_check`), and the gas tests an
+    // activation was judged on, are applied with it.
+    if issue || to == "active" {
         rows.extend(permit_children(conn, "permit_gas_tests", entity_sync_id).await?.counted);
+    }
+    if issue {
+        rows.extend(permit_children(conn, "permit_workers", entity_sync_id).await?.counted);
     }
     Ok((!rows.is_empty()).then(|| Group {
         parent_sync_id: entity_sync_id.to_string(),

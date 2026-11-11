@@ -83,7 +83,8 @@
     "permit.gas_o2_max_percent": "Atmospheric test: highest O2 accepted (%)",
     "permit.gas_lel_max_percent": "Atmospheric test: LEL limit (%)",
     "permit.gas_h2s_max_ppm": "Atmospheric test: H2S limit (ppm)",
-    "permit.gas_co_max_ppm": "Atmospheric test: CO limit (ppm)"
+    "permit.gas_co_max_ppm": "Atmospheric test: CO limit (ppm)",
+    "permit.gas_test_validity_hours": "Atmospheric test: validity (h)"
   },
   "documentHeader": {
     "removeLogoConfirmTitle": "Remove the logo?",
@@ -395,7 +396,8 @@
       "permit.gas_o2_max_percent": "… and at most this value (shipped value: 23.5 %).",
       "permit.gas_lel_max_percent": "The latest flammable gas reading (% of the lower explosive limit) must stay below this value (shipped value: 10 %).",
       "permit.gas_h2s_max_ppm": "The latest hydrogen sulphide reading must stay below this value (shipped value: 10 ppm).",
-      "permit.gas_co_max_ppm": "When carbon monoxide is measured, the latest reading must stay below this value (shipped value: 25 ppm)."
+      "permit.gas_co_max_ppm": "When carbon monoxide is measured, the latest reading must stay below this value (shipped value: 25 ppm).",
+      "permit.gas_test_validity_hours": "An atmospheric test is valid for this number of hours: after that, test again before issuing or activating the permit, reinstating it after a suspension, or starting or resuming the work (shipped value: 4 h)."
     },
     "units": {
       "wo.reopen_window_days_one": "{{count}} day",
@@ -414,7 +416,8 @@
       "permit.gas_o2_max_percent": "{{value, number(maximumFractionDigits: 6)}} %",
       "permit.gas_lel_max_percent": "{{value, number(maximumFractionDigits: 6)}} % LEL",
       "permit.gas_h2s_max_ppm": "{{value, number(maximumFractionDigits: 6)}} ppm",
-      "permit.gas_co_max_ppm": "{{value, number(maximumFractionDigits: 6)}} ppm"
+      "permit.gas_co_max_ppm": "{{value, number(maximumFractionDigits: 6)}} ppm",
+      "permit.gas_test_validity_hours": "{{value, number(maximumFractionDigits: 6)}} h"
     },
     "currencyLoadError": "The currency list (Reference data › Currencies) could not be loaded: the currency cannot be changed.",
     "currencyLoading": "Loading currencies…",

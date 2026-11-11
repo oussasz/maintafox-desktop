@@ -22,6 +22,7 @@ use crate::permit::domain::{
 };
 use crate::permit::queries;
 use crate::permit::safety_content;
+use crate::permit::workers;
 use crate::rbac::permissions::{PTW_CLOSE, PTW_ISSUE, PTW_VIEW};
 use crate::state::AppState;
 use crate::{require_permission, require_session};
@@ -533,14 +534,21 @@ pub async fn save_permit_safety_content(
     safety_content::save_permit_safety_content(&state.db, input, i64::from(user.user_id)).await
 }
 
-/// Records the session user as the permit's HSE approver (the approval right at its site).
+/// Records the session user as the permit's HSE approver (the HSE approval right at its site,
+/// CMMS Advisor 2026-11-11; the approver is neither the author nor the submitter).
 #[tauri::command]
 pub async fn record_permit_hse_approval(
     input: safety_content::PermitHseApprovalInput,
     state: State<'_, AppState>,
 ) -> AppResult<safety_content::PermitSafetyContent> {
     let user = require_session!(state);
-    require_on_permit(&state, user.user_id, PTW_ISSUE, input.permit_id).await?;
+    require_on_permit(
+        &state,
+        user.user_id,
+        crate::rbac::permissions::PTW_HSE_APPROVE,
+        input.permit_id,
+    )
+    .await?;
     safety_content::record_permit_hse_approval(&state.db, input, i64::from(user.user_id)).await
 }
 
@@ -553,6 +561,104 @@ pub async fn record_permit_gas_test(
     let user = require_session!(state);
     require_on_permit(&state, user.user_id, PTW_ISSUE, input.permit_id).await?;
     safety_content::record_permit_gas_test(&state.db, input, i64::from(user.user_id)).await
+}
+
+// ── Workers and personal padlocks (L4-05, L4-06, L4-18, migration 291) ────────────────────────────
+
+/// The workers of a permit and the padlocks on its group lock box: read with the permit view right
+/// at its site, or with the narrow padlock right there (a worker without other permit rights sees
+/// the permit's workers to place their own padlock).
+#[tauri::command]
+pub async fn list_permit_workers(permit_id: i64, state: State<'_, AppState>) -> AppResult<workers::PermitWorkersView> {
+    let user = require_session!(state);
+    if require_on_permit_records(&state, user.user_id, PTW_VIEW, permit_id)
+        .await
+        .is_err()
+    {
+        require_on_permit(&state, user.user_id, crate::rbac::permissions::PTW_LOCK_OWN, permit_id).await?;
+    }
+    workers::list_permit_workers(&state.db, permit_id, i64::from(user.user_id)).await
+}
+
+/// Adds a worker (the right that writes and issues permits at its site); refused when they lack a
+/// qualification the permit's type requires.
+#[tauri::command]
+pub async fn add_permit_worker(
+    input: workers::PermitWorkerAddInput,
+    state: State<'_, AppState>,
+) -> AppResult<workers::PermitWorkersView> {
+    let user = require_session!(state);
+    require_on_permit(&state, user.user_id, PTW_ISSUE, input.permit_id).await?;
+    workers::add_permit_worker(&state.db, input, i64::from(user.user_id)).await
+}
+
+/// Records the induction of an external worker, given by the session user.
+#[tauri::command]
+pub async fn record_permit_worker_induction(
+    input: workers::PermitWorkerInductionInput,
+    state: State<'_, AppState>,
+) -> AppResult<workers::PermitWorkersView> {
+    let user = require_session!(state);
+    let permit_id = workers::worker_permit_id(&state.db, input.worker_id).await?;
+    require_on_permit(&state, user.user_id, PTW_ISSUE, permit_id).await?;
+    workers::record_permit_worker_induction(&state.db, input, i64::from(user.user_id)).await
+}
+
+/// Withdraws a worker from the permit (not while their padlock is on the box).
+#[tauri::command]
+pub async fn withdraw_permit_worker(
+    input: workers::PermitWorkerWithdrawInput,
+    state: State<'_, AppState>,
+) -> AppResult<workers::PermitWorkersView> {
+    let user = require_session!(state);
+    let permit_id = workers::worker_permit_id(&state.db, input.worker_id).await?;
+    require_on_permit(&state, user.user_id, PTW_ISSUE, permit_id).await?;
+    workers::withdraw_permit_worker(&state.db, input, i64::from(user.user_id)).await
+}
+
+/// "Je pose mon cadenas" (L4-18): the narrow padlock right at the permit's site; the server checks
+/// that the session user is a worker of the permit and places only their own padlock.
+#[tauri::command]
+pub async fn place_my_permit_lock(
+    input: workers::PersonalLockPlaceInput,
+    state: State<'_, AppState>,
+) -> AppResult<workers::PermitWorkersView> {
+    let user = require_session!(state);
+    require_on_permit(
+        &state,
+        user.user_id,
+        crate::rbac::permissions::PTW_LOCK_OWN,
+        input.permit_id,
+    )
+    .await?;
+    workers::place_my_personal_lock(&state.db, input, i64::from(user.user_id)).await
+}
+
+/// "J'ai retiré mon cadenas" (L4-18): the narrow padlock right at the permit's site; only the
+/// padlock's owner removes it.
+#[tauri::command]
+pub async fn remove_my_permit_lock(
+    input: workers::PersonalLockRemoveInput,
+    state: State<'_, AppState>,
+) -> AppResult<workers::PermitWorkersView> {
+    let user = require_session!(state);
+    let permit_id = workers::lock_permit_id(&state.db, input.lock_id).await?;
+    require_on_permit(&state, user.user_id, crate::rbac::permissions::PTW_LOCK_OWN, permit_id).await?;
+    workers::remove_my_personal_lock(&state.db, input, i64::from(user.user_id)).await
+}
+
+/// A padlock whose owner is absent, removed by force: the close right at the permit's site, after
+/// a step-up, with a reason and the attestation that the worker is not on site.
+#[tauri::command]
+pub async fn force_remove_permit_lock(
+    input: workers::PersonalLockForceRemoveInput,
+    state: State<'_, AppState>,
+) -> AppResult<workers::PermitWorkersView> {
+    let user = require_session!(state);
+    let permit_id = workers::lock_permit_id(&state.db, input.lock_id).await?;
+    require_on_permit(&state, user.user_id, PTW_CLOSE, permit_id).await?;
+    crate::require_step_up!(state);
+    workers::force_remove_personal_lock(&state.db, input, i64::from(user.user_id)).await
 }
 
 /// The isolation points of the permit's equipment, proposed on its isolation form (read with the

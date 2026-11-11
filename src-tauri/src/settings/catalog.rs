@@ -186,6 +186,21 @@ pub const SETTINGS_CATALOG: &[SettingDefinition] = &[
         editor: SettingEditor::Section,
         risk: "high",
     },
+    // Re-test interval of a gas test (hours; CMMS Advisor 2026-11-11): a reading older than this is
+    // out of date at the issue, the activation, the reinstatement and each start or resume of the
+    // work. Shipped value 4 h; between a quarter of an hour and 24 h.
+    SettingDefinition {
+        key: crate::permit::safety_content::SETTING_GAS_VALIDITY_HOURS,
+        category: "permits",
+        scope: "tenant",
+        shipped_value_json: r"4",
+        kind: SettingKind::Decimal {
+            min_millionths: 250_000,
+            max_millionths: 24_000_000,
+        },
+        editor: SettingEditor::Section,
+        risk: "high",
+    },
     // ── Inventory ───────────────────────────────────────────────────────────────────────────
     // Four-eyes tolerance of a stock count variance (D11, migration 259): above it ("critique"), the
     // variance is approved by someone other than the counter. Above = any threshold set is exceeded

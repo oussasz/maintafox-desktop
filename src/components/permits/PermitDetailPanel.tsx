@@ -69,6 +69,7 @@ import { ForcedRemovalDialog } from "./ForcedRemovalDialog";
 import { PermitHandoverForm } from "./PermitHandoverForm";
 import { PermitSafetyContentPanel } from "./PermitSafetyContentPanel";
 import { PermitNoSiteBadge, usePermitAccess } from "./PermitSiteScope";
+import { PermitWorkersPanel } from "./PermitWorkersPanel";
 import { WorkerInformedDialog } from "./WorkerInformedDialog";
 import { printLotoCard } from "./loto-card-print";
 import {
@@ -119,6 +120,8 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
   const access = usePermitAccess(permit);
   const canIssue = !access.loading && access.can(P.PTW_ISSUE);
   const canClose = !access.loading && access.can(P.PTW_CLOSE);
+  const canHseApprove = !access.loading && access.can(P.PTW_HSE_APPROVE);
+  const canLockOwn = !access.loading && access.can(P.PTW_LOCK_OWN);
   const me = session?.user_id ?? null;
 
   const [isolations, setIsolations] = useState<PermitIsolationRecord[]>([]);
@@ -674,6 +677,7 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
         loadError={safetyError}
         onRetry={() => void loadSafety()}
         canIssue={canIssue}
+        canHseApprove={canHseApprove}
         onSaved={(content) => {
           setSafety(content);
           // The content lives on the permit: its version changed (and its status, back to draft).
@@ -681,6 +685,14 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
             .then(onChanged)
             .catch((e: unknown) => setError(appErrorReason(e)));
         }}
+      />
+
+      <PermitWorkersPanel
+        permit={permit}
+        canIssue={canIssue}
+        canClose={canClose}
+        canLockOwn={canLockOwn}
+        onChanged={() => void loadSafety()}
       />
 
       <section className="space-y-2">

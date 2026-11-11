@@ -254,7 +254,12 @@
       "PERMIT_ISSUE_CONTENT_MISSING": "A permit issued on another PC without its content (work, risk assessment, preventive measures, PPE)",
       "PERMIT_ISSUE_HSE_APPROVAL_MISSING": "A permit issued on another PC without the HSE approval its type requires",
       "PERMIT_ISSUE_GAS_TEST_MISSING": "A permit issued on another PC without the atmospheric test it requires",
-      "PERMIT_ISSUE_GAS_TEST_OUT_OF_LIMITS": "A permit issued on another PC on an atmospheric test outside the limits set here"
+      "PERMIT_ISSUE_GAS_TEST_OUT_OF_LIMITS": "A permit issued on another PC on an atmospheric test outside the limits set here",
+      "PERMIT_ISSUE_HSE_SELF_APPROVAL": "A permit issued on another PC whose HSE approval was recorded by its author or submitter, without its site opting out of four-eyes here",
+      "PERMIT_ISSUE_GAS_TEST_EXPIRED": "A permit issued on another PC on an atmospheric test older than the validity set here",
+      "PERMIT_ACTIVE_GAS_TEST_INVALID": "A permit activated on another PC without a valid atmospheric test (missing, out of date or out of limits) when it was activated",
+      "PERMIT_ISSUE_WORKER_INDUCTION_MISSING": "A permit issued on another PC with an external worker without a safety induction",
+      "PERMIT_ISSUE_WORKER_QUALIFICATION": "A permit issued on another PC with a worker lacking the valid qualifications its type requires"
     },
     "history": {
       "fromOtherDevice": "From another device (recorded before this version): the numbers in this entry are that device's record ids and do not point to records here."
@@ -446,6 +451,8 @@
       "failure_events": "Failure event",
       "app_settings": "Setting",
       "permit_gas_tests": "Permit atmospheric test",
+      "permit_workers": "Permit worker",
+      "permit_personal_locks": "Permit personal padlock",
       "equipment_isolation_points": "Equipment isolation point"
     },
     "negativeStock": "{{count}} stock location(s) below zero after sync, to reconcile by a count (Inventory › Controls).",

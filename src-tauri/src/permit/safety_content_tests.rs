@@ -34,9 +34,10 @@ async fn reload(db: &DatabaseConnection, wp: &WorkPermit) -> WorkPermit {
         .expect("permit")
 }
 
-/// A permit written by APPLIER, expiring within the shortest seeded duration (confined space: 4 h).
+/// A permit written by APPLIER, expiring within the shortest seeded duration (confined space: 4 h),
+/// raised an hour ago (so readings of the last hour count).
 async fn create(db: &DatabaseConnection, type_code: &str, asset: i64) -> WorkPermit {
-    queries::create_work_permit(
+    let wp = queries::create_work_permit(
         db,
         WorkPermitCreateInput {
             permit_type_id: type_id(db, type_code).await,
@@ -48,7 +49,43 @@ async fn create(db: &DatabaseConnection, type_code: &str, asset: i64) -> WorkPer
         APPLIER,
     )
     .await
-    .expect("create permit")
+    .expect("create permit");
+    raised_hours_ago(db, &wp, 1).await;
+    wp
+}
+
+/// The permit was raised `hours` ago (its request time; the row version is kept).
+async fn raised_hours_ago(db: &DatabaseConnection, wp: &WorkPermit, hours: i64) {
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE work_permits SET requested_at = ? WHERE id = ?",
+        [
+            (chrono::Utc::now() - chrono::Duration::hours(hours))
+                .format("%Y-%m-%dT%H:%M:%SZ")
+                .to_string()
+                .into(),
+            wp.id.into(),
+        ],
+    ))
+    .await
+    .expect("raised earlier");
+}
+
+/// A confined-space permit approved with its content and its HSE approval (by VERIFIER).
+async fn confined_approved(db: &DatabaseConnection, asset: i64) -> WorkPermit {
+    let wp = approved(db, write_content(db, &create(db, "confined_space", asset).await).await).await;
+    safety_content::record_permit_hse_approval(
+        db,
+        PermitHseApprovalInput {
+            permit_id: wp.id,
+            expected_row_version: wp.row_version,
+            note: None,
+        },
+        VERIFIER,
+    )
+    .await
+    .expect("HSE approval");
+    reload(db, &wp).await
 }
 
 /// The issue as the screen asks for it (no test helper fills anything).
@@ -481,4 +518,202 @@ async fn a_permit_issued_elsewhere_is_judged_on_the_issue_gate() {
         .expect("gas test");
     let outcome = apply(&db, &cs.entity_sync_id, &issued).await;
     assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+}
+// ── Review of L4-03 / L4-04 and CMMS Advisor rulings of 2026-11-11 ───────────────────────────────
+
+/// BLOCKING 1: a reading taken before the permit was raised is refused, and a reading older than
+/// the re-test interval (shipped 4 h) does not allow the issue.
+#[tokio::test]
+async fn a_gas_test_before_the_permit_or_older_than_the_interval_does_not_allow_the_issue() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-L404-R1").await;
+    let wp = confined_approved(&db, asset).await;
+    // Raised an hour ago: a reading of five hours ago describes another atmosphere.
+    let err = safety_content::record_permit_gas_test(&db, gas(&wp, 20.9, 300), APPLIER)
+        .await
+        .expect_err("before the permit");
+    assert_eq!(codes(&err), vec![safety_content::CODE_GAS_TEST_BEFORE_PERMIT]);
+
+    // Raised ten hours ago: the reading of five hours ago is recorded, in the limits, but too old.
+    raised_hours_ago(&db, &wp, 10).await;
+    safety_content::record_permit_gas_test(&db, gas(&wp, 20.9, 300), APPLIER)
+        .await
+        .expect("old reading recorded");
+    let wp = reload(&db, &wp).await;
+    let err = issue(&db, &wp).await.expect_err("out of date");
+    assert_eq!(codes(&err), vec![safety_content::CODE_GAS_TEST_EXPIRED]);
+    assert_eq!(reload(&db, &wp).await.status, "approved", "nothing written");
+
+    // A reading synchronised from before the permit was raised is kept but never counts.
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO permit_gas_tests (entity_sync_id, permit_id, o2_percent, lel_percent, h2s_ppm, co_ppm, measured_at, measured_by_id, instrument, row_version, created_at, updated_at) VALUES (?, ?, 20.9, 0, 0, NULL, ?, ?, 'Ancien détecteur', 1, ?, ?)",
+        [
+            uuid::Uuid::new_v4().to_string().into(),
+            wp.id.into(),
+            (chrono::Utc::now() - chrono::Duration::hours(20))
+                .format("%Y-%m-%dT%H:%M:%SZ")
+                .to_string()
+                .into(),
+            APPLIER.into(),
+            now().into(),
+            now().into(),
+        ],
+    ))
+    .await
+    .expect("old synced reading");
+    let shown = safety_content::get_permit_safety_content(&db, wp.id)
+        .await
+        .expect("read");
+    assert_eq!(shown.gas_validity_hours, 4.0);
+    assert!(
+        shown.gas_tests.iter().any(|g| !g.counts),
+        "the reading before the permit does not count"
+    );
+
+    // A fresh reading: issued.
+    safety_content::record_permit_gas_test(&db, gas(&wp, 20.9, 1), APPLIER)
+        .await
+        .expect("fresh reading");
+    let wp = reload(&db, &wp).await;
+    assert_eq!(issue(&db, &wp).await.expect("issue").status, "issued");
+}
+
+/// BLOCKING 2: a newer reading out of the limits refuses the activation (and the reinstatement,
+/// and the start of the work: the same `activation_ready`).
+#[tokio::test]
+async fn a_newer_failing_gas_test_refuses_the_activation() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-L404-R2").await;
+    let wp = confined_approved(&db, asset).await;
+    safety_content::record_permit_gas_test(&db, gas(&wp, 20.9, 2), APPLIER)
+        .await
+        .expect("good reading");
+    let wp = issue(&db, &reload(&db, &wp).await).await.expect("issue");
+    // The atmosphere changed after the issue.
+    safety_content::record_permit_gas_test(&db, gas(&wp, 18.2, 1), APPLIER)
+        .await
+        .expect("failing reading");
+    let activate = |wp: WorkPermit| {
+        let db = db.clone();
+        async move {
+            queries::set_work_permit_status(
+                &db,
+                WorkPermitStatusInput {
+                    id: wp.id,
+                    status: "active".into(),
+                    expected_row_version: wp.row_version,
+                    reason: None,
+                },
+                APPLIER,
+            )
+            .await
+        }
+    };
+    let err = activate(reload(&db, &wp).await).await.expect_err("low O2 now");
+    assert_eq!(codes(&err), vec![CODE_GAS_O2_OUT_OF_LIMITS]);
+    assert_eq!(reload(&db, &wp).await.status, "issued");
+    safety_content::record_permit_gas_test(&db, gas(&wp, 20.9, 0), APPLIER)
+        .await
+        .expect("ventilated");
+    assert_eq!(activate(reload(&db, &wp).await).await.expect("active").status, "active");
+}
+
+/// CMMS Advisor ruling 1: the author (or submitter) does not record the HSE approval; another
+/// person does, flagged as no self-approval.
+#[tokio::test]
+async fn the_author_does_not_record_the_hse_approval() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-L403-R1").await;
+    let wp = set_status(
+        &db,
+        &write_content(&db, &create(&db, "hot_work", asset).await).await,
+        "pending_review",
+    )
+    .await
+    .expect("submit");
+    let input = |wp: &WorkPermit| PermitHseApprovalInput {
+        permit_id: wp.id,
+        expected_row_version: wp.row_version,
+        note: None,
+    };
+    let err = safety_content::record_permit_hse_approval(&db, input(&wp), APPLIER)
+        .await
+        .expect_err("author");
+    assert_eq!(codes(&err), vec!["GATE_PERMIT_HSE_APPROVER_IS_AUTHOR"]);
+    let shown = safety_content::record_permit_hse_approval(&db, input(&wp), VERIFIER)
+        .await
+        .expect("second person");
+    assert_eq!(shown.hse_self_approved, Some(false));
+}
+
+/// Review should-fix 4: a return to draft (here a change of equipment while waiting for review)
+/// clears the HSE approval, and the gas tests taken before stop counting.
+#[tokio::test]
+async fn a_change_of_equipment_clears_the_hse_approval_and_the_earlier_gas_tests() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-L404-R3").await;
+    let other = insert_equipment(&db, "EQ-L404-R3B").await;
+    let wp = write_content(&db, &create(&db, "confined_space", asset).await).await;
+    safety_content::record_permit_gas_test(&db, gas(&wp, 20.9, 5), APPLIER)
+        .await
+        .expect("reading");
+    let wp = set_status(&db, &reload(&db, &wp).await, "pending_review")
+        .await
+        .expect("submit");
+    safety_content::record_permit_hse_approval(
+        &db,
+        PermitHseApprovalInput {
+            permit_id: wp.id,
+            expected_row_version: wp.row_version,
+            note: None,
+        },
+        VERIFIER,
+    )
+    .await
+    .expect("HSE");
+    let wp = reload(&db, &wp).await;
+    queries::update_work_permit(
+        &db,
+        crate::permit::domain::WorkPermitUpdateInput {
+            id: wp.id,
+            linked_work_order_id: None,
+            asset_id: Some(other),
+            entity_id: Some(1),
+            expires_at: wp.expires_at.clone(),
+            expected_row_version: wp.row_version,
+        },
+        APPLIER,
+    )
+    .await
+    .expect("equipment changed");
+    let shown = safety_content::get_permit_safety_content(&db, wp.id)
+        .await
+        .expect("read");
+    assert_eq!(shown.permit_status, "draft");
+    assert_eq!(shown.hse_approved_at, None);
+    assert!(shown.gas_tests.iter().all(|g| !g.counts));
+    assert!(shown.issue_blockers.iter().any(|b| b.code == CODE_GAS_TEST_MISSING));
+}
+
+/// A permit issued on another PC on a reading older than the interval at its issue is a conflict.
+#[tokio::test]
+async fn a_permit_issued_elsewhere_on_an_out_of_date_gas_test_is_a_conflict() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-L404-S2").await;
+    let cs = confined_approved(&db, asset).await;
+    raised_hours_ago(&db, &cs, 10).await;
+    safety_content::record_permit_gas_test(&db, gas(&cs, 20.9, 300), APPLIER)
+        .await
+        .expect("old reading");
+    let issued = with(
+        wire(&db, &cs.entity_sync_id).await,
+        &[("status", json!("issued")), ("issued_at", json!(now()))],
+    );
+    let outcome = apply(&db, &cs.entity_sync_id, &issued).await;
+    assert_eq!(
+        conflict_code(&outcome),
+        Some("PERMIT_ISSUE_GAS_TEST_EXPIRED"),
+        "{outcome:?}"
+    );
 }

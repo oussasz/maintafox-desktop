@@ -441,7 +441,8 @@
       "byAt": "Par {{name}} le {{date}}",
       "note": "Commentaire (facultatif)",
       "record": "Enregistrer l'approbation HSE",
-      "confirm": "Approuver (HSE)"
+      "confirm": "Approuver (HSE)",
+      "selfApproved": "Enregistrée par le rédacteur (site sans 4 yeux)"
     },
     "gas": {
       "title": "Tests atmosphériques",
@@ -461,7 +462,9 @@
       "instrument": "Appareil de mesure",
       "invalidReading": "Saisissez un nombre positif.",
       "now": "Maintenant",
-      "record": "Enregistrer le test"
+      "record": "Enregistrer le test",
+      "validity": "Un test reste valable {{hours}} h : au-delà, refaites-le avant de délivrer, d'activer ou de reprendre le travail.",
+      "notCounting": "Ne compte plus (avant l'établissement du permis ou son dernier retour en brouillon)"
     },
     "proposed": {
       "title": "Points d'isolement de l'équipement",
@@ -471,5 +474,56 @@
       "normalState": "État normal : {{state}}",
       "loadError": "Les points d'isolement de l'équipement n'ont pas pu être lus."
     }
+  },
+  "workers": {
+    "title": "Intervenants et cadenas personnels",
+    "hint": "Chaque intervenant pose son propre cadenas sur la boîte de consignation collective. Aucun cadenas d'isolement ne se retire, et le permis ne se clôture pas, tant qu'un cadenas personnel est posé.",
+    "loading": "Chargement des intervenants…",
+    "loadError": "Les intervenants du permis n'ont pas pu être lus.",
+    "empty": "Aucun intervenant sur ce permis.",
+    "external": "Extérieur",
+    "internal": "Interne",
+    "withdrawn": "Retiré du permis",
+    "role": "Rôle : {{role}}",
+    "company": "Entreprise : {{company}}",
+    "inductionDone": "Accueil sécurité le {{date}} par {{name}}",
+    "inductionMissing": "Accueil sécurité non enregistré",
+    "recordInduction": "Enregistrer l'accueil sécurité",
+    "withdraw": "Retirer du permis",
+    "lockOn": "Cadenas {{lock}} posé le {{date}}",
+    "noLock": "Pas de cadenas posé",
+    "me": "Vous",
+    "openLocks": "{{count}} cadenas personnel(s) sur la boîte",
+    "add": {
+      "title": "Ajouter un intervenant",
+      "kindPersonnel": "Personnel (fiche)",
+      "kindExternal": "Intervenant extérieur sans fiche",
+      "search": "Rechercher une personne",
+      "searchButton": "Rechercher",
+      "noResult": "Aucune personne trouvée.",
+      "person": "Personne",
+      "choose": "Choisir…",
+      "name": "Nom de l'intervenant",
+      "company": "Entreprise extérieure",
+      "companiesError": "La liste des entreprises extérieures n'a pas pu être lue.",
+      "role": "Rôle sur le permis",
+      "inductionNow": "Accueil sécurité donné maintenant par moi",
+      "submit": "Ajouter"
+    },
+    "myLock": {
+      "number": "Numéro de mon cadenas",
+      "place": "Je pose mon cadenas",
+      "remove": "J'ai retiré mon cadenas"
+    },
+    "force": {
+      "open": "Retrait forcé (propriétaire absent)",
+      "reason": "Raison du retrait forcé",
+      "attest": "J'atteste que l'intervenant n'est pas sur le site",
+      "confirm": "Retirer le cadenas",
+      "stepUpHint": "Votre mot de passe sera demandé.",
+      "forced": "Retiré de force : {{reason}}"
+    },
+    "history": "Cadenas retirés",
+    "removedAt": "Cadenas {{lock}} de {{name}} retiré le {{date}} par {{by}}"
   }
 }

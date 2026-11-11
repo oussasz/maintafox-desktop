@@ -83,7 +83,8 @@
     "permit.gas_o2_max_percent": "Test atmosphérique : O2 maximal accepté (%)",
     "permit.gas_lel_max_percent": "Test atmosphérique : limite de la LIE (%)",
     "permit.gas_h2s_max_ppm": "Test atmosphérique : limite de l'H2S (ppm)",
-    "permit.gas_co_max_ppm": "Test atmosphérique : limite du CO (ppm)"
+    "permit.gas_co_max_ppm": "Test atmosphérique : limite du CO (ppm)",
+    "permit.gas_test_validity_hours": "Test atmosphérique : durée de validité (h)"
   },
   "documentHeader": {
     "removeLogoConfirmTitle": "Retirer le logo ?",
@@ -395,7 +396,8 @@
       "permit.gas_o2_max_percent": "… et au plus égale à cette valeur (valeur livrée : 23,5 %).",
       "permit.gas_lel_max_percent": "La dernière mesure de gaz inflammables (% de la limite inférieure d'explosivité) doit rester inférieure à cette valeur (valeur livrée : 10 %).",
       "permit.gas_h2s_max_ppm": "La dernière mesure d'hydrogène sulfuré doit rester inférieure à cette valeur (valeur livrée : 10 ppm).",
-      "permit.gas_co_max_ppm": "Quand le monoxyde de carbone est mesuré, la dernière mesure doit rester inférieure à cette valeur (valeur livrée : 25 ppm)."
+      "permit.gas_co_max_ppm": "Quand le monoxyde de carbone est mesuré, la dernière mesure doit rester inférieure à cette valeur (valeur livrée : 25 ppm).",
+      "permit.gas_test_validity_hours": "Un test atmosphérique n'est valable que ce nombre d'heures : au-delà, il faut refaire le test avant de délivrer ou d'activer le permis, de le reprendre après suspension, ou de démarrer ou reprendre le travail (valeur livrée : 4 h)."
     },
     "units": {
       "wo.reopen_window_days_one": "{{count}} jour",
@@ -414,7 +416,8 @@
       "permit.gas_o2_max_percent": "{{value, number(maximumFractionDigits: 6)}} %",
       "permit.gas_lel_max_percent": "{{value, number(maximumFractionDigits: 6)}} % LIE",
       "permit.gas_h2s_max_ppm": "{{value, number(maximumFractionDigits: 6)}} ppm",
-      "permit.gas_co_max_ppm": "{{value, number(maximumFractionDigits: 6)}} ppm"
+      "permit.gas_co_max_ppm": "{{value, number(maximumFractionDigits: 6)}} ppm",
+      "permit.gas_test_validity_hours": "{{value, number(maximumFractionDigits: 6)}} h"
     },
     "currencyLoadError": "La liste des devises (Données de référence › Devises) n'a pas pu être chargée : la devise ne peut pas être modifiée.",
     "currencyLoading": "Chargement des devises…",
