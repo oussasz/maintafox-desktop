@@ -131,6 +131,7 @@ export function InspectionsPage() {
   // Dialogs
   const [scheduleRoundOpen, setScheduleRoundOpen] = useState(false);
   const [templateTarget, setTemplateTarget] = useState<InspectionTemplate | "new" | null>(null);
+  const [scheduleTemplateId, setScheduleTemplateId] = useState<number | null>(null);
   const [scheduleTarget, setScheduleTarget] = useState<InspectionScheduleSummary | "new" | null>(
     null,
   );
@@ -297,7 +298,13 @@ export function InspectionsPage() {
     if (tab === "schedules")
       return (
         <PermissionGate permission={P.INS_ADMIN}>
-          <Button className={mfLayout.primaryAction} onClick={() => setScheduleTarget("new")}>
+          <Button
+            className={mfLayout.primaryAction}
+            onClick={() => {
+              setScheduleTemplateId(null);
+              setScheduleTarget("new");
+            }}
+          >
             <Plus className="h-4 w-4" aria-hidden />
             {t("schedules.new")}
           </Button>
@@ -476,13 +483,20 @@ export function InspectionsPage() {
           <TemplateBuilderDialog
             target={templateTarget}
             onClose={() => setTemplateTarget(null)}
-            onSaved={() => {
+            onSaved={(createdTemplateId) => {
               setTemplateTarget(null);
               bump();
+              // Guided flow: a new checklist leads straight to its schedule.
+              if (createdTemplateId != null) {
+                setScheduleTemplateId(createdTemplateId);
+                setTab("schedules");
+                setScheduleTarget("new");
+              }
             }}
           />
           <InspectionScheduleDialog
             target={scheduleTarget}
+            initialTemplateId={scheduleTemplateId}
             onClose={() => setScheduleTarget(null)}
             onSaved={() => {
               setScheduleTarget(null);

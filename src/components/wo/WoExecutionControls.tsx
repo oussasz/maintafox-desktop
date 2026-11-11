@@ -92,7 +92,7 @@ import {
   reopenTask,
   unconfirmNoParts,
 } from "@/services/wo-execution-service";
-import { holdWo, listWos, pauseWo, startWo } from "@/services/wo-service";
+import { createWo, holdWo, listWos, pauseWo, startWo } from "@/services/wo-service";
 import { useWoStore } from "@/stores/wo-store";
 import { formatDateTime } from "@/utils/format-date";
 import type {
@@ -816,6 +816,37 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
         }
       },
       [actorId, taskResultCodes, taskFindingNotes, taskFollowUpCodes, loadData, t],
+    );
+
+    // L1-16: one click raises a draft corrective OT on the same equipment from a non-conforming
+    // step; its number fills the follow-up field, so completing the step links the two.
+    const handleRaiseCorrective = useCallback(
+      async (task: WoExecTask) => {
+        if (!actorId) return;
+        const findingNote = (taskFindingNotes[task.id] ?? "").trim();
+        setBusy(true);
+        setError(null);
+        try {
+          const created = await createWo({
+            type_code: "corrective",
+            equipment_id: wo.equipment_id,
+            entity_id: wo.entity_id,
+            title: t("execution.taskCorrectiveTitle", { task: task.task_description }),
+            description: t("execution.taskCorrectiveDescription", {
+              code: wo.code,
+              task: task.task_description,
+              note: findingNote === "" ? "-" : findingNote,
+            }),
+            creator_id: actorId,
+          });
+          setTaskFollowUpCodes((prev) => ({ ...prev, [task.id]: created.code }));
+        } catch (e) {
+          setError(woActionFailureText(t("execution.error.raiseCorrective"), e));
+        } finally {
+          setBusy(false);
+        }
+      },
+      [actorId, taskFindingNotes, wo.equipment_id, wo.entity_id, wo.code, t],
     );
 
     const handleReopenTask = useCallback(
@@ -1554,6 +1585,18 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                         }
                         disabled={taskResultDisabled}
                       />
+                      {can(P.OT_CREATE) && (taskFollowUpCodes[task.id] ?? "").trim() === "" ? (
+                        <div className="md:col-span-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => void handleRaiseCorrective(task)}
+                            disabled={taskResultDisabled}
+                          >
+                            {t("execution.taskRaiseCorrective")}
+                          </Button>
+                        </div>
+                      ) : null}
                       {task.is_mandatory ? (
                         <p className="text-xs text-muted-foreground md:col-span-2">
                           {t("execution.taskNokEvidenceHint")}

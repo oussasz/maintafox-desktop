@@ -100,4 +100,53 @@ mod tests {
             "re-run must not duplicate baseline rows"
         );
     }
+
+    async fn domain_value_count(db: &sea_orm::DatabaseConnection, domain: &str, prefix: &str) -> i64 {
+        let row = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT COUNT(*) AS c FROM reference_values rv \
+                 INNER JOIN reference_sets rs ON rs.id = rv.set_id AND rs.status = 'published' \
+                 INNER JOIN reference_domains rd ON rd.id = rs.domain_id \
+                 WHERE UPPER(TRIM(rd.code)) = ? AND substr(rv.code, 1, length(?)) = ? AND rv.is_active = 1",
+                [domain.into(), prefix.into(), prefix.into()],
+            ))
+            .await
+            .expect("count query")
+            .expect("count row");
+        row.try_get::<i64>("", "c").expect("c")
+    }
+
+    #[tokio::test]
+    async fn failure_catalogue_family_modes_and_remedies_seed_idempotently() {
+        let db = setup().await;
+        let pump = domain_value_count(&db, "WORK.FAILURE_MODES", "POMPE_").await;
+        let motor = domain_value_count(&db, "WORK.FAILURE_MODES", "MOTEUR_").await;
+        let remedies = domain_value_count(&db, "WORK.FAILURE_REMEDIES", "REM_").await;
+        assert!(
+            pump >= 6 && motor >= 6,
+            "family modes missing: pump {pump}, motor {motor}"
+        );
+        assert!(remedies >= 20, "remedies missing: {remedies}");
+
+        let row = db
+            .query_one(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT label, description FROM reference_values WHERE code = 'POMPE_CAVITATION'".to_string(),
+            ))
+            .await
+            .expect("query")
+            .expect("cavitation row");
+        assert_eq!(row.try_get::<String>("", "label").expect("label"), "Pompe — Cavitation");
+        assert_eq!(
+            row.try_get::<String>("", "description").expect("description"),
+            "Pump cavitation"
+        );
+
+        ensure_system_reference_catalog_integrity(&db)
+            .await
+            .expect("second pass");
+        assert_eq!(domain_value_count(&db, "WORK.FAILURE_MODES", "POMPE_").await, pump);
+        assert_eq!(domain_value_count(&db, "WORK.FAILURE_REMEDIES", "REM_").await, remedies);
+    }
 }

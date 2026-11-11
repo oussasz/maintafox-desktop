@@ -788,6 +788,7 @@
       "colData": "Data",
       "noStudy": "None",
       "selectAsset": "Select {{code}}",
+      "openFailures": "Show the work orders of the failures of {{code}}",
       "shareLabel": "{{share}} of fleet downtime",
       "handedError": "The equipment handed over could not be loaded",
       "handedSelected": "{{code}} is selected for a study."

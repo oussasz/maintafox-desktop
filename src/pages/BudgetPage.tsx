@@ -250,6 +250,7 @@ export function BudgetPage() {
             budgetVersionId={selectedVersionId}
             currency={selectedVersion?.currency_code ?? currencyCode}
             reloadToken={reloadToken}
+            onOpenCockpit={() => setTab("cockpit")}
           />
         </TabsContent>
         <TabsContent value="assets">

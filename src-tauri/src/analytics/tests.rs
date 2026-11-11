@@ -1197,9 +1197,9 @@ async fn executive_dashboard_without_permissions_is_all_denied() {
 #[tokio::test]
 async fn executive_dashboard_refuses_other_horizons_and_flags_sparse_workload() {
     let db = setup().await;
-    let err = build_executive_dashboard(&db, &filter(45, None), true, true, false, true, false, false)
+    let err = build_executive_dashboard(&db, &filter(400, None), true, true, false, true, false, false)
         .await
-        .expect_err("45 days is not a horizon choice");
+        .expect_err("400 days is not a horizon choice");
     assert!(
         matches!(err, crate::errors::AppError::ValidationFailed(_)),
         "never silently replaced by 30: {err:?}"

@@ -1,11 +1,11 @@
 {
   "page": {
     "title": "Inspection rounds",
-    "description": "Field rounds and routes: schedule them, record readings, follow up on findings."
+    "description": "Field rounds: schedule them, record readings, follow up on findings."
   },
   "tabs": {
     "rounds": "Rounds",
-    "templates": "Checklists & routes",
+    "templates": "Round templates",
     "signals": "Reliability signals",
     "anomalies": "Anomalies",
     "schedules": "Schedules"
@@ -31,7 +31,7 @@
     "overdue": "Overdue now",
     "period_one": "Planned in the last {{count}} day",
     "period_other": "Planned in the last {{count}} days",
-    "search": "Search a checklist, a person, a team or a schedule"
+    "search": "Search a round template, a person, a team or a schedule"
   },
   "rounds": {
     "empty": "No round in this list.",
@@ -55,7 +55,7 @@
     "overdue": "Overdue",
     "team": "Team {{name}}",
     "columns": {
-      "checklist": "Checklist",
+      "checklist": "Round template",
       "planned": "Planned",
       "assignee": "Assigned to",
       "status": "Status",
@@ -66,8 +66,8 @@
   },
   "schedule": {
     "title": "Schedule a round",
-    "template": "Checklist",
-    "templatePlaceholder": "Choose a checklist",
+    "template": "Round template",
+    "templatePlaceholder": "Choose a round template",
     "when": "Planned for",
     "assignee": "Technician",
     "assigneeSearch": "Search a person (name or code)",
@@ -75,11 +75,20 @@
     "assigneeSearchError": "Search failed: {{message}}",
     "clearAssignee": "Remove",
     "submit": "Schedule",
-    "noTemplate": "Create a checklist first (Templates tab).",
+    "noTemplate": "Create a round template first (Templates tab).",
     "team": "Team",
     "noTeam": "No team",
     "teamLoadError": "The teams could not be loaded.",
     "clearAssigneeNamed": "Remove {{name}}"
+  },
+  "trend": {
+    "show": "Curve of this point",
+    "hide": "Hide the curve",
+    "loading": "Loading the curve…",
+    "failed": "The curve could not be loaded.",
+    "none": "No reading of this point in the last {{months}} months.",
+    "aria": "Curve of point {{code}}: {{count}} readings over {{months}} months",
+    "legend": "Readings in {{unit}} — green dashes: normal limits, orange: warning limits."
   },
   "runner": {
     "back": "Back to rounds",
@@ -186,14 +195,14 @@
     "decideFirst_other": "{{count}} findings still need a decision."
   },
   "templates": {
-    "empty": "No checklist yet.",
-    "new": "New checklist",
+    "empty": "No round template yet.",
+    "new": "New round template",
     "newVersion": "New version",
     "version": "Version {{no}}",
     "checkpoints_one": "{{count}} check",
     "checkpoints_other": "{{count}} checks",
     "inactive": "Inactive",
-    "builderTitle": "Checklist",
+    "builderTitle": "Round template",
     "builderVersionTitle": "New version of {{name}}",
     "code": "Code",
     "name": "Name",
@@ -201,6 +210,11 @@
     "requiresReview": "Rounds always need a supervisor review",
     "checks": "Checks",
     "addCheck": "Add a check",
+    "duplicateRow": "Duplicate check {{index}}",
+    "bulkTitle": "Add in bulk",
+    "bulkHint": "Paste or type one check per line: each gets its own code (P1, P2…); then set the type, unit and limits.",
+    "bulkPlaceholder": "Pump P-101 oil pressure ; ... Tank level",
+    "bulkAdd": "Add these checks",
     "remove": "Remove",
     "moveUp": "Move up",
     "moveDown": "Move down",
@@ -214,7 +228,7 @@
     "warningMax": "Warning max",
     "requiresPhoto": "Photo mandatory",
     "commentOnException": "Comment required when not OK",
-    "save": "Save checklist",
+    "save": "Save round template",
     "publish": "Publish the version",
     "needOneCheck": "Add at least one check.",
     "invalidNumber": "Not a number",
@@ -225,8 +239,8 @@
       "observation": "Observation"
     },
     "required": "Required",
-    "builderIntro": "Checkpoints are walked in this order. Bind each one to its equipment; insert another checklist for an equipment to build a route.",
-    "emptyHint": "Create a checklist: its ordered checkpoints, each on its equipment, are the route of the round.",
+    "builderIntro": "Checkpoints are walked in this order. Bind each one to its equipment; insert another round template for an equipment to build the walk order.",
+    "emptyHint": "Create a round template: its ordered checkpoints, each on its equipment, are the route of the round.",
     "unpublished": "Not published",
     "published": "Published",
     "newVersionNamed": "New version of {{name}}",
@@ -242,15 +256,15 @@
     "moveUpRow": "Move checkpoint {{index}} up",
     "moveDownRow": "Move checkpoint {{index}} down",
     "removeRow": "Remove checkpoint {{index}}",
-    "addStop": "Insert a checklist for an equipment",
-    "addStopTitle": "Insert a checklist",
-    "addStopIntro": "Copies the checkpoints of another checklist at the end of this one, for example a standard pump check for each pump of the route.",
-    "addStopSource": "Checklist to insert",
+    "addStop": "Insert a round template for an equipment",
+    "addStopTitle": "Insert a round template",
+    "addStopIntro": "Copies the checkpoints of another round template at the end of this one, for example a standard pump check for each pump of the route.",
+    "addStopSource": "Round template to insert",
     "addStopAsset": "For the equipment",
     "addStopAssetHint": "Optional. Each copied checkpoint is bound to this equipment and its code starts with the equipment code.",
     "addStopSubmit": "Insert the checkpoints",
     "columns": {
-      "name": "Checklist",
+      "name": "Round template",
       "state": "State"
     },
     "rowIssues": {
@@ -262,7 +276,7 @@
     }
   },
   "signals": {
-    "description": "Per equipment, over a rolling window: warnings and failures recorded, open anomalies and checklist coverage.",
+    "description": "Per equipment, over a rolling window: warnings and failures recorded, open anomalies and round template coverage.",
     "window": "Window (days)",
     "refresh": "Recalculate",
     "empty": "No signal calculated yet.",
@@ -339,7 +353,7 @@
     "createdWo": "Work order created:",
     "blocked": {
       "alreadyRouted": "This finding already has a request or a work order.",
-      "noEquipment": "This checkpoint has no equipment: a request or a work order needs one. Add the equipment to the checkpoint in a new version of the checklist.",
+      "noEquipment": "This checkpoint has no equipment: a request or a work order needs one. Add the equipment to the checkpoint in a new version of the round template.",
       "noLocation": "The equipment has no installation location: a request needs one. Complete the equipment record first."
     },
     "title": {
@@ -371,7 +385,7 @@
     "generated": "Rounds generated: {{generated}} · already there: {{skipped}} · marked missed: {{missed}}.",
     "issue": "Schedule {{code}}:",
     "empty": "No recurring schedule yet.",
-    "emptyHint": "A schedule creates the rounds of a checklist every day, week, month… or every meter interval.",
+    "emptyHint": "A schedule creates the rounds of a round template every day, week, month… or every meter interval.",
     "active": "Active",
     "inactive": "Inactive",
     "edit": "Edit",
@@ -387,7 +401,7 @@
     "missed_other": "{{count}} missed",
     "columns": {
       "schedule": "Schedule",
-      "route": "Checklist / route",
+      "route": "Round template / route",
       "trigger": "Recurrence",
       "assignee": "Assigned to",
       "next": "Next round",
@@ -416,11 +430,11 @@
     },
     "newTitle": "New recurring schedule",
     "editTitle": "Schedule {{name}}",
-    "intro": "The rounds are generated with the published version of the checklist and assigned as set here. Future rounds nobody started are replaced when you save.",
+    "intro": "The rounds are generated with the published version of the round template and assigned as set here. Future rounds nobody started are replaced when you save.",
     "code": "Code",
     "name": "Name",
-    "route": "Checklist / route",
-    "routeHint": "The checkpoints of the checklist, in their order, are the route walked in the field.",
+    "route": "Round template / route",
+    "routeHint": "The checkpoints of the round template, in their order, are the route walked in the field.",
     "trigger": "Trigger",
     "triggers": {
       "calendar": "Calendar",
