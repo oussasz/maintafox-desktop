@@ -273,6 +273,45 @@ pub async fn move_asset_component(
     hierarchy::move_asset_component(&state.db, payload, &scope, user.user_id).await
 }
 
+/// Where the person holds the transfer right (`eq.manage`), refused when held nowhere, with the
+/// entitlement and licence checks of `require_permission!`.
+async fn transfer_scope(state: &AppState, user_id: i32) -> AppResult<crate::auth::scope::AccessScope> {
+    let permission = crate::assets::transfer::TRANSFER_PERMISSION;
+    let scope = crate::auth::scope::access_map_cached(&state.db, &state.permission_cache, user_id)
+        .await?
+        .scope_of(permission);
+    if !scope.is_anywhere() {
+        return Err(AppError::PermissionDenied(format!("Permission requise : {permission}")));
+    }
+    crate::entitlements::queries::enforce_capability_for_permission(&state.db, permission).await?;
+    crate::license::queries::enforce_permission_matrix(&state.db, user_id, permission).await?;
+    Ok(scope)
+}
+
+/// "Transférer" (L2-04), before confirming: what stays attached to the asset and the nodes the
+/// person may transfer it to (`eq.manage` where the asset is now).
+#[tauri::command]
+pub async fn preview_asset_transfer(
+    asset_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<crate::assets::transfer::AssetTransferPreview> {
+    let user = require_session!(state);
+    let scope = transfer_scope(&state, user.user_id).await?;
+    crate::assets::transfer::preview_asset_transfer(&state.db, asset_id, &scope).await
+}
+
+/// "Transférer" (L2-04): moves the asset to another org node with reason and effective date.
+/// `eq.manage` on both the source and the destination node, checked in the transfer's transaction.
+#[tauri::command]
+pub async fn transfer_asset(
+    payload: crate::assets::transfer::TransferAssetPayload,
+    state: State<'_, AppState>,
+) -> AppResult<crate::assets::transfer::TransferAssetResult> {
+    let user = require_session!(state);
+    let scope = transfer_scope(&state, user.user_id).await?;
+    crate::assets::transfer::transfer_asset(&state.db, payload, &scope, user.user_id).await
+}
+
 // ─── Lifecycle events (eq.view / eq.manage) ───────────────────────────────────
 
 #[tauri::command]

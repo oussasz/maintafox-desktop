@@ -174,6 +174,36 @@ fn push_event(
     });
 }
 
+/// The org nodes (`from_node_*`, `to_node_*`: code and name) of a `MOVED` event into `metadata`,
+/// and the label of the person who recorded it.
+async fn move_details(
+    db: &DatabaseConnection,
+    event_id: i64,
+    metadata: &mut BTreeMap<String, JsonValue>,
+) -> AppResult<Option<String>> {
+    let Some(row) = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT fnode.code AS from_code, fnode.name AS from_name, tnode.code AS to_code, tnode.name AS to_name, COALESCE(u.display_name, u.username) AS actor_label FROM equipment_lifecycle_events ev LEFT JOIN org_nodes fnode ON fnode.id = ev.from_node_id LEFT JOIN org_nodes tnode ON tnode.id = ev.to_node_id LEFT JOIN user_accounts u ON u.id = ev.performed_by_id WHERE ev.id = ?",
+            [event_id.into()],
+        ))
+        .await?
+    else {
+        return Ok(None);
+    };
+    for (column, key) in [
+        ("from_code", "from_node_code"),
+        ("from_name", "from_node_name"),
+        ("to_code", "to_node_code"),
+        ("to_name", "to_node_name"),
+    ] {
+        if let Some(v) = row.try_get::<Option<String>>("", column)? {
+            metadata.insert(key.into(), JsonValue::String(v));
+        }
+    }
+    Ok(row.try_get::<Option<String>>("", "actor_label")?)
+}
+
 /// Lifecycle event type of a component move (`assets::lifecycle::PARENT_CHANGED_EVENT_TYPE`).
 const PARENT_CHANGED: &str = crate::assets::lifecycle::PARENT_CHANGED_EVENT_TYPE;
 
@@ -389,6 +419,12 @@ pub async fn list_asset_history_events(
         if let Some(v) = reason_code {
             metadata.insert("reason_code".into(), JsonValue::String(v));
         }
+        // A move / transfer (L2-04): from and to org node, and who recorded it.
+        let actor_label = if event_type_raw == "MOVED" {
+            move_details(db, id, &mut metadata).await?
+        } else {
+            None
+        };
         push_event(
             &mut events,
             format!("lifecycle:{id}"),
@@ -397,7 +433,7 @@ pub async fn list_asset_history_events(
             occurred_at,
             event_type_raw,
             notes,
-            None,
+            actor_label,
             None,
             to_status.or(from_status),
             metadata,

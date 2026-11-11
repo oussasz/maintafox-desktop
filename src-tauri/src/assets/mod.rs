@@ -36,6 +36,7 @@ pub mod repeat_failures;
 pub mod search;
 pub mod spare_parts;
 pub mod taxonomy_reference;
+pub mod transfer;
 pub mod tree;
 
 #[cfg(test)]
@@ -56,6 +57,8 @@ mod lifecycle_tests;
 mod meters_tests;
 #[cfg(test)]
 mod repeat_failures_tests;
+#[cfg(test)]
+mod transfer_tests;
 #[cfg(test)]
 mod tree_tests;
 #[cfg(test)]

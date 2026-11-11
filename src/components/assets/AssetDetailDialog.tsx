@@ -2,7 +2,7 @@
  * AssetDetailDialog.tsx
  *
  * Asset record (UX-DW-001 detail dialog, OT/DI pattern): header with code, name, status,
- * criticality, location and warranty; actions to raise an OT or a DI, edit, decommission;
+ * criticality, location and warranty; actions to raise an OT or a DI, edit, transfer, decommission;
  * tabs for overview, structure, maintenance (costs, OT/DI/PM), meters, spare parts,
  * documents & photos, criticality and history.
  *
@@ -12,6 +12,7 @@
 
 import {
   AlertTriangle,
+  ArrowRightLeft,
   ClipboardList,
   FileText,
   Gauge,
@@ -37,6 +38,7 @@ import { AssetHealthBadge } from "@/components/assets/AssetHealthBadge";
 import { AssetQrCode } from "@/components/assets/AssetQrCode";
 import { AssetRecommissionDialog } from "@/components/assets/AssetRecommissionDialog";
 import { AssetStatusBadge } from "@/components/assets/AssetStatusBadge";
+import { AssetTransferDialog } from "@/components/assets/AssetTransferDialog";
 import { CriticalityBadge } from "@/components/assets/CriticalityBadge";
 import { CriticalityReviewMark } from "@/components/assets/CriticalityReviewMark";
 import { isRetiredStatus } from "@/components/assets/asset-tones";
@@ -116,6 +118,8 @@ export function AssetDetailDialog({ onBackToOrigin }: { onBackToOrigin?: () => v
   const runSearch = useAssetSearchStore((s) => s.runSearch);
   const openEditForm = useAssetStore((s) => s.openEditForm);
   const showEditForm = useAssetStore((s) => s.showEditForm);
+  const transferRequestAssetId = useAssetStore((s) => s.transferRequestAssetId);
+  const clearTransferRequest = useAssetStore((s) => s.clearTransferRequest);
   const openCreateWo = useWoStore((s) => s.openCreateForm);
   const openCreateDi = useDiStore((s) => s.openCreateForm);
 
@@ -123,6 +127,7 @@ export function AssetDetailDialog({ onBackToOrigin }: { onBackToOrigin?: () => v
   const [showDecommission, setShowDecommission] = useState(false);
   const [showCommercial, setShowCommercial] = useState(false);
   const [showRecommission, setShowRecommission] = useState(false);
+  const [showTransfer, setShowTransfer] = useState(false);
 
   const load = useMemo(() => (assetId == null ? null : () => getAssetById(assetId)), [assetId]);
   const {
@@ -144,6 +149,14 @@ export function AssetDetailDialog({ onBackToOrigin }: { onBackToOrigin?: () => v
     if (editWasOpen.current && !showEditForm) void reload();
     editWasOpen.current = showEditForm;
   }, [showEditForm, reload]);
+
+  // "Transférer" asked for from the edit form (the location is changed only here).
+  useEffect(() => {
+    if (asset && transferRequestAssetId === asset.id) {
+      clearTransferRequest();
+      setShowTransfer(true);
+    }
+  }, [asset, transferRequestAssetId, clearTransferRequest]);
 
   const close = useCallback(() => selectAsset(null), [selectAsset]);
 
@@ -273,6 +286,16 @@ export function AssetDetailDialog({ onBackToOrigin }: { onBackToOrigin?: () => v
                   {!retired ? (
                     <Button
                       variant="outline"
+                      className="h-11 gap-1.5"
+                      onClick={() => setShowTransfer(true)}
+                    >
+                      <ArrowRightLeft className="h-4 w-4" aria-hidden />
+                      {t("transfer.action")}
+                    </Button>
+                  ) : null}
+                  {!retired ? (
+                    <Button
+                      variant="outline"
                       className="h-11 gap-1.5 text-status-danger"
                       onClick={() => setShowDecommission(true)}
                     >
@@ -386,6 +409,22 @@ export function AssetDetailDialog({ onBackToOrigin }: { onBackToOrigin?: () => v
                 });
                 await reload();
                 void runSearch();
+              }}
+            />
+            <AssetTransferDialog
+              open={showTransfer}
+              asset={asset}
+              onClose={() => setShowTransfer(false)}
+              onTransferred={(updated) => {
+                setShowTransfer(false);
+                pushAppToast({
+                  title: t("transfer.done", {
+                    code: updated.asset_code,
+                    to: updated.org_node_name ?? "",
+                  }),
+                  variant: "success",
+                });
+                onAssetChanged(updated);
               }}
             />
             <AssetCommercialDialog
