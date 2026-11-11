@@ -63,7 +63,7 @@
     "submitted": "Submit",
     "approved": "Approve",
     "frozen": "Freeze",
-    "closed": "Close"
+    "closed": "Close the version"
   },
   "scenario": {
     "original": "Original budget",
@@ -86,7 +86,7 @@
     "in_review": "Take ownership",
     "actioned": "Action taken",
     "accepted": "Accept variance",
-    "closed": "Close",
+    "closed": "Close the review",
     "open": "Reopen"
   },
   "settlement": {
@@ -431,7 +431,8 @@
     "noVersionBody": "Variance reviews belong to a budget version.",
     "loadError": "The reviews could not be loaded.",
     "empty": "No variance review",
-    "emptyBody": "Open a review from the cockpit, on a line that overruns.",
+    "emptyBody": "A review is started from the Cockpit tab: the \"Analyse variance\" button appears on every line whose forecast exceeds the budget (budget management right required).",
+    "openCockpit": "Open the cockpit",
     "opened": "Opened on {{date}}",
     "reopenReason": "Reopened: {{reason}}",
     "moved": "Review moved to \"{{status}}\".",
@@ -489,8 +490,10 @@
     "intro": "Closing a month freezes its actuals: no entry is accepted in it any more and work orders closed later are settled to the next open month. A month is closed once it has ended and all its work orders are settled.",
     "caption": "{{year}} budget periods",
     "loadError": "The periods could not be loaded.",
-    "close": "Close",
-    "reopen": "Reopen",
+    "close": "Close the month",
+    "reopen": "Reopen the month",
+    "endedOpen_one": "{{count}} month has ended and is still open: its actuals can still change. Close it once its work orders are settled.",
+    "endedOpen_other": "{{count}} months have ended and are still open: their actuals can still change. Close them once their work orders are settled.",
     "closeTitle": "Close {{month}}",
     "closeDescription": "The month's actuals will be frozen. Later entries go to the next open month.",
     "reopenTitle": "Reopen {{month}}",
