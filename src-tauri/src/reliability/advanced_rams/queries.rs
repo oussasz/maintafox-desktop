@@ -1101,7 +1101,20 @@ fn validate_tactic(t: &str) -> AppResult<()> {
 }
 
 pub async fn upsert_rcm_decision(db: &DatabaseConnection, input: UpsertRcmDecisionInput) -> AppResult<RcmDecision> {
+    upsert_rcm_decision_in(db, input).await
+}
+
+/// [`upsert_rcm_decision`] on a connection the caller holds (a transaction). A decision that
+/// answers a critical FMECA row is never set to run to failure (L2-15).
+pub(crate) async fn upsert_rcm_decision_in<C: ConnectionTrait>(
+    db: &C,
+    input: UpsertRcmDecisionInput,
+) -> AppResult<RcmDecision> {
     validate_tactic(&input.selected_tactic)?;
+    if let Some(id) = input.id {
+        let item = crate::reliability::rcm_loop::linked_fmeca_item(db, id).await?;
+        crate::reliability::rcm_loop::check_critical_run_to_failure(db, item, &input.selected_tactic).await?;
+    }
     let now = crate::clock::now().to_rfc3339();
     let fd = input.function_description.clone().unwrap_or_default();
     let ff = input.functional_failure.clone().unwrap_or_default();

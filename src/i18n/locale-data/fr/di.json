@@ -61,7 +61,7 @@
       "history": "Historique"
     },
     "fields": {
-      "sourceInspectionRound": "Tournée d'inspection",
+      "sourceInspectionRound": "Ronde d'inspection",
       "number": "Numéro",
       "subject": "Objet",
       "description": "Description",
@@ -145,7 +145,8 @@
     "symptom": {
       "label": "Symptôme",
       "placeholder": "Sélectionnez un symptôme",
-      "searchPlaceholder": "Rechercher un symptôme..."
+      "searchPlaceholder": "Rechercher un symptôme...",
+      "optionalHint": "Facultatif : le planificateur le complète si vous ne le connaissez pas."
     },
     "impactLevel": {
       "label": "Niveau d'impact",
@@ -154,7 +155,7 @@
     "pictures": {
       "label": "Photos",
       "empty": "Aucune photo",
-      "hint": "Ajoutez des photos de l'équipement ou du problème. Même sélecteur que la galerie équipement.",
+      "hint": "Ajoutez des photos de l'équipement ou du problème.",
       "primary": "Principale",
       "remove": "Retirer",
       "add": "Ajouter des photos"
@@ -178,9 +179,6 @@
     },
     "qualityFlag": {
       "label": "Enjeu qualité"
-    },
-    "productionImpact": {
-      "label": "Impact production"
     },
     "origin": {
       "operator": "Opérateur",
@@ -209,7 +207,8 @@
       "symptomRequired": "Le symptôme est requis",
       "urgencyRequired": "La priorité est requise",
       "impactRequired": "Le niveau d'impact est requis",
-      "assetMissingOrgNode": "L'équipement sélectionné n'a pas d'unité organisationnelle. Veuillez en attribuer une d'abord."
+      "assetMissingOrgNode": "L'équipement sélectionné n'a pas d'unité organisationnelle. Veuillez en attribuer une d'abord.",
+      "machineStateRequired": "Indiquez si la machine est à l'arrêt"
     },
     "cancel": "Annuler",
     "submit": "Créer la demande",
@@ -225,6 +224,15 @@
       "sameAsset_one": "{{count}} demande est déjà ouverte sur cet équipement",
       "sameAsset_other": "{{count}} demandes sont déjà ouvertes sur cet équipement",
       "hint": "Vérifiez que votre problème n'est pas déjà signalé avant d'envoyer une nouvelle demande."
+    },
+    "machineStopped": {
+      "label": "Machine à l'arrêt ?",
+      "yes": "Oui, la machine est à l'arrêt",
+      "no": "Non, elle fonctionne encore"
+    },
+    "fullForm": {
+      "open": "Formulaire complet (type, symptôme, urgence, indicateurs)",
+      "hint": "Pour un signalement rapide, l'équipement, la description et l'état de la machine suffisent : le planificateur complète le reste."
     }
   },
   "status": {
@@ -632,6 +640,16 @@
     "return": "Renvoyer pour clarification",
     "actionsFor": "Actions pour {{code}}"
   },
+  "merge": {
+    "action": "Fusionner les doublons dans cette demande",
+    "hint": "Les autres demandes sont clôturées comme doublons, liées à celle-ci.",
+    "confirmTitle": "Fusionner dans {{code}} ?",
+    "confirmDescription": "{{count}} autre(s) demande(s) ouverte(s) sur cet équipement seront clôturées comme doublons de {{code}}. Cette demande continue vers son ordre de travail.",
+    "note": "Doublon fusionné dans {{code}}",
+    "done_one": "{{count}} demande fusionnée.",
+    "done_other": "{{count}} demandes fusionnées.",
+    "partial": "{{merged}} fusionnée(s). Non fusionnée(s) (statut ou droit) : {{failed}}."
+  },
   "close": {
     "title": "Clôturer la demande",
     "disposition": "Disposition",
@@ -642,7 +660,8 @@
     "relatedDiNoResults": "Aucune demande correspondante.",
     "relatedDiResolved": "Liée à {{code}}",
     "relatedDiUseMatch": "Utiliser {{code}}",
-    "notesRequired": "Les notes sont obligatoires pour la disposition « Autre ».",
+    "notesRequired": "Indiquez le motif : il est obligatoire pour « Rejetée » et « Autre ».",
+    "dispositionPlaceholder": "Choisissez : rejet, doublon, aucun travail…",
     "relatedRequired": "Sélectionnez la demande liée pour une disposition « Doublon ».",
     "submit": "Clôturer la demande",
     "saving": "Clôture…",

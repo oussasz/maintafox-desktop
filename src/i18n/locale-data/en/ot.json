@@ -75,6 +75,20 @@
     "loadFailed": "The staff list could not be loaded."
   },
   "depannage": {
+    "validation": {
+      "badgeToValidate": "Breakdown — to validate",
+      "pending": "Validation after the fact pending (an approver of the site other than the person who started it).",
+      "validate": "Validate the breakdown",
+      "validated": "Breakdown validated on {{date}}",
+      "autoApproved": "Approved automatically at the close (site rule), with no validator.",
+      "notStarter": "You started this breakdown: another approver must validate it."
+    },
+    "times": {
+      "response": "Response time",
+      "activeRepair": "Active repair",
+      "restore": "Time to restore",
+      "hours": "{{value}} h"
+    },
     "action": "Breakdown",
     "title": "Breakdown: immediate work",
     "intro": "For a failure to deal with now: the corrective work order is created and started in one go. Its planning is validated afterwards.",
@@ -209,6 +223,7 @@
       "mix": "Work mix",
       "completed": "Completed in the period",
       "completedValue": "{{from}} to {{to}}",
+      "ramsFailures": "Failures counted by RAMS",
       "mixValue": {
         "planned": "Planned (preventive and improvement)",
         "reactive": "Reactive (corrective)",
@@ -376,7 +391,9 @@
     "primaryResponsibleId": "Technician (primary responsible)",
     "scheduledAt": "Scheduled at",
     "scheduleStripTitle": "Committed schedule",
-    "scheduleLockedHint": "Dates, crew, and technician are owned by Planning. Use Open in Planning to change the slot, or Emergency reassign for night dispatch (skips capacity gates).",
+    "scheduleLockedHint": "Dates are managed by Planning (Open in Planning). The crew and technician are assigned here.",
+    "assignAction": "Assign",
+    "assignHint": "Choose the crew and/or technician, then Assign. The slot stays managed by Planning.",
     "scheduleEmpty": "Not yet committed on the Planning board.",
     "scheduleFrozenHint": "This commitment is frozen. Use Planning break-in — emergency reassign is blocked.",
     "openInPlanning": "Open in Planning",
@@ -460,6 +477,9 @@
       }
     },
     "parts": {
+      "available": "Available: {{qty}} {{unit}}",
+      "shortage": "Not enough stock (available: {{available}} {{unit}}): the line is saved, the missing quantity has to be bought.",
+      "willReserve": "Available stock is reserved when the line is saved.",
       "noMatch": "No matching article",
       "stockLocation": "Stock location",
       "locationPlaceholder": "Location",
@@ -501,6 +521,15 @@
     "blockers": "Blocking issues",
     "gates": {
       "title": "Work order completion",
+      "fix": {
+        "PARTS": "Do it in the Parts tab: confirm the quantity actually used on each line.",
+        "TASKS": "Do it in the Tasks tab: complete or cancel each open task.",
+        "OPEN_LABOR": "Do it in the Labour tab: stop the time entries still running.",
+        "OPEN_DOWNTIME": "Do it in the Return to service section: close the open production stops.",
+        "FAILURE_MODE": "Do it further down, Failure analysis section: choose the failure mode.",
+        "SYMPTOM": "Do it further down, Symptom section: choose the observed symptom.",
+        "ROOT_CAUSE": "Do it further down, Action taken section: summarise the root cause, or tick “Cause not known yet”."
+      },
       "blockingCount": "{{count}} blocking items remaining ({{done}}/{{total}} ready).",
       "PARTS": "Parts confirmed",
       "TASKS": "Tasks completed",
@@ -572,6 +601,9 @@
     "taskFollowUp": "Follow-up WO",
     "taskFollowUpPlaceholder": "Follow-up WO number (optional)",
     "taskFollowUpNotFound": "No work order \"{{code}}\"",
+    "taskRaiseCorrective": "Create a linked corrective work order",
+    "taskCorrectiveTitle": "Corrective: {{task}}",
+    "taskCorrectiveDescription": "Found on work order {{code}}, step \"{{task}}\". Finding: {{note}}",
     "taskNokEvidenceHint": "Mandatory NOK task: enter the finding or the follow-up WO.",
     "reopenTask": "Reopen task",
     "reopenTaskComment": "Reason for reopening",
@@ -654,6 +686,7 @@
       "confirmNoParts": "Unable to confirm no parts used.",
       "unconfirmNoParts": "Unable to undo the no-parts confirmation.",
       "completeTask": "Unable to complete task.",
+      "raiseCorrective": "Unable to create the corrective work order.",
       "loadData": "Unable to load execution data.",
       "openDowntime": "Unable to open downtime segment.",
       "closeDowntime": "Unable to close downtime segment.",

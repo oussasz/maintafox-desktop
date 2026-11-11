@@ -576,6 +576,19 @@ pub(crate) async fn seed_system_data_for(
             true,
         )
         .await?;
+        // A component posed on / removed from a parent asset (L2-03 component move).
+        seed_value(
+            db,
+            d,
+            "PARENT_CHANGED",
+            "Changement de parent",
+            "Changement de parent",
+            "Parent changed",
+            None,
+            8,
+            true,
+        )
+        .await?;
     }
 
     // equipment.meter_type
@@ -3116,8 +3129,9 @@ mod tests {
             // -inventory.count_critical_variance, +inventory.count_four_eyes_value_threshold,
             // +inventory.count_four_eyes_percent_threshold (migration 259, not seeded),
             // +backup.external_dir (L7-03), +5 permit gas-test limits (L4-04, migration 290),
-            // +permit.gas_test_validity_hours (L4-04 review, CMMS Advisor 2026-11-11)
-            30,
+            // +permit.gas_test_validity_hours (L4-04 review, CMMS Advisor 2026-11-11),
+            // +reliability.repeat_failure_count, +reliability.repeat_failure_window_days (L2-09)
+            32,
             "Default settings count changed; update migration and verification checks"
         );
     }

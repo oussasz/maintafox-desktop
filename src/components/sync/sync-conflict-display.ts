@@ -102,6 +102,8 @@ export const KNOWN_CONFLICT_KINDS = new Set([
   "DECISION_APPLIER_UNAUTHORISED",
   // A work-order part line received as cancelled although it has recorded use.
   "WO_PART_LINE_HAS_USE",
+  // An RCM decision received that leaves a critical FMECA mode to run to failure (L2-15).
+  "RCM_RUN_TO_FAILURE_CRITICAL",
   "SITE_SETTING_UNAUDITED",
   "SITE_SETTING_INVALID",
   "SITE_SETTING_EVENT_INVALID",
@@ -157,6 +159,10 @@ export const KNOWN_CONFLICT_KINDS = new Set([
   "WO_CLOSE_GATE",
   // A cancellation received while a permit or a lock of the work order holds the plant here (AU-02).
   "WO_CANCEL_PERMIT_GATE",
+  // An execution change received from someone who does not carry out the work order, or without
+  // the right here now; or whose status history names nobody (L5-08c).
+  "WO_EXECUTION_UNAUTHORISED",
+  "WO_EXECUTION_AUTHOR_UNKNOWN",
   // A permit ended on another PC before or while its work ran here: applied, to review (AU-101, D9).
   "PERMIT_ENDED_BEFORE_START",
   "PERMIT_ENDED_DURING_WORK",
@@ -175,6 +181,7 @@ export const KNOWN_CONFLICT_KINDS = new Set([
   // A received dépannage without its breakdown time or "machine arrêtée", or turned back into an
   // ordinary work order (`wo::depannage::inbound_depannage_check`).
   "WO_DEPANNAGE_FACTS_INVALID",
+  "WO_DEPANNAGE_VALIDATION_INVALID",
   // A received inspection finding that breaks the decision rules (AU-72).
   "INSP_ANOMALY_PERMIT_REVIEW_CLEARED",
   "INSP_ANOMALY_LINK_CHANGED",
@@ -495,4 +502,47 @@ export function clashingNumber(c: SyncConflictRecord): string | null {
 export function clashingUsername(c: SyncConflictRecord): string | null {
   const value = parsePayload(c.inbound_payload_json)?.["username"];
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+/** Columns that are bookkeeping, not something a person decides on (never shown side by side). */
+const TECHNICAL_FIELDS = new Set([
+  "id",
+  "entity_sync_id",
+  "row_version",
+  "created_at",
+  "updated_at",
+  "synced_at",
+  "origin_machine_id",
+  "deleted_at",
+]);
+
+export interface ConflictFieldDifference {
+  /** Column name as stored (humanised on screen). */
+  field: string;
+  local: unknown;
+  remote: unknown;
+}
+
+/**
+ * The columns whose value differs between this device's version and the server's, for the
+ * side-by-side view. Empty when one of the two versions is missing or unreadable.
+ */
+export function conflictFieldDifferences(c: SyncConflictRecord): ConflictFieldDifference[] {
+  const local = parsePayload(c.local_payload_json);
+  const remote = parsePayload(c.inbound_payload_json);
+  if (!local || !remote) return [];
+  const keys = new Set([...Object.keys(local), ...Object.keys(remote)]);
+  const out: ConflictFieldDifference[] = [];
+  for (const field of keys) {
+    if (TECHNICAL_FIELDS.has(field) || field.endsWith("_sync_id")) continue;
+    if (JSON.stringify(local[field] ?? null) === JSON.stringify(remote[field] ?? null)) continue;
+    out.push({ field, local: local[field] ?? null, remote: remote[field] ?? null });
+  }
+  return out;
+}
+
+/** "planned_start_date" → "Planned start date" (no stored label exists for raw column names). */
+export function humaniseFieldName(field: string): string {
+  const words = field.replace(/_id$/, "").replace(/_/g, " ").trim();
+  return words ? words.charAt(0).toUpperCase() + words.slice(1) : field;
 }

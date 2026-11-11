@@ -412,18 +412,43 @@ pub const ROW_SPECS: &[RowSpec] = &[
         "asset_meter_readings",
         &[r("meter_id", "equipment_meters"), r("created_by_id", USER)],
     ),
+    // Repeat-failure follow-up of an equipment (L2-09, migration 289).
     spec(
-        "equipment_lifecycle_events",
+        "asset_five_why_analyses",
         &[
-            hist("equipment_id", "equipment"),
-            hist("performed_by_id", USER),
-            hist("from_node_id", "org_nodes"),
-            hist("to_node_id", "org_nodes"),
-            hist("related_work_order_id", "work_orders"),
-            hist("related_asset_id", "equipment"),
-            hist("approved_by_id", USER),
+            r("equipment_id", "equipment"),
+            r("created_by_id", USER),
+            r("updated_by_id", USER),
         ],
     ),
+    spec(
+        "asset_corrective_actions",
+        &[
+            r("equipment_id", "equipment"),
+            r("owner_personnel_id", "personnel"),
+            r("created_by_id", USER),
+            r("updated_by_id", USER),
+        ],
+    ),
+    RowSpec {
+        // The parents of a component move (`assets::lifecycle::record_parent_change_in`).
+        json_refs: &[
+            json_ref_hist("details_json", "$.from_parent_asset_id", "equipment"),
+            json_ref_hist("details_json", "$.to_parent_asset_id", "equipment"),
+        ],
+        ..spec(
+            "equipment_lifecycle_events",
+            &[
+                hist("equipment_id", "equipment"),
+                hist("performed_by_id", USER),
+                hist("from_node_id", "org_nodes"),
+                hist("to_node_id", "org_nodes"),
+                hist("related_work_order_id", "work_orders"),
+                hist("related_asset_id", "equipment"),
+                hist("approved_by_id", USER),
+            ],
+        )
+    },
     spec(
         "asset_document_links",
         &[r("asset_id", "equipment"), r("created_by_id", USER)],
@@ -505,6 +530,8 @@ pub const ROW_SPECS: &[RowSpec] = &[
                 // A request converted to a work order points to it, and the work order points
                 // back to its source request.
                 soft("converted_to_wo_id", "work_orders"),
+                // The meter reading that crossed an alarm threshold and raised it (migration 289).
+                r("source_meter_reading_id", "asset_meter_readings"),
             ],
         )
     },
@@ -625,6 +652,8 @@ pub const ROW_SPECS: &[RowSpec] = &[
             r("assigned_team_id", "teams"),
             // A plan points to its current version, which points back to the plan.
             soft("current_version_id", "pm_plan_versions"),
+            // The plan whose work includes this plan's (nested plans, `pm::coverage`); back edge of the chain.
+            soft("covered_by_plan_id", "pm_plans"),
         ],
     ),
     RowSpec {
@@ -1031,6 +1060,9 @@ pub const ROW_SPECS: &[RowSpec] = &[
             // The location before and after an equipment move (`assets::lifecycle` `asset.moved`).
             json_ref_hist("details_json", "$.detail.from_org_node_id", "org_nodes"),
             json_ref_hist("details_json", "$.detail.to_org_node_id", "org_nodes"),
+            // The parents of a component move (`assets::lifecycle` `asset.parent_changed`).
+            json_ref_hist("details_json", "$.detail.from_parent_asset_id", "equipment"),
+            json_ref_hist("details_json", "$.detail.to_parent_asset_id", "equipment"),
             // The work order of a qualification requirement before and after its change
             // (`qualification::requirements::audit_view`).
             json_ref_hist("details_json", "$.before.work_order_id", "work_orders"),
@@ -1089,6 +1121,9 @@ pub const ROW_SPECS: &[RowSpec] = &[
                         ("user_account", USER),
                         ("user_scope_assignment", "user_scope_assignments"),
                         ("work_order", "work_orders"),
+                        // A received execution change applied without its author here (`wo::execution_actor_sync`):
+                        // the target is the work order or one of its tasks.
+                        ("work_order_task", "work_order_tasks"),
                         // A site given to an old record without one (`org::site_assignment`).
                         ("intervention_request", "intervention_requests"),
                         ("planning_window", "planning_windows"),

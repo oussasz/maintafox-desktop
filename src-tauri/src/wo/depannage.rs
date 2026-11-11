@@ -845,5 +845,5 @@ pub(crate) async fn inbound_depannage_check(
             format!("dépannage {code}: its breakdown ({found}) is later than the moment its row was written"),
         );
     }
-    Ok(None)
+    crate::wo::depannage_validation::inbound_validation_check(conn, &code, local.as_ref(), &wo).await
 }

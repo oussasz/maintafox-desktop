@@ -12,6 +12,7 @@ import {
   Archive,
   BookOpen,
   HelpCircle,
+  LibraryBig,
   Calendar,
   Settings,
   GraduationCap,
@@ -210,7 +211,7 @@ export const defaultNavItems: NavItem[] = [
     key: "documentation",
     labelKey: "nav.documentation",
     path: "/documentation",
-    icon: <HelpCircle className="h-4 w-4" />,
+    icon: <LibraryBig className="h-4 w-4" />,
     requiredPermission: P.DOC_VIEW,
   },
   {
@@ -225,6 +226,13 @@ export const defaultNavItems: NavItem[] = [
     labelKey: "nav.settings",
     path: "/settings",
     icon: <Settings className="h-4 w-4" />,
+  },
+  // In-app user guide: open to every signed-in user (no right needed).
+  {
+    key: "help",
+    labelKey: "nav.help",
+    path: "/help",
+    icon: <HelpCircle className="h-4 w-4" />,
   },
 ];
 

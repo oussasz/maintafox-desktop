@@ -2313,6 +2313,23 @@ export interface LinkAssetPayload {
   effective_from?: string | null;
 }
 
+/** "Déplacer le composant" (L2-03): the same asset record goes under another parent. */
+export interface MoveAssetComponentPayload {
+  asset_id: number;
+  /** The new parent; null removes the component to stock. */
+  new_parent_asset_id: number | null;
+  /** Effective date YYYY-MM-DD; null is today. */
+  effective_date: string | null;
+  notes: string | null;
+  expected_row_version: number;
+}
+
+export interface MoveAssetComponentResult {
+  ended_relation: AssetHierarchyRow | null;
+  new_relation: AssetHierarchyRow | null;
+  event: AssetLifecycleEvent;
+}
+
 // â”€â”€â”€ Asset â€” Lifecycle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface AssetLifecycleEvent {
@@ -2372,6 +2389,21 @@ export interface AssetMeter {
   is_active: boolean;
   created_at: string;
   updated_at: string;
+  /** Alarm thresholds: a reading that crosses one raises an intervention request. */
+  alert_threshold: number | null;
+  critical_threshold: number | null;
+  /** "above" (too high crosses) or "below" (too low crosses); null without threshold. */
+  threshold_direction: MeterThresholdDirection | null;
+}
+
+export type MeterThresholdDirection = "above" | "below";
+export type MeterThresholdLevel = "alert" | "critical";
+
+export interface SetMeterThresholdsPayload {
+  meter_id: number;
+  alert_threshold: number | null;
+  critical_threshold: number | null;
+  threshold_direction: MeterThresholdDirection | null;
 }
 
 export interface CreateAssetMeterPayload {
@@ -2403,6 +2435,133 @@ export interface MeterReading {
   cancel_reason: string | null;
   cancelled_by_name: string | null;
   cancelled_at: string | null;
+  /** Intervention request this reading raised by crossing a threshold. */
+  raised_request_id: number | null;
+  raised_request_code: string | null;
+  /** Threshold level the reading crossed. */
+  threshold_level: MeterThresholdLevel | null;
+  /** On recording: crossed, but a request for this meter and level is still open (its code). */
+  open_request_code: string | null;
+  /** On recording: crossed, but the request could not be raised (why). */
+  threshold_problem: string | null;
+}
+
+// ── Technical characteristics per family (L2-07) ──────────────────────────
+
+export type CharacteristicDataType = "number" | "text" | "boolean";
+
+export interface AssetCharacteristic {
+  code: string;
+  label: string;
+  /** Null when the definition in Données de référence does not say. */
+  data_type: CharacteristicDataType | null;
+  unit_code: string | null;
+  unit_symbol: string | null;
+  required: boolean;
+  definition_problem: string | null;
+  value: string | null;
+}
+
+export interface AssetCharacteristicSheet {
+  asset_id: number;
+  family_code: string | null;
+  family_label: string | null;
+  items: AssetCharacteristic[];
+  /** Stored values whose characteristic is no longer in the family's list. */
+  unlisted: { code: string; value: string }[];
+}
+
+export interface SaveAssetCharacteristicsPayload {
+  asset_id: number;
+  values: Record<string, string | null>;
+}
+
+// ── Repeat failures (L2-09) ───────────────────────────────────────────────
+
+export interface RepeatFailureRule {
+  min_failures: number;
+  window_days: number;
+  since: string;
+}
+
+export interface RepeatFailureAsset {
+  asset_id: number;
+  asset_code: string;
+  asset_name: string;
+  failure_count: number;
+  last_failure_at: string | null;
+}
+
+export interface RepeatFailureOverview {
+  rule: RepeatFailureRule;
+  assets: RepeatFailureAsset[];
+}
+
+export interface AssetRepeatFailureStatus {
+  asset_id: number;
+  rule: RepeatFailureRule;
+  failure_count: number;
+  last_failure_at: string | null;
+  is_repeat_failure: boolean;
+  open_action_count: number;
+  overdue_action_count: number;
+}
+
+export interface FiveWhyAnalysis {
+  id: number;
+  asset_id: number;
+  problem_statement: string;
+  why_1: string | null;
+  why_2: string | null;
+  why_3: string | null;
+  why_4: string | null;
+  why_5: string | null;
+  root_cause: string | null;
+  created_by_name: string | null;
+  row_version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SaveFiveWhyPayload {
+  id: number | null;
+  asset_id: number;
+  expected_row_version: number | null;
+  problem_statement: string;
+  why_1: string | null;
+  why_2: string | null;
+  why_3: string | null;
+  why_4: string | null;
+  why_5: string | null;
+  root_cause: string | null;
+}
+
+export type CorrectiveActionStatus = "open" | "done" | "cancelled";
+
+export interface CorrectiveAction {
+  id: number;
+  asset_id: number;
+  action_text: string;
+  owner_personnel_id: number | null;
+  owner_name: string | null;
+  owner_employee_code: string | null;
+  due_date: string | null;
+  status: CorrectiveActionStatus;
+  completed_at: string | null;
+  is_overdue: boolean;
+  row_version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SaveCorrectiveActionPayload {
+  id: number | null;
+  asset_id: number;
+  expected_row_version: number | null;
+  action_text: string;
+  owner_personnel_id: number | null;
+  due_date: string | null;
+  status: CorrectiveActionStatus;
 }
 
 export interface MeterReadingWarning {
@@ -5692,8 +5851,18 @@ export interface WoListFilter {
   /** Only work completed in `[completed_from, completed_to)` (ISO instants): the SMRP work-mix population. */
   completed_from?: string | null;
   completed_to?: string | null;
+  /** Only the work orders behind the failures a RAMS figure counts (same period, class, site). */
+  rams_failures?: WoRamsFailureScope | null;
   limit: number;
   offset: number;
+}
+
+/** Scope of a RAMS failure figure (`wo::queries::WoRamsFailureScope`). */
+export interface WoRamsFailureScope {
+  period_start: string;
+  period_end: string;
+  equipment_class_id?: number | null;
+  org_node_id?: number | null;
 }
 
 export interface WoListPage {
@@ -5790,8 +5959,8 @@ export interface WoAssignInput {
   assigned_team_id?: number | null;
   primary_responsible_id?: number | null;
   scheduled_at?: string | null;
-  /** Required — unguarded assign is retired; use emergency_reassign_wo from UI. */
-  override_reason: string;
+  /** Only the emergency override (`emergency_reassign_wo`) needs a reason. */
+  override_reason?: string;
 }
 
 export interface WoEmergencyReassignInput {
@@ -5863,6 +6032,23 @@ export interface WoBreakdownAtInput {
   wo_id: number;
   expected_row_version: number;
   breakdown_at: string;
+}
+
+/** After-the-fact validation of a dépannage (`validate_depannage_wo`, ot.approve, never its starter). */
+export interface WoDepannageValidateInput {
+  wo_id: number;
+  expected_row_version: number;
+}
+
+/** Times of a dépannage in hours (EN 13306, `get_depannage_times`); null while an end is unknown. */
+export interface DepannageTimes {
+  breakdown_at: string | null;
+  downtime_start: string | null;
+  restored_at: string | null;
+  response_hours: number | null;
+  active_repair_hours: number | null;
+  restore_hours: number | null;
+  stopped_hours: number | null;
 }
 
 export interface WoPauseInput {

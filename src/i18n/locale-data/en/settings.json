@@ -84,7 +84,9 @@
     "permit.gas_lel_max_percent": "Atmospheric test: LEL limit (%)",
     "permit.gas_h2s_max_ppm": "Atmospheric test: H2S limit (ppm)",
     "permit.gas_co_max_ppm": "Atmospheric test: CO limit (ppm)",
-    "permit.gas_test_validity_hours": "Atmospheric test: validity (h)"
+    "permit.gas_test_validity_hours": "Atmospheric test: validity (h)",
+    "reliability.repeat_failure_count": "Repeat failures: number of failures",
+    "reliability.repeat_failure_window_days": "Repeat failures: period (days)"
   },
   "documentHeader": {
     "removeLogoConfirmTitle": "Remove the logo?",
@@ -397,7 +399,9 @@
       "permit.gas_lel_max_percent": "The latest flammable gas reading (% of the lower explosive limit) must stay below this value (shipped value: 10 %).",
       "permit.gas_h2s_max_ppm": "The latest hydrogen sulphide reading must stay below this value (shipped value: 10 ppm).",
       "permit.gas_co_max_ppm": "When carbon monoxide is measured, the latest reading must stay below this value (shipped value: 25 ppm).",
-      "permit.gas_test_validity_hours": "An atmospheric test is valid for this number of hours: after that, test again before issuing or activating the permit, reinstating it after a suspension, or starting or resuming the work (shipped value: 4 h)."
+      "permit.gas_test_validity_hours": "An atmospheric test is valid for this number of hours: after that, test again before issuing or activating the permit, reinstating it after a suspension, or starting or resuming the work (shipped value: 4 h).",
+      "reliability.repeat_failure_count": "An equipment is flagged “repeat failures” from this number of unplanned failures within the period below.",
+      "reliability.repeat_failure_window_days": "Period, in days up to today, over which unplanned failures are counted for the “repeat failures” flag."
     },
     "units": {
       "wo.reopen_window_days_one": "{{count}} day",
@@ -417,7 +421,11 @@
       "permit.gas_lel_max_percent": "{{value, number(maximumFractionDigits: 6)}} % LEL",
       "permit.gas_h2s_max_ppm": "{{value, number(maximumFractionDigits: 6)}} ppm",
       "permit.gas_co_max_ppm": "{{value, number(maximumFractionDigits: 6)}} ppm",
-      "permit.gas_test_validity_hours": "{{value, number(maximumFractionDigits: 6)}} h"
+      "permit.gas_test_validity_hours": "{{value, number(maximumFractionDigits: 6)}} h",
+      "reliability.repeat_failure_count_one": "{{count}} failure",
+      "reliability.repeat_failure_count_other": "{{count}} failures",
+      "reliability.repeat_failure_window_days_one": "{{count}} day",
+      "reliability.repeat_failure_window_days_other": "{{count}} days"
     },
     "currencyLoadError": "The currency list (Reference data › Currencies) could not be loaded: the currency cannot be changed.",
     "currencyLoading": "Loading currencies…",
@@ -557,6 +565,14 @@
     "history": "History",
     "historyError": "The history could not be loaded",
     "noHistory": "No change at this site.",
+    "depannageValidation": {
+      "title": "Breakdown validation",
+      "label": "Approve breakdowns automatically at their close",
+      "help": "Off (recommended): each breakdown is validated after the fact by an approver of the site other than the person who started it, before its close. Turn on only for a site without a second approver: the breakdown is then marked \"approved automatically (site rule)\", with no validator.",
+      "active": "Breakdowns approved automatically at this site",
+      "confirmOnBody": "At {{site}}, breakdowns not validated will be approved automatically at their close, with no validator. Other sites keep the validation.",
+      "confirmOffBody": "At {{site}}, each breakdown must again be validated by an approver of the site before its close."
+    },
     "selfApproval": {
       "label": "Allow self-approval of reliability decisions and work permits",
       "help": "Off (recommended): a second person approves every reliability decision and every work permit of this site (four-eyes: not the person who wrote or submitted the permit). Turn on only for a site where one person both prepares and approves; such approvals are marked \"self-approval (site without four-eyes)\" on the permit and \"Self-approved\" on the decision.",

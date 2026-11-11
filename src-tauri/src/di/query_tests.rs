@@ -125,15 +125,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_rejects_null_symptom() {
+    async fn create_accepts_null_symptom() {
         let db = setup().await;
         let user_id = get_user_id(&db).await;
         let mut input = make_create_input(&db, user_id, "No symptom", "Desc").await;
         input.symptom_code_id = None;
-        let err = create_intervention_request(&db, input)
+        let created = create_intervention_request(&db, input)
             .await
-            .expect_err("null symptom must fail");
-        assert!(matches!(err, crate::errors::AppError::ValidationFailed(_)));
+            .expect("a new request may have no symptom (short operator form, L1-11)");
+        assert_eq!(created.symptom_code_id, None);
     }
 
     #[tokio::test]

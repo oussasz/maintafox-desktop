@@ -35,7 +35,12 @@
         "days90": "90 jours",
         "months12": "12 mois",
         "orgScope": "Organisation",
-        "allOrgs": "Toutes les organisations"
+        "allOrgs": "Toutes les organisations",
+        "thisMonth": "Mois en cours",
+        "thisYear": "Année en cours",
+        "custom": "Période libre…",
+        "customFrom": "Du",
+        "customHint": "jusqu’à aujourd’hui (366 jours au plus). Mois et année en cours : jours entiers écoulés, aujourd’hui compris."
       },
       "widgets": {
         "opsKpis": "KPIs opérationnels",
@@ -76,7 +81,9 @@
         "overdue": "DI ouvertes > 7 jours + PM en retard + OT en retard",
         "costSettled": "Comptabilisé au budget par la Finance, {{days}} derniers jours",
         "costPending_one": "{{days}} derniers jours · {{count}} OT clôturé pas encore valorisé",
-        "costPending_other": "{{days}} derniers jours · {{count}} OT clôturés pas encore valorisés"
+        "costPending_other": "{{days}} derniers jours · {{count}} OT clôturés pas encore valorisés",
+        "thisMonth": "Mois en cours",
+        "thisYear": "Année en cours"
       },
       "diStatus": {
         "openList": "Ouvrir les demandes",
@@ -115,7 +122,7 @@
     "name": "Titre",
     "defaultFormat": "Format par défaut",
     "actions": "Exporter",
-    "subtitle": "Générez un rapport maintenant en PDF ou Excel. Vous choisissez où enregistrer le fichier.",
+    "subtitle": "Générez un rapport maintenant en PDF ou Excel. Vous choisissez où enregistrer le fichier. Chaque modèle couvre une période et un périmètre prédéfinis (toute l'usine) : pour une autre période ou une autre ligne, utilisez l'export du module concerné (liste filtrée) ou le tableau de bord.",
     "loading": "Chargement des modèles de rapport…",
     "loadError": "Les modèles de rapport n’ont pas pu être chargés",
     "empty": "Aucun modèle de rapport disponible.",
@@ -149,7 +156,7 @@
     "delete": "Supprimer",
     "next": "Prochaine exécution",
     "noAccess": "Permission insuffisante pour gérer les planifications de rapports.",
-    "subtitle": "Rapports générés automatiquement et conservés dans l’historique, d’où vous pouvez les télécharger.",
+    "subtitle": "Rapports générés automatiquement et conservés dans l'historique, d'où vous pouvez les télécharger. Ils ne sont pas envoyés par e-mail et ne se génèrent que lorsque Maintafox est ouvert à l'heure prévue ; un rapport manqué est généré au prochain démarrage.",
     "newTitle": "Nouvelle planification",
     "frequency": "Fréquence",
     "frequencies": {

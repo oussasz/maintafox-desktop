@@ -75,6 +75,20 @@
     "loadFailed": "La liste du personnel n'a pas pu être chargée."
   },
   "depannage": {
+    "validation": {
+      "badgeToValidate": "Dépannage — à valider",
+      "pending": "Validation après coup en attente (approbateur du site, autre que la personne qui l'a lancé).",
+      "validate": "Valider le dépannage",
+      "validated": "Dépannage validé le {{date}}",
+      "autoApproved": "Approuvé automatiquement à la clôture (règle du site), sans validateur.",
+      "notStarter": "Vous avez lancé ce dépannage : un autre approbateur doit le valider."
+    },
+    "times": {
+      "response": "Temps de réponse",
+      "activeRepair": "Réparation active",
+      "restore": "Remise en service",
+      "hours": "{{value}} h"
+    },
     "action": "Dépannage",
     "title": "Dépannage : intervention immédiate",
     "intro": "Pour une panne à traiter tout de suite : l'OT correctif est créé et démarré en une fois. La planification est validée après coup.",
@@ -209,6 +223,7 @@
       "mix": "Nature des travaux",
       "completed": "Terminés sur la période",
       "completedValue": "Du {{from}} au {{to}}",
+      "ramsFailures": "Pannes comptées par RAMS",
       "mixValue": {
         "planned": "Planifiés (préventif et amélioration)",
         "reactive": "Réactifs (correctif)",
@@ -376,7 +391,9 @@
     "primaryResponsibleId": "Technicien (responsable principal)",
     "scheduledAt": "Planifié le",
     "scheduleStripTitle": "Créneau engagé",
-    "scheduleLockedHint": "Les dates, l'équipe et le technicien sont gérés par le Planning. Utilisez Ouvrir dans Planning pour modifier le créneau, ou Réaffectation d'urgence pour le dispatch de nuit (ignore les portes de capacité).",
+    "scheduleLockedHint": "Les dates sont gérées par le Planning (Ouvrir dans Planning). L'équipe et le technicien s'affectent ici.",
+    "assignAction": "Affecter",
+    "assignHint": "Choisissez l'équipe et/ou le technicien, puis Affecter. Le créneau reste géré par le Planning.",
     "scheduleEmpty": "Pas encore engagé sur le tableau Planning.",
     "scheduleFrozenHint": "Cet engagement est gelé. Utilisez une intrusion Planning — la réaffectation d'urgence est bloquée.",
     "openInPlanning": "Ouvrir dans Planning",
@@ -460,6 +477,9 @@
       }
     },
     "parts": {
+      "available": "Disponible : {{qty}} {{unit}}",
+      "shortage": "Stock insuffisant (disponible : {{available}} {{unit}}) : la ligne est enregistrée, la quantité manquante est à acheter.",
+      "willReserve": "Le stock disponible sera réservé à l’enregistrement de la ligne.",
       "noMatch": "Aucun article correspondant",
       "stockLocation": "Emplacement de stock",
       "locationPlaceholder": "Emplacement",
@@ -501,6 +521,15 @@
     "blockers": "Problèmes bloquants",
     "gates": {
       "title": "Complétion de l'ordre de travail",
+      "fix": {
+        "PARTS": "À faire dans l'onglet Pièces : confirmez la quantité réellement utilisée de chaque ligne.",
+        "TASKS": "À faire dans l'onglet Tâches : terminez ou annulez chaque tâche ouverte.",
+        "OPEN_LABOR": "À faire dans l'onglet Main-d'œuvre : arrêtez les pointages encore en cours.",
+        "OPEN_DOWNTIME": "À faire dans la section Retour en service : clôturez les arrêts de production ouverts.",
+        "FAILURE_MODE": "À faire plus bas, section Analyse de défaillance : choisissez le mode de défaillance.",
+        "SYMPTOM": "À faire plus bas, section Symptôme : choisissez le symptôme observé.",
+        "ROOT_CAUSE": "À faire plus bas, section Action réalisée : résumez la cause racine, ou cochez « Cause non encore connue »."
+      },
       "blockingCount": "{{count}} éléments bloquants restants ({{done}}/{{total}} prêts).",
       "PARTS": "Pièces confirmées",
       "TASKS": "Tâches terminées",
@@ -572,6 +601,9 @@
     "taskFollowUp": "OT de suivi",
     "taskFollowUpPlaceholder": "N° de l'OT de suivi (facultatif)",
     "taskFollowUpNotFound": "Aucun OT « {{code}} »",
+    "taskRaiseCorrective": "Créer un OT correctif lié",
+    "taskCorrectiveTitle": "Correctif : {{task}}",
+    "taskCorrectiveDescription": "Constaté à l'OT {{code}}, étape « {{task}} ». Constat : {{note}}",
     "taskNokEvidenceHint": "Tâche obligatoire NOK : saisissez le constat ou l'OT de suivi.",
     "reopenTask": "Rouvrir la tâche",
     "reopenTaskComment": "Motif de réouverture",
@@ -654,6 +686,7 @@
       "confirmNoParts": "Impossible de confirmer aucune pièce utilisée.",
       "unconfirmNoParts": "Impossible d'annuler la confirmation « aucune pièce ».",
       "completeTask": "Impossible de compléter la tâche.",
+      "raiseCorrective": "Impossible de créer l'OT correctif.",
       "loadData": "Impossible de charger les données d'exécution.",
       "openDowntime": "Impossible d'ouvrir le segment d'arrêt.",
       "closeDowntime": "Impossible de fermer le segment d'arrêt.",
@@ -823,7 +856,7 @@
     "narrativePlaceholder": "Décrire la défaillance observée…",
     "sectionFailure": "Analyse de défaillance",
     "isoFailureTaxonomyHint": "Mode de défaillance : comment la défaillance se manifeste. Cause de défaillance : pourquoi elle s'est produite (données ISO 14224).",
-    "causeNotDetermined": "Cause non déterminée",
+    "causeNotDetermined": "Cause non encore connue",
     "failureMode": "Mode de défaillance",
     "failureModePlaceholder": "Mode…",
     "failureCause": "Cause",
@@ -862,9 +895,9 @@
     "noDowntimeProductionHint": "Impact production enregistré. Ajoutez un segment d'arrêt ou atteste l'absence d'arrêt production avec une justification (minimum 8 caractères).",
     "noDowntimeAttestation": "Aucun arrêt production (attestation)",
     "noDowntimeReason": "Justification (obligatoire si attestation)",
-    "fmecaOverrideReason": "Motif de dérogation pièces FMECA critiques",
+    "fmecaOverrideReason": "Pourquoi clôturer sans les pièces critiques conseillées",
     "fmecaOverrideReasonPlaceholder": "Expliquez pourquoi la clôture est autorisée sans les pièces critiques suggérées…",
-    "fmecaOverrideSignerId": "Signataire de dérogation",
+    "fmecaOverrideSignerId": "Superviseur qui autorise",
     "fmecaOverrideSignerIdPlaceholder": "Sélectionner un superviseur/admin",
     "fmecaOverrideSignerPassword": "Mot de passe du signataire de dérogation",
     "fmecaOverrideSignerPasswordPlaceholder": "Confirmation du mot de passe signataire",
@@ -974,7 +1007,7 @@
     },
     "fields": {
       "subtype": "Sous-type",
-      "sourceInspectionRound": "Tournée d'inspection",
+      "sourceInspectionRound": "Ronde d'inspection",
       "sourcePmPlan": "Constat de préventif (plan)",
       "nature": "Nature (EN 13306)",
       "number": "Numéro",
@@ -1009,9 +1042,9 @@
     "markReady": "Marquer comme Prêt"
   },
   "remainingTime": {
-    "label": "Temps restant estimé (heures, facultatif)",
+    "label": "Combien d’heures restent à travailler ? (facultatif)",
     "placeholder": "ex. 2,5",
-    "hint": "Sert uniquement à vérifier que les permis couvrent la fin du travail (maintenant + ce temps). Vide : la durée prévue complète de l’OT. Les dates planifiées et la durée prévue ne sont pas modifiées ; la valeur est enregistrée dans l’historique à votre nom.",
+    "hint": "Sert à vérifier que les permis de travail couvrent encore la fin du travail. Laissé vide, on prend la durée prévue de l’OT. Rien n’est modifié dans le planning ; votre réponse est enregistrée dans l’historique à votre nom.",
     "invalid": "Saisissez un nombre d’heures supérieur à 0, ou laissez le champ vide."
   },
   "resumeDialog": {

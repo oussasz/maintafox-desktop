@@ -38,7 +38,8 @@
       "criticality": "Criticality",
       "family": "Family",
       "parentName": "Parent equipment",
-      "primaryMeter": "Main meter"
+      "primaryMeter": "Main meter",
+      "repeatFailures": "Repeat failures"
     },
     "filters": {
       "status": "Status",
@@ -92,7 +93,8 @@
       "documents": "Documents & photos",
       "criticality": "Criticality",
       "history": "History",
-      "isolation": "Isolation points"
+      "isolation": "Isolation points",
+      "repeatFailures": "Repeat failures"
     }
   },
   "form": {
@@ -227,7 +229,11 @@
       "meter_reading": "Meter reading",
       "document_linked": "Document linked",
       "photo_added": "Photo added",
-      "history_imported": "Imported history {{code}}"
+      "history_imported": "Imported history {{code}}",
+      "component_installed": "Installed on {{date}} on {{parent}}",
+      "component_removed": "Removed on {{date}} from {{parent}}",
+      "child_installed": "Component {{component}} installed on {{date}}",
+      "child_removed": "Component {{component}} removed on {{date}}"
     },
     "quality": {
       "accepted": "Accepted",
@@ -705,6 +711,24 @@
     "utilization": "Utilisation factor (K_u)",
     "hint": "Used by RAMS to convert calendar time into operating time."
   },
+  "moveComponent": {
+    "action": "Move component",
+    "title": "Move component",
+    "descriptionInstalled": "{{code}} is currently installed on {{parent}}. It keeps its record and serial number.",
+    "descriptionStock": "{{code}} is not installed on any equipment (in stock). It keeps its record and serial number.",
+    "target": "New parent equipment",
+    "targetHint": "Leave empty to remove the component to stock (no parent).",
+    "sameParent": "The component is already installed on this equipment.",
+    "alreadyInStock": "The component is already in stock: choose the equipment to install it on.",
+    "date": "Effective date",
+    "dateRequired": "Enter a valid date (today or earlier).",
+    "notes": "Reason / note",
+    "cancel": "Cancel",
+    "confirm": "Move",
+    "confirmRemove": "Remove to stock",
+    "done": "Move of {{code}} recorded.",
+    "severalParents": "This component is attached to {{count}} parent equipment at once; correct the structure before moving it."
+  },
   "structure": {
     "parent": "Parent equipment",
     "noParent": "This asset is not attached to a parent equipment.",
@@ -813,7 +837,34 @@
     "rateHint": "Used to forecast meter-based maintenance.",
     "rollover": "Rollover value",
     "rolloverHint": "Value at which the counter restarts from zero, if any.",
-    "primary": "Main meter of the asset"
+    "primary": "Main meter of the asset",
+    "thresholds": {
+      "edit": "Alarm thresholds",
+      "title": "Alarm thresholds — {{name}}",
+      "description": "A reading that crosses a threshold raises an intervention request (only one per threshold while it is open).",
+      "direction": "The threshold is crossed",
+      "directionPlaceholder": "Choose the direction",
+      "above": "Upwards (value too high: temperature, vibration…)",
+      "below": "Downwards (value too low: level, flow…)",
+      "alert": "Alert threshold {{unit}}",
+      "critical": "Critical threshold {{unit}}",
+      "hint": "Leave both thresholds empty to stop monitoring this meter. The critical threshold raises an urgent request, the alert threshold a high-priority one.",
+      "save": "Save thresholds",
+      "none": "—",
+      "orderError": "The alert threshold must be reached before the critical threshold.",
+      "summary": {
+        "above": "Alert from {{alert}} {{unit}} · critical from {{critical}} {{unit}}",
+        "below": "Alert below {{alert}} {{unit}} · critical below {{critical}} {{unit}}"
+      },
+      "level": {
+        "alert": "alert",
+        "critical": "critical"
+      },
+      "raised": "{{level}} threshold crossed: request {{code}} raised.",
+      "alreadyOpen": "{{level}} threshold crossed: request {{code}} is still open, no new request.",
+      "notRaised": "{{level}} threshold crossed, but no request was raised.",
+      "raisedChip": "{{level}} threshold → {{code}}"
+    }
   },
   "spares": {
     "searchFailed": "The article search failed (this is not an empty result).",
@@ -951,5 +1002,66 @@
     "dialogTitleEdit": "Edit the isolation point",
     "required": "This field is required.",
     "optionsError": "The energy type and method lists could not be read."
+  },
+  "characteristics": {
+    "title": "Technical characteristics",
+    "noFamily": "Choose a family for this equipment: its characteristics show here.",
+    "none": "No characteristic is defined for the family {{family}}. Add them in Reference data (Technical characteristics per family).",
+    "hint": "Defined for the family {{family}} in Reference data.",
+    "edit": "Edit",
+    "save": "Save",
+    "cancel": "Cancel",
+    "yes": "Yes",
+    "no": "No",
+    "notSet": "Not set",
+    "required": "required",
+    "definitionProblem": "Definition to fix in Reference data: {{problem}}",
+    "unlisted": "Values whose characteristic is no longer in the family's list",
+    "saved": "Characteristics saved.",
+    "numberError": "Enter a number.",
+    "requiredError": "Required for this family."
+  },
+  "repeatFailures": {
+    "badge": "Repeat failures",
+    "badgeCount": "Repeat failures ({{count}})",
+    "badgeTitle": "{{count}} unplanned failures in {{days}} days (threshold: {{min}}).",
+    "listUnavailable": "Repeat failures unavailable: {{reason}}",
+    "status": {
+      "flagged": "Repeat failures: {{count}} unplanned failures in {{days}} days (threshold: {{min}} — Settings > Reliability).",
+      "notFlagged": "{{count}} unplanned failure(s) in {{days}} days (repeat failures from {{min}}).",
+      "actions": "{{open}} open action(s), {{overdue}} overdue."
+    },
+    "fiveWhy": {
+      "title": "5 whys",
+      "add": "New analysis",
+      "empty": "No “5 whys” analysis for this equipment.",
+      "problem": "Problem analysed",
+      "why": "Why {{n}}?",
+      "rootCause": "Root cause",
+      "save": "Save the analysis",
+      "edit": "Edit",
+      "cancel": "Cancel",
+      "by": "By {{name}}, on {{date}}",
+      "saved": "Analysis saved."
+    },
+    "actions": {
+      "title": "Corrective actions",
+      "add": "New action",
+      "empty": "No corrective action for this equipment.",
+      "action": "Action",
+      "owner": "Owner",
+      "dueDate": "Due date",
+      "status": "Status",
+      "overdue": "Overdue",
+      "save": "Save the action",
+      "cancel": "Cancel",
+      "edit": "Edit",
+      "saved": "Action saved.",
+      "statuses": {
+        "open": "Open",
+        "done": "Done",
+        "cancelled": "Cancelled"
+      }
+    }
   }
 }

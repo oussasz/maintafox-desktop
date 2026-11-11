@@ -27,7 +27,10 @@ import {
   SettingsCategorySidebar,
   type SettingsTabId,
 } from "@/components/settings/SettingsCategorySidebar";
-import { SiteRulesPanel } from "@/components/settings/SiteRulesPanel";
+import {
+  DEPANNAGE_AUTO_VALIDATION_SITE_RULE,
+  SiteRulesPanel,
+} from "@/components/settings/SiteRulesPanel";
 import { SyncFeedbackPanel } from "@/components/sync/SyncFeedbackPanel";
 import { Timeline } from "@/components/timeline";
 import { Button } from "@/components/ui/button";
@@ -394,6 +397,11 @@ export function SettingsPage() {
                         emptyState
                       )}
                       <SiteRulesPanel onToast={onToast} />
+                      <SiteRulesPanel
+                        onToast={onToast}
+                        rule={DEPANNAGE_AUTO_VALIDATION_SITE_RULE}
+                        textKey="depannageValidation"
+                      />
                     </section>
                   ) : null}
 

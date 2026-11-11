@@ -37,6 +37,7 @@ import {
   checkWoPartStockAvailability,
   evaluateInventoryUnitCost,
   listInventoryArticles,
+  type InventoryArticleRow,
   listInventoryLocations,
 } from "@/services/inventory-service";
 import { listActiveTeams, listTeamMembers } from "@/services/personnel-service";
@@ -53,6 +54,7 @@ import {
 import {
   PERMIT_REQUIREMENT_EDITABLE_STATUSES,
   SHUTDOWN_FLAG_EDITABLE_STATUSES,
+  assignWo,
   emergencyReassignWo,
   evaluateWoReadiness,
   planWo,
@@ -61,7 +63,6 @@ import {
 } from "@/services/wo-service";
 import { useWoStore } from "@/stores/wo-store";
 import type {
-  InventoryArticle,
   StockLocation,
   TeamMemberRow,
   UrgencyCode,
@@ -249,6 +250,8 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
     const siteAccess = useWoAccess(wo);
     const canAtSite = siteAccess.can;
     const canEmergencyAssign = canAtSite(P.OT_EMERGENCY_ASSIGN);
+    // Routine assignment ("Affecter") needs only the right to edit the work order at its site.
+    const canAssign = canAtSite(P.OT_EDIT);
     // Naming the planner needs ot.approve or plan.confirm at the site (CMMS Advisor 2026-11-06,
     // `plan_wo`): greyed with the reason once the rights are read; the recorded planner is kept.
     const mayChoosePlanner = canAtSite(P.OT_APPROVE) || canAtSite(P.PLAN_CONFIRM);
@@ -303,7 +306,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
     const [tools, setTools] = useState<WoTool[]>([]);
     const [newToolLabel, setNewToolLabel] = useState("");
     const [newToolCode, setNewToolCode] = useState("");
-    const [articleOptions, setArticleOptions] = useState<InventoryArticle[]>([]);
+    const [articleOptions, setArticleOptions] = useState<InventoryArticleRow[]>([]);
     const [locationOptions, setLocationOptions] = useState<StockLocation[]>([]);
     const [activeArticleField, setActiveArticleField] = useState<string | null>(null);
 
@@ -857,8 +860,9 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
       />
     );
 
-    const handleEmergencyReassign = useCallback(
-      async (reason: string) => {
+    // `reason` null = routine assignment; a reason = the emergency override (waives the gates).
+    const submitAssignment = useCallback(
+      async (reason: string | null) => {
         if (!assignReady || !requireActor) return;
         setEmergencyBusy(true);
         setError(null);
@@ -871,15 +875,24 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
             newTeam != null && newTeam !== wo.assigned_team_id
               ? shiftSaveFields(shiftTouched, shiftVersionId, wo)
               : {};
-          const next = await emergencyReassignWo({
-            wo_id: wo.id,
-            actor_id: requireActor,
-            expected_row_version: rowVersion,
-            assigned_team_id: newTeam,
-            primary_responsible_id: parseNumber(primaryResponsibleId),
-            override_reason: reason,
-            ...shiftForNewTeam,
-          });
+          const next =
+            reason === null
+              ? await assignWo({
+                  wo_id: wo.id,
+                  actor_id: requireActor,
+                  expected_row_version: rowVersion,
+                  assigned_team_id: newTeam,
+                  primary_responsible_id: parseNumber(primaryResponsibleId),
+                })
+              : await emergencyReassignWo({
+                  wo_id: wo.id,
+                  actor_id: requireActor,
+                  expected_row_version: rowVersion,
+                  assigned_team_id: newTeam,
+                  primary_responsible_id: parseNumber(primaryResponsibleId),
+                  override_reason: reason,
+                  ...shiftForNewTeam,
+                });
           setRowVersion(next.row_version);
           setStatusCode(next.status_code ?? statusCode);
           setShiftTouched(false);
@@ -1342,9 +1355,9 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
             </Button>
           </div>
 
-          {(isPlanningEditable || isReadyScheduleEditable) && canEmergencyAssign && (
+          {(isPlanningEditable || isReadyScheduleEditable) && (canAssign || canEmergencyAssign) && (
             <div className="space-y-3 border-t pt-3">
-              <p className="text-xs text-muted-foreground">{t("planning.emergencyReassignHint")}</p>
+              <p className="text-xs text-muted-foreground">{t("planning.assignHint")}</p>
               <div className="grid gap-3 md:grid-cols-2">
                 <div className="space-y-1">
                   <Label>{t("planning.assignedTeamId")}</Label>
@@ -1402,20 +1415,44 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
               {noTeamLeadUser ? (
                 <p className="text-xs text-muted-foreground">{t("planning.noTeamLeadUser")}</p>
               ) : null}
-              <Button
-                type="button"
-                variant="destructive"
-                onClick={() => setEmergencyOpen(true)}
-                disabled={
-                  allFieldsDisabled ||
-                  scheduleFrozen ||
-                  !assignReady ||
-                  !requireActor ||
-                  emergencyBusy
-                }
-              >
-                {t("planning.emergencyReassign")}
-              </Button>
+              <div className="flex flex-wrap items-center gap-2">
+                {canAssign ? (
+                  <Button
+                    type="button"
+                    onClick={() => void submitAssignment(null)}
+                    disabled={
+                      allFieldsDisabled ||
+                      scheduleFrozen ||
+                      !assignReady ||
+                      !requireActor ||
+                      emergencyBusy
+                    }
+                  >
+                    {t("planning.assignAction")}
+                  </Button>
+                ) : null}
+                {canEmergencyAssign ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setEmergencyOpen(true)}
+                    disabled={
+                      allFieldsDisabled ||
+                      scheduleFrozen ||
+                      !assignReady ||
+                      !requireActor ||
+                      emergencyBusy
+                    }
+                  >
+                    {t("planning.emergencyReassign")}
+                  </Button>
+                ) : null}
+              </div>
+              {canEmergencyAssign ? (
+                <p className="text-xs text-muted-foreground">
+                  {t("planning.emergencyReassignHint")}
+                </p>
+              ) : null}
               {!requireActor && (
                 <span className="text-sm text-muted-foreground">
                   {t("planning.sessionRequired")}
@@ -1429,7 +1466,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
             onOpenChange={setEmergencyOpen}
             title={t("planning.emergencyOverrideTitle")}
             description={t("planning.emergencyOverrideDescription")}
-            onConfirm={(reason) => void handleEmergencyReassign(reason)}
+            onConfirm={(reason) => void submitAssignment(reason)}
           />
         </section>
 
@@ -1614,7 +1651,23 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
                                   setActiveArticleField(null);
                                 }}
                               >
-                                {article.article_code} - {article.article_name}
+                                <span className="flex items-baseline justify-between gap-3">
+                                  <span>
+                                    {article.article_code} - {article.article_name}
+                                  </span>
+                                  <span
+                                    className={
+                                      article.available_qty > 0
+                                        ? "shrink-0 text-xs text-muted-foreground"
+                                        : "shrink-0 text-xs text-tone-warning-fg"
+                                    }
+                                  >
+                                    {t("planning.parts.available", {
+                                      qty: article.available_qty,
+                                      unit: article.unit_symbol ?? "",
+                                    })}
+                                  </span>
+                                </span>
                               </button>
                             ))
                           )}
@@ -1675,6 +1728,25 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
                       }
                       disabled={tasksPartsDisabled || part.persisted}
                     />
+                    {!part.persisted && part.article_id != null
+                      ? (() => {
+                          const chosen = articleOptions.find((a) => a.id === part.article_id);
+                          if (!chosen) return null;
+                          const asked = parseNumber(part.quantity_planned) ?? 0;
+                          return asked > chosen.available_qty ? (
+                            <p className="text-xs text-tone-warning-fg">
+                              {t("planning.parts.shortage", {
+                                available: chosen.available_qty,
+                                unit: chosen.unit_symbol ?? "",
+                              })}
+                            </p>
+                          ) : (
+                            <p className="text-xs text-muted-foreground">
+                              {t("planning.parts.willReserve")}
+                            </p>
+                          );
+                        })()
+                      : null}
                     {savedPending && part.reservation_id != null ? (
                       <p className="text-xs text-muted-foreground">{t("planning.stockReserved")}</p>
                     ) : null}

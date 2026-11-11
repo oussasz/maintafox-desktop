@@ -126,6 +126,7 @@
       "DECISION_NOT_DESIGNATED_APPROVER": "A reliability decision approved by someone other than its designated approver. Keep this PC's decision: it is then refused on every PC",
       "DECISION_APPROVER_UNAUTHORISED": "A reliability decision approved by someone without the right to approve (ram.manage, plant-wide) here. The conflict closes by itself if the right arrives; otherwise keep this PC's decision",
       "DECISION_APPLIER_UNAUTHORISED": "A reliability decision applied by someone without the rights to apply it (ram.manage and pm.edit or ot.create) here. The conflict closes by itself if the rights arrive; otherwise keep this PC's decision",
+      "RCM_RUN_TO_FAILURE_CRITICAL": "An RCM decision received from another PC leaves a critical FMECA mode (RPN at or above the plant's critical threshold) to run to failure, which is refused here: check the decision with the reliability analyst before deciding",
       "WO_PART_LINE_HAS_USE": "A planned part line was cancelled on another device, but parts were already used or issued from the store for it here: check the line with the planner and the store before deciding",
       "SITE_SETTING_UNAUDITED": "A site rule changed without its audited change (step-up, reason, settings right)",
       "SITE_SETTING_INVALID": "A site rule with an unreadable value or time",
@@ -178,6 +179,8 @@
       "WO_COMPLETION_GATE": "A work order completed on another PC fails the completion checks here — check, then keep the correct version",
       "WO_CLOSE_GATE": "A work order closed on another PC fails the close-out checks here",
       "WO_CANCEL_PERMIT_GATE": "A work order cancelled on another PC still has an open permit or a fitted lock here",
+      "WO_EXECUTION_UNAUTHORISED": "A work-order execution action (start, hold, resume, task result, completion, close, cancellation) made on another PC by someone who does not carry out this work order, or no longer holds the right here — not applied; if it was intended, an authorised person makes it again",
+      "WO_EXECUTION_AUTHOR_UNKNOWN": "A work-order execution action received without saying who made it — not applied; an authorised person makes it again",
       "PERMIT_ENDED_BEFORE_START": "A permit closed, cancelled or suspended on another PC before its work order's work started here — applied; stop the work, then dismiss with the reason (or escalate)",
       "PERMIT_ENDED_DURING_WORK": "A permit closed, cancelled or suspended on another PC while its work order's work runs here — applied; stop the work, then dismiss with the reason (or escalate)",
       "WO_DOWNTIME_END_LOCKS_FITTED": "A downtime end received while a lock is still fitted here under the work order's permits — not applied; the downtime ends when the removal of the last lock is verified",
@@ -192,6 +195,7 @@
       "PERMIT_TYPE_REQUIRED_TO_START": "A work order started without a permit of the type a plant rule requires",
       "WO_PERMIT_RULE_CHANGED": "The plant rule that requires a work order's permit was removed or changed elsewhere",
       "WO_DEPANNAGE_FACTS_INVALID": "A breakdown work order received without its breakdown time or its \"machine stopped\", with a breakdown time later than the moment it was written, or turned back into an ordinary work order: check its facts with the person who reported it",
+      "WO_DEPANNAGE_VALIDATION_INVALID": "A breakdown validation received that does not hold here: validated by the person who started it, by someone without the approval right at the site, after the close, approved automatically at a site that requires the validation, or closed without validation: check it with the site's approver",
       "INSP_ANOMALY_PERMIT_REVIEW_CLEARED": "An inspection finding received with its \"permit review required\" cleared",
       "INSP_ANOMALY_LINK_CHANGED": "An inspection finding received with the request or work order raised from it removed or replaced",
       "INSP_ANOMALY_DECISION_INVALID": "An inspection finding received closed without a decision, or a decided finding changed elsewhere (it is decided by routing it to a request or work order, or deferring it)",
@@ -293,7 +297,7 @@
       "runsInBackground": "Sync keeps running when the window is closed (Maintafox stays in the notification area).",
       "state": {
         "starting": "Starting…",
-        "idle": "Up to date",
+        "idle": "Synchronised",
         "running": "Syncing…",
         "paused": "Paused",
         "offline": "Offline: retried automatically",
@@ -344,10 +348,10 @@
       }
     },
     "indicator": {
-      "idle": "Up to date",
+      "idle": "Synchronised",
       "scheduled": "Sync starting",
       "running": "Syncing",
-      "degraded": "To check",
+      "degraded": "To review",
       "paused": "Paused",
       "blocked": "Sync stopped",
       "error": "Sync error",
@@ -382,7 +386,7 @@
     "inboxLoading": "Loading conflicts…",
     "versionNumber": "version {{version}}",
     "detectedAt": "detected {{date}}",
-    "recordUnidentified": "(number not available)",
+    "recordUnidentified": "(no number: see \"Technical details\")",
     "technicalDetails": "Technical details",
     "noRemoteVersion": "The server sent no version of this record",
     "resolveNeedsRight": "You can view this conflict. Choosing a version requires the right to resolve synchronisation conflicts.",
@@ -412,7 +416,8 @@
       "renumber_local": "The record on this device gets a new number; the received record keeps its own (\"{{record}}\").",
       "dismiss": "The conflict on \"{{record}}\" is dismissed without applying either version.",
       "retry_later": "The conflict on \"{{record}}\" stays open and is reviewed again later; nothing is applied.",
-      "escalate": "The conflict on \"{{record}}\" is marked for review by a supervisor; nothing is applied."
+      "escalate": "The conflict on \"{{record}}\" is marked \"Escalated\" and stays open with your reason, for someone allowed to resolve conflicts to review; no message is sent and nothing is applied.",
+      "dismissWarning": "Warning: the conflict leaves the list and neither version is applied. The two PCs may stay different on this record."
     },
     "reason": {
       "label": "Reason for this choice",
@@ -472,7 +477,28 @@
     "doubleCount": "{{count}} stock location(s) counted on two PCs without knowing each other: double count to verify (Inventory › Controls).",
     "doublePosting": "{{count}} stock count(s) posted twice (the same count on two PCs, older version): to verify with a new count (Inventory › Controls).",
     "overReserved": "{{count}} stock location(s) with more reserved than in stock (warning).",
-    "openNegativeStock": "Open the stock to reconcile"
+    "openNegativeStock": "Open the stock to reconcile",
+    "compare": {
+      "title": "Values in disagreement",
+      "field": "Field",
+      "local": "This device",
+      "remote": "Server",
+      "empty": "(empty)",
+      "yes": "Yes",
+      "no": "No",
+      "more": "… and {{count}} more field(s) — see \"Technical details\".",
+      "none": "No readable value differs between the two versions: the difference is technical (see \"Technical details\")."
+    },
+    "actionHelp": {
+      "accept_local": "Your version is kept and sent again to the server; the received version is discarded.",
+      "accept_remote": "The server's version replaces this device's; your local changes to this record are lost.",
+      "renumber_local": "Your record gets a new number; the received one keeps its own.",
+      "retry_later": "The conflict stays open and nothing is applied: review it again later.",
+      "escalate": "Marks the conflict as \"Escalated\": it stays open in this list with your reason, for someone allowed to resolve conflicts to handle. No message is sent and nothing is applied.",
+      "dismiss": "Closes the conflict without applying either version. Use only when the matter is already settled."
+    },
+    "actionDisabledRemote": "Unavailable: the server sent no version of this record, so there is nothing to take.",
+    "actionDisabledBusy": "Action in progress…"
   },
   "status": {
     "dbOk": "Database: OK",
@@ -596,14 +622,14 @@
     "lookups": "Reference Data",
     "imports": "Data imports",
     "notifications": "Notifications",
-    "documentation": "Documentation",
+    "documentation": "Document library",
     "activity": "Activity Log",
     "settings": "Settings",
     "users": "Users & Roles",
     "org": "Organization",
     "diagnostics": "Diagnostics",
     "profile": "My Profile",
-    "help": "Help & Documentation",
+    "help": "Help",
     "reports": "Reports",
     "admin": "Administration",
     "myPadlocks": "My padlocks"

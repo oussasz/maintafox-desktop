@@ -141,6 +141,7 @@
     "capacityBasis": {
       "roster": "selon les classes horaires",
       "rest_day": "jour de repos",
+      "site_rest_day": "repos du site",
       "holiday": "jour férié",
       "no_schedule": "aucune classe horaire",
       "no_members": "équipe sans membre"
@@ -406,6 +407,8 @@
     "publish": "Publier aux équipes",
     "requestUnfreeze": "Demander le dégel",
     "freezeDue": "Gel automatique le {{at}}",
+    "freezeOverdue": "Gel automatique dû depuis le {{at}} : il s'applique au prochain passage de l'application, ou gelez la semaine vous-même.",
+    "freezeOverdueNoCrews": "Gel automatique prévu le {{at}} mais non appliqué : aucune équipe n'est rattachée à ce site.",
     "frozenAt": "Gelé le {{at}}",
     "frozenAutomatically": "Gelé automatiquement le {{at}}",
     "unfreezePending": "Dégel demandé le {{at}} : {{reason}}. Il doit être décidé par un autre planificateur.",
@@ -417,7 +420,7 @@
     "crew": "Équipe",
     "dayOff": "repos",
     "frozenJob": "Gelé",
-    "noCrews": "Aucune équipe active rattachée à ce site.",
+    "noCrews": "Aucune équipe active rattachée à ce site (les équipes sans site figurent dans l'encadré ci-dessus : rattachez-les à un site).",
     "history": "Historique de la semaine",
     "system": "Système",
     "events": {
