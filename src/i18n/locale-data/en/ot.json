@@ -404,6 +404,8 @@
       "description": "Some planned parts are not fully available in stock.",
       "createRequisition": "Create purchase requisition",
       "requisitionCreated": "Purchase requisition created",
+      "requisitionInProgress": "Purchase requisition {{number}} already in progress",
+      "requisitionCreatedNumber": "Purchase requisition {{number}} created",
       "columns": {
         "article": "Article",
         "requested": "Requested",
@@ -860,6 +862,7 @@
     "title": "Work order history",
     "permitRequired": "Permit / lockout now required",
     "permitNotRequired": "Permit / lockout no longer required",
+    "originDepannage": "Origin: breakdown",
     "actions": {
       "task_reopened": "Task reopened",
       "labor_closed_by_cancellation": "Open labour closed by the cancellation",

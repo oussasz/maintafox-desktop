@@ -56,6 +56,7 @@ import {
   WoExecutionControls,
   type WoExecutionControlsHandle,
 } from "@/components/wo/WoExecutionControls";
+import { WoPartsRequisitionEntry } from "@/components/wo/WoPartsRequisitionEntry";
 import { WoPlanningPanel } from "@/components/wo/WoPlanningPanel";
 import { printWoFiche } from "@/components/wo/WoPrintFiche";
 import { WoResumeDialog } from "@/components/wo/WoResumeDialog";
@@ -457,6 +458,12 @@ export function WoDetailDialog({
             </Card>
 
             <WoCostPanel woId={wo.id} status={wo.status_code ?? "draft"} />
+
+            {/* "Créer une demande d'achat" (L6-11): on the sheet itself; on the Plan tab of an order in
+                planning the planning panel already shows the same block. */}
+            {!(activeTab === "plan" && wo.status_code === "planning") && (
+              <WoPartsRequisitionEntry woId={wo.id} statusCode={wo.status_code ?? ""} />
+            )}
 
             <Tabs value={activeTab} onValueChange={setActiveTab}>
               <TabsList className="w-full justify-start">

@@ -339,6 +339,13 @@ fn stored_values(wo: &WorkOrder) -> Vec<(&'static str, serde_json::Value)> {
         ("requires_permit", serde_json::Value::Bool(wo.requires_permit)),
         ("service_cost", opt_f64(wo.service_cost_input)),
         ("cancel_reason", opt_text(wo.cancel_reason.as_deref())),
+        // A dépannage's "Panne constatée à" and "Machine arrêtée" (migration 277).
+        ("breakdown_at", opt_text(wo.breakdown_at.as_deref())),
+        (
+            "machine_stopped",
+            wo.machine_stopped
+                .map_or(serde_json::Value::Null, serde_json::Value::Bool),
+        ),
     ]
 }
 

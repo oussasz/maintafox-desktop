@@ -250,6 +250,52 @@ pub(crate) fn isolation_rule_breach(iso: &Payload, three_person: bool) -> Option
     lock_removal_breach(iso, point)
 }
 
+/// The zero-energy test of a verification (L4-13, migration 283, `permit::queries::
+/// verify_permit_isolation`), judged against the copy held here (`held`), never on a held row
+/// alone: an isolation newly verified (not verified here, or at another time) carries the
+/// verifier's test comment, not blank and at most `MAX_ZERO_ENERGY_NOTE_CHARS` characters. Without
+/// one it was verified on a PC before the update (`PERMIT_ZERO_ENERGY_PRE_UPGRADE`: a person checks
+/// on site, then resolves). Once verified here, the comment (or its absence, for a verification
+/// recorded here before the update, which is not judged again) is never rewritten nor blanked.
+/// `first_join`: the row is the plant's history received at this PC's first join
+/// (`sync::plant_join::first_join_snapshot_row`): a verification recorded before the update is
+/// history, not judged again (the note rules still apply).
+pub(crate) fn zero_energy_breach(
+    held: Option<&Payload>,
+    iso: &Payload,
+    first_join: bool,
+) -> Option<(&'static str, String)> {
+    let point = field(iso, "isolation_point").unwrap_or("?");
+    let note = field(iso, "zero_energy_note");
+    if let Some(h) = held.filter(|h| field(h, "verified_at").is_some()) {
+        if field(h, "zero_energy_note") != note {
+            return Some((
+                "PERMIT_ZERO_ENERGY_NOTE_CHANGED",
+                format!("isolation '{point}': the zero-energy test recorded at its verification cannot change"),
+            ));
+        }
+        if field(h, "verified_at") == field(iso, "verified_at") {
+            return None;
+        }
+    }
+    field(iso, "verified_at")?;
+    match note {
+        None if first_join && held.is_none() => None,
+        None => Some((
+            "PERMIT_ZERO_ENERGY_PRE_UPGRADE",
+            format!(
+                "isolation '{point}' verified without its zero-energy test (vérifiée avant la mise à jour, sans test \
+                 d'énergie zéro enregistré) — check on site, then resolve"
+            ),
+        )),
+        Some(n) if n.chars().count() > crate::permit::domain::MAX_ZERO_ENERGY_NOTE_CHARS => Some((
+            "PERMIT_ZERO_ENERGY_NOTE_REQUIRED",
+            format!("isolation '{point}': zero-energy test comment longer than allowed"),
+        )),
+        Some(_) => None,
+    }
+}
+
 /// The lock-removal rules a state of an isolation breaks, if any (migration 249,
 /// `permit::queries::record_permit_isolation_removed`, `force_permit_isolation_removal`,
 /// `acknowledge_forced_removal`, `record_worker_informed`). Judged on the row alone.
@@ -666,8 +712,19 @@ async fn children_with(
             continue;
         }
         let merged = overlay(rows.get(&sid), &received);
-        if table == "permit_isolations" && isolation_rule_breach(&merged, three_person).is_some() {
-            continue;
+        if table == "permit_isolations" {
+            // Judged in the isolation's own context (its batch), not the permit's being applied.
+            let first_join = !rows.contains_key(&sid)
+                && crate::sync::materialize::judged_as_row_of_batch(
+                    item.server_batch_id(),
+                    crate::sync::plant_join::first_join_snapshot_row(conn, table, &sid),
+                )
+                .await?;
+            if isolation_rule_breach(&merged, three_person).is_some()
+                || zero_energy_breach(rows.get(&sid), &merged, first_join).is_some()
+            {
+                continue;
+            }
         }
         if table == "permit_handover_logs" && handover_rule_breach(&merged).is_some() {
             continue;
@@ -1677,11 +1734,20 @@ pub(crate) async fn inbound_isolation_check(
     if let Some(verdict) = lock_record_kept(local.as_ref(), &iso) {
         return Ok(Some(verdict));
     }
+    let first_join = local.is_none()
+        && crate::sync::plant_join::first_join_snapshot_row(conn, "permit_isolations", entity_sync_id).await?;
+    // Judged after the isolation rules below (who fitted, verified and removed it): a verification by
+    // the wrong person is the conflict shown first, its zero-energy test second. A change of the note
+    // alone (actions unchanged) is judged here.
+    let zero_energy = zero_energy_breach(local.as_ref(), &iso, first_join);
     if local
         .as_ref()
         .is_some_and(|l| isolation_actions(l) == isolation_actions(&iso) && lock_record(l) == lock_record(&iso))
     {
-        return Ok(None);
+        return match zero_energy {
+            Some((c, m)) => conflict(c, m),
+            None => Ok(None),
+        };
     }
     let point = field(&iso, "isolation_point").unwrap_or(entity_sync_id).to_string();
     if let Some(l) = &local {
@@ -1697,6 +1763,9 @@ pub(crate) async fn inbound_isolation_check(
         None => false,
     };
     if let Some((c, m)) = isolation_rule_breach(&iso, three_person) {
+        return conflict(c, m);
+    }
+    if let Some((c, m)) = zero_energy {
         return conflict(c, m);
     }
     // The permit is applied before its isolations; not here yet, the apply waits for it.

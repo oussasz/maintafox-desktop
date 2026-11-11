@@ -1,4 +1,10 @@
 {
+  "actionReason": {
+    "saving": "Enregistrement en cours…",
+    "photosBusy": "Envoi des photos en cours…",
+    "catalogLoading": "Chargement des listes de référence (classe, criticité, statut) en cours…",
+    "catalogFailed": "Les listes de référence ne sont pas chargées : fermez puis rouvrez le formulaire pour réessayer."
+  },
   "criticalityReview": {
     "hint": "Criticité reprise de l'ancienne liste de criticité : un planificateur doit la fixer dans l'onglet Criticité."
   },

@@ -55,3 +55,14 @@ describe("AssetCreateForm unsaved input", () => {
     await waitFor(() => expect(closeCreateForm).toHaveBeenCalledTimes(1));
   });
 });
+
+describe("AssetCreateForm disabled reason", () => {
+  it("says the lists are loading while Créer is grey, then says nothing", async () => {
+    render(<AssetCreateForm />);
+    const create = screen.getByRole("button", { name: "createForm.submit" });
+    expect(create).toBeDisabled();
+    expect(screen.getByText("actionReason.catalogLoading")).toBeInTheDocument();
+    await waitFor(() => expect(create).toBeEnabled());
+    expect(screen.queryByText("actionReason.catalogLoading")).not.toBeInTheDocument();
+  });
+});

@@ -509,6 +509,27 @@ pub async fn require_create_at(
     enforce(db, user_id, PTW_ISSUE).await
 }
 
+/// The access map the permit drafts of a dépannage are checked with (`wo::depannage`): the user's,
+/// when the permit-issue right is entitled and licensed for them; `None` otherwise. Never a refusal:
+/// a dépannage is never refused for its permit (CMMS Advisor 2026-11-05). Where the right is held is
+/// judged per draft by [`check_create_at`], at the work order's site, as a permit created by hand.
+pub async fn permit_drafting_rights(
+    db: &DatabaseConnection,
+    cache: &RwLock<PermissionCache>,
+    user_id: i32,
+) -> Option<AccessMap> {
+    let map = match access_map(db, cache, user_id).await {
+        Ok(map) => map,
+        Err(err) => {
+            tracing::warn!(error = %err, user_id, "dépannage: access map unreadable, no permit draft");
+            return None;
+        }
+    };
+    check_anywhere(&map, PTW_ISSUE).ok()?;
+    enforce(db, user_id, PTW_ISSUE).await.ok()?;
+    Some(map)
+}
+
 /// [`check_update`], then entitlement and licence; returns the target checked.
 pub async fn require_update(
     db: &DatabaseConnection,

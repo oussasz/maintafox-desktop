@@ -6,6 +6,7 @@ import { PermissionGate } from "@/components/PermissionGate";
 import { LinkedEntityBadge } from "@/components/common/LinkedEntityBadge";
 import { DataTable } from "@/components/data/DataTable";
 import { KpiTile } from "@/components/metrics/KpiTile";
+import { BackToOriginButton } from "@/components/ui/back-to-origin-button";
 import { Button } from "@/components/ui/button";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import {
@@ -70,6 +71,8 @@ interface PmPlanDetailDialogProps {
   detailError?: unknown;
   onRetryDetail: () => void;
   onClose: () => void;
+  /** Set when the plan was opened by a link from another screen: shows "← Retour". */
+  onBackToOrigin?: () => void;
   onEditPlan: () => void;
   /** "Dupliquer ce plan": opens the copy dialog. */
   onDuplicatePlan: () => void;
@@ -105,6 +108,7 @@ export function PmPlanDetailDialog({
   detailError,
   onRetryDetail,
   onClose,
+  onBackToOrigin,
   onEditPlan,
   onDuplicatePlan,
   onDeletePlan,
@@ -403,6 +407,7 @@ export function PmPlanDetailDialog({
         onPointerDownOutside={(e) => e.preventDefault()}
       >
         <DialogHeader className="border-b px-6 py-4">
+          {onBackToOrigin ? <BackToOriginButton onClick={onBackToOrigin} /> : null}
           <DialogTitle className="flex flex-wrap items-center gap-2">
             <span className="font-mono text-base">{plan.code}</span>
             <span className="font-normal">{plan.title}</span>

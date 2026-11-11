@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { RetentionPolicyPanel } from "@/components/archive/RetentionPolicyPanel";
@@ -87,18 +87,14 @@ describe("RetentionPolicyPanel staged retention edits", () => {
     archiveMocks.updateRetentionPolicy.mockClear();
   });
 
-  it("commits retention_years only on blur (not per key stroke)", async () => {
+  it("saves nothing until 'Enregistrer', then sends only the changed fields", async () => {
     renderPanel();
-
-    await waitFor(() => {
-      expect(archiveMocks.listRetentionPolicies).toHaveBeenCalled();
-    });
-
     const retentionInput = (await screen.findByRole("spinbutton")) as HTMLInputElement;
     fireEvent.change(retentionInput, { target: { value: "15" } });
+    fireEvent.blur(retentionInput);
     expect(archiveMocks.updateRetentionPolicy).not.toHaveBeenCalled();
 
-    fireEvent.blur(retentionInput);
+    fireEvent.click(screen.getByRole("button", { name: "retention.save" }));
     await waitFor(() => {
       expect(archiveMocks.updateRetentionPolicy).toHaveBeenCalledTimes(1);
       expect(archiveMocks.updateRetentionPolicy).toHaveBeenCalledWith({
@@ -106,5 +102,72 @@ describe("RetentionPolicyPanel staged retention edits", () => {
         retention_years: 15,
       });
     });
+  });
+
+  it("asks before a change that loses data (shorter retention, no restore) (L7-20)", async () => {
+    archiveMocks.listRetentionPolicies.mockResolvedValueOnce([
+      {
+        id: 9,
+        module_code: "archive",
+        archive_class: "WO_CLOSED",
+        retention_years: 5,
+        purge_mode: "manual_approval",
+        allow_restore: true,
+        allow_purge: false,
+        requires_legal_hold_check: true,
+      },
+    ]);
+    renderPanel();
+    const retentionInput = (await screen.findByRole("spinbutton")) as HTMLInputElement;
+    fireEvent.change(retentionInput, { target: { value: "2" } });
+    fireEvent.click(screen.getByRole("button", { name: "retention.save" }));
+
+    expect(await screen.findByText("retention.warn.title")).toBeInTheDocument();
+    expect(screen.getByText("retention.warn.shorter")).toBeInTheDocument();
+    expect(archiveMocks.updateRetentionPolicy).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "retention.warn.confirm" }));
+    await waitFor(() => {
+      expect(archiveMocks.updateRetentionPolicy).toHaveBeenCalledWith({
+        policy_id: 9,
+        retention_years: 2,
+      });
+    });
+  });
+
+  it("keeps the edit of a rule the save refused", async () => {
+    archiveMocks.updateRetentionPolicy.mockRejectedValueOnce(new Error("refused"));
+    renderPanel();
+    const retentionInput = (await screen.findByRole("spinbutton")) as HTMLInputElement;
+    // The reload after the save answers only when the test says so (stored value: 1).
+    let answerReload: () => void = () => undefined;
+    const stored = await archiveMocks.listRetentionPolicies();
+    archiveMocks.listRetentionPolicies.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          answerReload = () => resolve(stored);
+        }),
+    );
+    archiveMocks.listRetentionPolicies.mockClear();
+    fireEvent.change(retentionInput, { target: { value: "15" } });
+    fireEvent.click(screen.getByRole("button", { name: "retention.save" }));
+    await waitFor(() => {
+      expect(archiveMocks.listRetentionPolicies).toHaveBeenCalledTimes(1);
+    });
+    await act(async () => {
+      answerReload();
+      await Promise.resolve();
+    });
+    // The reload has applied the stored rule; the refused edit is still shown and pending.
+    expect((screen.getByRole("spinbutton") as HTMLInputElement).value).toBe("15");
+    expect(screen.getByRole("button", { name: "retention.save" })).toBeEnabled();
+  });
+
+  it("refuses to save years that are not a whole number", async () => {
+    renderPanel();
+    const retentionInput = (await screen.findByRole("spinbutton")) as HTMLInputElement;
+    fireEvent.change(retentionInput, { target: { value: "-1" } });
+    expect(screen.getByText("retention.yearsInvalid")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "retention.save" })).toBeDisabled();
   });
 });

@@ -151,9 +151,10 @@ function article(overrides: Partial<InventoryArticleRow> = {}): InventoryArticle
   };
 }
 
-function renderWorkspace() {
+function renderWorkspace(extra: { onBackToOrigin?: () => void } = {}) {
   return render(
     <ArticleDetailWorkspace
+      {...extra}
       article={article()}
       onEdit={vi.fn()}
       onDeactivate={vi.fn()}
@@ -195,6 +196,17 @@ describe("ArticleDetailWorkspace", () => {
         article({ id: 9, article_code: "ART-009", article_name: "Bearing 6204-Z" }),
       ],
     });
+  });
+
+  it("shows Retour only when the article was opened from another screen", async () => {
+    const onBackToOrigin = vi.fn();
+    const { unmount } = renderWorkspace({ onBackToOrigin });
+    fireEvent.click(await screen.findByRole("button", { name: enCommon.action.back }));
+    expect(onBackToOrigin).toHaveBeenCalledTimes(1);
+    unmount();
+    renderWorkspace();
+    await screen.findByRole("button", { name: "Create requisition" });
+    expect(screen.queryByRole("button", { name: enCommon.action.back })).toBeNull();
   });
 
   it("keeps the panel usable when one section fails, with a retry in that section", async () => {

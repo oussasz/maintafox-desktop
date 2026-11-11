@@ -1042,10 +1042,21 @@ async fn lock_out(
     .await?;
     ctx.at(ctx.last + sim.minutes(5, 15))?;
     let rv = row_version(db, "permit_isolations", isolation_id).await?;
-    // …verified by the HSE officer (a different person).
+    // …verified by the HSE officer (a different person), after the zero-energy test.
+    let zero_energy_note = if hydraulic {
+        "Pression résiduelle purgée, manomètre à 0 bar ; essai de manœuvre du vérin sans mouvement"
+    } else {
+        "Essai de démarrage local refusé, VAT 0 V entre phases et phase-terre"
+    };
     crate::permit::queries::verify_permit_isolation(
         db,
-        de(json!({ "isolation_id": isolation_id, "expected_row_version": rv, "lock_number": null }))?,
+        de(json!({
+            "isolation_id": isolation_id,
+            "expected_row_version": rv,
+            "lock_number": null,
+            "zero_energy_confirmed": true,
+            "zero_energy_note": zero_energy_note,
+        }))?,
         hse,
     )
     .await?;

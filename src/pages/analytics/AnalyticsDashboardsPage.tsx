@@ -216,16 +216,17 @@ export function AnalyticsDashboardsPage() {
 
   /**
    * The trend of a hub tile: its sense and its "stable" band both come from the KPI registry
-   * (D14), never from this screen. `percentage` is for a figure that is itself a percentage.
+   * (D14), never from this screen. `percentage` is for a figure that is itself a percentage,
+   * `count` for a number of items (a small count changes in units, not in percent).
    */
   const hubTrend = (
     key: AnalyticsHubKpiKey,
     kpi: AnalyticsKpiValue | null | undefined,
-    percentage = false,
+    kind: "percentage" | "count" | "measure" = "measure",
   ) =>
-    percentage
+    kind === "percentage"
       ? periodTrend(kpi, hubTrendSense(key), { stablePoints: hubStableBelow(key) })
-      : periodTrend(kpi, hubTrendSense(key), undefined, hubStableBelow(key));
+      : periodTrend(kpi, hubTrendSense(key), undefined, hubStableBelow(key), kind === "count");
 
   const trendLabel = (trend: KpiTrend) => {
     if (trend.points !== undefined) {
@@ -233,6 +234,11 @@ export function AnalyticsDashboardsPage() {
       const shown = Math.round(trend.points * 10) / 10;
       return t("hub.dashboards.trend.points", {
         change: `${shown > 0 ? "+" : ""}${formatDecimal(shown, 1)}`,
+      });
+    }
+    if (trend.delta !== undefined) {
+      return t("hub.dashboards.trend.vsPrevious", {
+        change: `${trend.delta > 0 ? "+" : ""}${formatDecimal(trend.delta, 0)}`,
       });
     }
     if (trend.percent === 0) return t("hub.dashboards.trend.stable");
@@ -290,7 +296,7 @@ export function AnalyticsDashboardsPage() {
                 context: now,
                 value: count(data?.open_dis.value),
                 available: data?.open_dis.available ?? false,
-                trend: hubTrend(HUB.OPEN_DIS, data?.open_dis),
+                trend: hubTrend(HUB.OPEN_DIS, data?.open_dis, "count"),
                 onOpen: () => navigate(listLinks.requests({ scope: "open" })),
               })}
             {can(P.OT_VIEW) &&
@@ -299,7 +305,7 @@ export function AnalyticsDashboardsPage() {
                 context: openWosRule ? `${now} · ${openWosRule.label}` : now,
                 value: count(data?.open_wos.value),
                 available: data?.open_wos.available ?? false,
-                trend: hubTrend(HUB.OPEN_WOS, data?.open_wos),
+                trend: hubTrend(HUB.OPEN_WOS, data?.open_wos, "count"),
                 ...(openWosRule
                   ? { onOpen: () => navigate(listLinks.workOrders({ scope: openWosRule.scope })) }
                   : {}),
@@ -310,7 +316,7 @@ export function AnalyticsDashboardsPage() {
                 context: t("hub.dashboards.context.inService"),
                 value: count(data?.total_assets.value),
                 available: data?.total_assets.available ?? false,
-                trend: hubTrend(HUB.TOTAL_ASSETS, data?.total_assets),
+                trend: hubTrend(HUB.TOTAL_ASSETS, data?.total_assets, "count"),
                 onOpen: () => navigate(DASHBOARD_KPI_DRILL_PATH[DASHBOARD_KPI_KEYS.TOTAL_ASSETS]),
               })}
             {canAny(P.DI_VIEW, P.PM_VIEW, P.OT_VIEW) &&
@@ -319,7 +325,7 @@ export function AnalyticsDashboardsPage() {
                 context: t("hub.dashboards.context.overdue"),
                 value: count(data?.overdue_items.value),
                 available: data?.overdue_items.available ?? false,
-                trend: hubTrend(HUB.OVERDUE_ITEMS, data?.overdue_items),
+                trend: hubTrend(HUB.OVERDUE_ITEMS, data?.overdue_items, "count"),
                 // Three lists stand behind this figure: the user picks which one to open.
                 onOpen: () => setOverdueChooserOpen(true),
               })}
@@ -333,7 +339,7 @@ export function AnalyticsDashboardsPage() {
               context: now,
               value: count(data?.pm_overdue.value),
               available: data?.pm_overdue.available ?? false,
-              trend: hubTrend(HUB.PM_OVERDUE, data?.pm_overdue),
+              trend: hubTrend(HUB.PM_OVERDUE, data?.pm_overdue, "count"),
               onOpen: () => navigate(listLinks.pmDue("overdue")),
             })}
             {renderKpi({
@@ -341,7 +347,7 @@ export function AnalyticsDashboardsPage() {
               context: t("hub.dashboards.context.today"),
               value: count(data?.pm_due_today.value),
               available: data?.pm_due_today.available ?? false,
-              trend: hubTrend(HUB.PM_DUE_TODAY, data?.pm_due_today),
+              trend: hubTrend(HUB.PM_DUE_TODAY, data?.pm_due_today, "count"),
               onOpen: () => navigate(listLinks.pmDue("today")),
             })}
             {renderKpi({
@@ -349,7 +355,7 @@ export function AnalyticsDashboardsPage() {
               context: t("hub.dashboards.context.next7"),
               value: count(data?.pm_due_next_7d.value),
               available: data?.pm_due_next_7d.available ?? false,
-              trend: hubTrend(HUB.PM_DUE_NEXT_7D, data?.pm_due_next_7d),
+              trend: hubTrend(HUB.PM_DUE_NEXT_7D, data?.pm_due_next_7d, "count"),
               onOpen: () => navigate(listLinks.pmDue("next7")),
             })}
           </div>
@@ -401,7 +407,7 @@ export function AnalyticsDashboardsPage() {
                   context: fleetText.rateContext("availability", rel, horizonText),
                   value: ratio(data?.avg_availability.value),
                   available: data?.avg_availability.available ?? false,
-                  trend: hubTrend(HUB.AVG_AVAILABILITY, data?.avg_availability, true),
+                  trend: hubTrend(HUB.AVG_AVAILABILITY, data?.avg_availability, "percentage"),
                   ...ramOpen(openRamsDashboard),
                 })}
                 {renderKpi({
@@ -424,7 +430,7 @@ export function AnalyticsDashboardsPage() {
                   }),
                   value: ratio(data?.avg_data_quality.value),
                   available: data?.avg_data_quality.available ?? false,
-                  trend: hubTrend(HUB.AVG_DATA_QUALITY, data?.avg_data_quality, true),
+                  trend: hubTrend(HUB.AVG_DATA_QUALITY, data?.avg_data_quality, "percentage"),
                   ...ramOpen(openRamsEvidence),
                 })}
                 {/* From the stored snapshots (said on the card): a sample size, never quality. */}

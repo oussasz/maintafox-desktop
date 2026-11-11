@@ -1,10 +1,26 @@
 {
   "bell": {
     "title": "Notifications",
-    "aria": "Notifications ({{count}} non lues)",
+    "aria": "Notifications ({{count}} à voir)",
     "unread": "{{count}} non lue(s)",
     "toAcknowledge": "{{count}} à acquitter",
-    "openInbox": "Ouvrir la boîte de réception"
+    "openInbox": "Ouvrir la boîte de réception",
+    "alerts": {
+      "aria": "Points à surveiller",
+      "heading": "À surveiller",
+      "lateWorkOrders": {
+        "title_one": "{{count}} OT en retard",
+        "title_other": "{{count}} OT en retard",
+        "body": "Leur fin prévue est dépassée et ils ne sont pas terminés.",
+        "action": "Ouvrir les OT en retard"
+      },
+      "overdueRequests": {
+        "title_one": "{{count}} demande hors délai",
+        "title_other": "{{count}} demandes hors délai",
+        "body": "Le délai de prise en charge ou de traitement est dépassé.",
+        "action": "Ouvrir les demandes hors délai ou en risque"
+      }
+    }
   },
   "page": {
     "title": "Notifications",
@@ -84,6 +100,12 @@
     "ackRequired": "À acquitter",
     "snoozedUntil": "Reportée jusqu'au {{when}}",
     "groupByObject": "Regrouper par fiche",
+    "syncGroup": {
+      "title_one": "{{count}} conflit de synchronisation à examiner",
+      "title_other": "{{count}} conflits de synchronisation à examiner",
+      "body": "Deux postes ont modifié la même information : choisissez la bonne version.",
+      "action": "Ouvrir la synchronisation"
+    },
     "groupCount_one": "({{count}} notification)",
     "groupCount_other": "({{count}} notifications)",
     "actions": {
@@ -200,12 +222,26 @@
     "stock_count_second_approval": "Comptage retenu pour une seconde approbation",
     "retired_equipment_work": "OT sur équipement déclassé",
     "retired_equipment_request": "Demande sur équipement déclassé",
-    "wo_part_to_issue": "Pièce d’OT à sortir du magasin"
+    "wo_part_to_issue": "Pièce d’OT à sortir du magasin",
+    "wo_depannage_started": "OT dépannage démarré ou en attente de permis",
+    "wo_depannage_permit_needed": "Permis à établir — dépannage"
   },
   "messages": {
     "wo_assigned": {
       "title": "OT {{code}} affecté",
       "body": "{{title}} · responsable : {{assignee}}"
+    },
+    "wo_depannage_started": {
+      "title": "OT dépannage démarré — {{code}}",
+      "body": "{{title}} · équipement {{asset}} · panne constatée {{breakdown_at}}"
+    },
+    "wo_depannage_waiting_permit": {
+      "title": "OT dépannage en attente de permis — {{code}}",
+      "body": "{{title}} · équipement {{asset}} · panne constatée {{breakdown_at}} · permis : {{permit_types}}"
+    },
+    "wo_depannage_permit_needed": {
+      "title": "Permis à établir — dépannage {{code}}",
+      "body": "{{title}} · équipement {{asset}} · permis : {{permit_types}} · brouillon : {{drafts}}. Créez le permis pour que le travail puisse démarrer."
     },
     "wo_overdue": {
       "title": "OT {{code}} en retard",
@@ -229,7 +265,7 @@
     },
     "sync_conflict": {
       "title": "Conflit de synchronisation à examiner",
-      "body": "{{entity_type}} · {{conflict_type}} · depuis le {{created_at}}"
+      "body": "Deux postes ont modifié la même information : ouvrez la synchronisation pour choisir la bonne version. Depuis le {{created_at}}."
     },
     "di_pending_review": {
       "title": "Demande {{code}} à examiner",
@@ -503,7 +539,8 @@
       "di_safety_alert": "Toujours les personnes qui détiennent le droit de revue des demandes (di.review) et le droit d’émission des permis (ptw.issue) sur le site de la demande (et sur toute l’usine) ; si personne ne les détient, les responsables du nœud de la demande.",
       "insp_anomaly_origin_cancelled": "Toujours le responsable de l’OT issu de l’anomalie (ou de l’OT issu de sa demande) ; s’il n’y en a pas, le planificateur de l’OT et le valideur de la demande (à défaut, les responsables de son nœud).",
       "rel_decision_refused_wo_kept": "Toujours le planificateur de l’OT créé à partir de la décision (à défaut son responsable), ou les personnes qui détiennent le droit de planification préventive (pm.edit) pour une version de plan publiée, et la personne qui a proposé la décision ; si personne n’est actif ici, les personnes qui détiennent le droit d’approuver les décisions de fiabilité (ram.manage).",
-      "mobile_phone_enrolled": "Toujours les personnes qui détiennent le droit de gérer les utilisateurs (adm.users)."
+      "mobile_phone_enrolled": "Toujours les personnes qui détiennent le droit de gérer les utilisateurs (adm.users).",
+      "wo_depannage_permit_needed": "Toujours les personnes qui détiennent le droit d’émission des permis sur le site de l’OT (et sur toute l’usine) ; si personne ne le détient, les administrateurs des paramètres."
     },
     "minutes": "min",
     "minutesAfterAlert": "min après l'alerte",

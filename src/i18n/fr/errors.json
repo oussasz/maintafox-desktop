@@ -13,7 +13,10 @@
     "conflict": "Conflit de donn\u00e9es. Rechargez et r\u00e9essayez.",
     "rateLimit": "Trop de requ\u00eates. Veuillez patienter.",
     "maintenance": "Service en maintenance. R\u00e9essayez plus tard.",
-    "rightRequired": "Droit requis : {{right}}. Demandez-le à votre administrateur."
+    "rightRequired": "Droit manquant : « {{right}} ». Demandez à votre administrateur de l'ajouter à votre rôle.",
+    "rightsRequired": "Droits manquants : {{right}}. Demandez à votre administrateur de les ajouter à votre rôle.",
+    "anyRightRequired": "Il faut l'un de ces droits : {{right}}. Demandez à votre administrateur d'en ajouter un à votre rôle.",
+    "rightQuoted": "« {{right}} »"
   },
   "licence": {
     "notInForceTitle": "Licence pas en vigueur",
@@ -263,6 +266,15 @@
     "GATE_WO_DELAY_REASON_UNKNOWN": "Motif de délai introuvable : choisissez un motif de la liste.",
     "GATE_WO_TRANSITION_ILLEGAL": "Changement de statut refusé : un OT ne peut pas passer de « $t(ot:status.{{from}}) » à « $t(ot:status.{{to}}) ».",
     "GATE_WO_ACTION_NOT_ALLOWED": "Action impossible : elle n'est pas permise quand l'OT est « $t(ot:status.{{status}}) ».",
+    "GATE_WO_DEPANNAGE_BREAKDOWN_AT_REQUIRED": "Dépannage refusé : saisissez la date et l'heure auxquelles la panne a été constatée.",
+    "GATE_WO_DEPANNAGE_BREAKDOWN_AT_UNREADABLE": "Dépannage refusé : la date et l'heure saisies ne sont pas lisibles. Saisissez la date et l'heure de constat de la panne.",
+    "GATE_WO_DEPANNAGE_BREAKDOWN_AT_FUTURE": "Dépannage refusé : la panne ne peut pas être constatée dans le futur. Vérifiez la date et l'heure de constat.",
+    "GATE_WO_DEPANNAGE_MACHINE_STOPPED_REQUIRED": "Dépannage refusé : indiquez si la machine est arrêtée (oui ou non).",
+    "GATE_WO_DEPANNAGE_TITLE_REQUIRED": "Dépannage refusé : le titre est obligatoire. Décrivez la panne en quelques mots.",
+    "GATE_WO_DEPANNAGE_TYPE_NOT_CORRECTIVE": "Dépannage refusé : le type d'OT « {{type}} » n'est pas correctif. Un dépannage est un OT correctif : choisissez un type de nature corrective.",
+    "GATE_WO_DEPANNAGE_ASSIGNEE_UNKNOWN": "Dépannage refusé : la personne désignée pour l'intervention n'a pas de compte actif. Choisissez un autre intervenant.",
+    "GATE_WO_DEPANNAGE_NOT_A_DEPANNAGE": "Modification refusée : cet OT n'est pas un dépannage, il n'a pas de date de constat de panne.",
+    "GATE_WO_DEPANNAGE_CLOSED": "Modification refusée : la date de constat de la panne ne se modifie plus quand l'OT est « $t(ot:status.{{status}}) ».",
     "GATE_RECORD_CHANGED_ELSEWHERE": "Cet enregistrement a été modifié entre-temps par une autre personne ou sur un autre poste. Rechargez-le, puis refaites votre modification.",
     "GATE_FIN_CC_OWN_PARENT": "Un centre de coût ne peut pas être son propre parent.",
     "GATE_FIN_CC_INACTIVE_PARENT": "Un centre de coût actif ne peut pas dépendre d'un parent inactif.",

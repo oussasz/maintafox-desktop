@@ -24,6 +24,7 @@ import {
   periodFromMonths,
 } from "@/components/reliability/study/rams-ui";
 import { useFleetKpiText } from "@/components/reliability/use-fleet-kpi-text";
+import { ActionReason } from "@/components/ui/action-reason";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ErrorState, LoadingState, TruncationNotice } from "@/components/ui/data-state";
@@ -33,6 +34,7 @@ import { mfLayout } from "@/design-system/tokens";
 import { RELIABILITY_DATA_QUALITY_TONE, toneOf } from "@/design-system/tone";
 import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
+import { idParam } from "@/lib/list-links";
 import { cn } from "@/lib/utils";
 import { getAssetById } from "@/services/asset-service";
 import {
@@ -63,9 +65,6 @@ export function RamsFleetPage() {
   const { formatNumber, formatDecimal, formatPercent, formatDate } = useFormatters();
   const navigate = useNavigate();
   const { can } = usePermissions();
-  const [months, setMonths] = useState<RamsPeriodMonths>(RAMS_DEFAULT_MONTHS);
-  const [orgNodeId, setOrgNodeId] = useState<number | null>(null);
-  const [classId, setClassId] = useState<number | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   // Set when an analysis was asked for before any equipment was ticked.
   const [needSelection, setNeedSelection] = useState(false);
@@ -75,7 +74,29 @@ export function RamsFleetPage() {
   const [selected, setSelected] = useState<number[]>([]);
   // An equipment handed over in the address (/reliability?equipment=<id>, e.g. from the asset
   // record): selected for a study, named, or the failure shown.
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
+  // Period, organisation node and class live in the address (replace, so Retour is not polluted):
+  // coming back from a study restores them.
+  const monthsParam = Number(searchParams.get("months"));
+  const months: RamsPeriodMonths = (RAMS_PERIOD_MONTHS as readonly number[]).includes(monthsParam)
+    ? (monthsParam as RamsPeriodMonths)
+    : RAMS_DEFAULT_MONTHS;
+  const orgNodeId = idParam(searchParams.get("site"));
+  const classId = idParam(searchParams.get("class"));
+  const setQueryValue = (key: string, value: string | null) =>
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        if (value == null) next.delete(key);
+        else next.set(key, value);
+        return next;
+      },
+      { replace: true },
+    );
+  const setMonths = (m: RamsPeriodMonths) =>
+    setQueryValue("months", m === RAMS_DEFAULT_MONTHS ? null : String(m));
+  const setOrgNodeId = (id: number | null) => setQueryValue("site", id == null ? null : String(id));
+  const setClassId = (id: number | null) => setQueryValue("class", id == null ? null : String(id));
   const handedId = Number(searchParams.get("equipment") ?? "");
   const [handed, setHanded] = useState<{ id: number; code: string } | null>(null);
   const [handedError, setHandedError] = useState<unknown>(null);
@@ -203,7 +224,7 @@ export function RamsFleetPage() {
               className={mfLayout.primaryAction}
               disabled={selected.length === 0 || creating}
               onClick={() => void startStudy()}
-              title={selected.length === 0 ? t("rams.fleet.selectFirst") : undefined}
+              aria-describedby={selected.length === 0 ? "rams-study-reason" : undefined}
             >
               <ArrowRight className="h-4 w-4" aria-hidden />
               {selected.length === 0
@@ -434,6 +455,17 @@ export function RamsFleetPage() {
                   {t("rams.fleet.mixedClassesBody")}
                 </RamsCallout>
               </div>
+            ) : null}
+            {rows.length > 0 && selected.length === 0 ? (
+              <PermissionGate permission={P.RAM_ANALYZE}>
+                <ActionReason
+                  className="mb-2"
+                  data-testid="rams-study-reason"
+                  id="rams-study-reason"
+                >
+                  {t("rams.fleet.selectFirst")}
+                </ActionReason>
+              </PermissionGate>
             ) : null}
             {rows.length === 0 ? (
               <EmptyState

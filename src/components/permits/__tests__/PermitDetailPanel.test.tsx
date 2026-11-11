@@ -158,6 +158,8 @@ const VERIFIED_ISOLATION: PermitIsolationRecord = {
   verified_by_id: 8,
   applied_at: "2026-10-10T09:00:00Z",
   verified_at: "2026-10-10T09:10:00Z",
+  // Verified before the zero-energy test was recorded (L4-13): shown "not recorded".
+  zero_energy_note: null,
   removal_verified_at: null,
   removal_verified_by_id: null,
   row_version: 3,
@@ -805,5 +807,95 @@ describe("PermitDetailPanel — cancelling a permit needs a reason", () => {
     const row = screen.getByTestId("permit-cancelled");
     expect(row).toHaveTextContent(enPermits.detail.cancelNotRecorded);
     expect(row).toHaveTextContent(enPermits.detail.cancelReasonNotRecorded);
+  });
+});
+
+describe("PermitDetailPanel — verifying an isolation with the zero-energy test", () => {
+  const applied: PermitIsolationRecord = {
+    ...LOCK_ON,
+    verified_by_id: null,
+    verified_at: null,
+    verified_by_name: null,
+    row_version: 2,
+  };
+  const issued = permit({ status: "issued", activated_at: null, row_version: 4 });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    siteRights.withheld = new Set();
+    session.userId = 8;
+    svc.listPermitIsolations.mockResolvedValue([applied]);
+    svc.listPermitIsolationOptions.mockResolvedValue({ energy_types: [], isolation_methods: [] });
+    svc.listPermitSuspensions.mockResolvedValue([]);
+    svc.listPermitHandoverLogs.mockResolvedValue([]);
+    svc.listPermitHandoverRoles.mockResolvedValue([]);
+    svc.listPermitHandoverReceivers.mockResolvedValue({ items: [], total: 0 });
+  });
+
+  async function openVerify() {
+    const row = await renderPanel(issued);
+    fireEvent.click(within(row).getByRole("button", { name: enPermits.isolation.verify }));
+    const dialog = await screen.findByRole("dialog");
+    return {
+      dialog,
+      confirm: within(dialog).getByRole("button", { name: enPermits.isolation.verify }),
+      box: within(dialog).getByRole("checkbox"),
+      note: within(dialog).getByRole("textbox"),
+    };
+  }
+
+  it("keeps the confirmation disabled until the test is ticked and commented", async () => {
+    const { dialog, confirm, box, note } = await openVerify();
+    expect(dialog).toHaveTextContent(enPermits.isolation.zeroEnergyConfirm);
+    expect(confirm).toBeDisabled();
+    // A comment alone is not enough…
+    fireEvent.change(note, { target: { value: "VAT 0 V" } });
+    expect(confirm).toBeDisabled();
+    // …nor the box with a blank comment.
+    fireEvent.click(box);
+    fireEvent.change(note, { target: { value: "   " } });
+    expect(confirm).toBeDisabled();
+    fireEvent.change(note, { target: { value: "VAT 0 V" } });
+    expect(confirm).toBeEnabled();
+    expect(svc.verifyPermitIsolation).not.toHaveBeenCalled();
+  });
+
+  it("sends the confirmation and the trimmed comment", async () => {
+    svc.verifyPermitIsolation.mockResolvedValue({
+      ...applied,
+      verified_at: "2026-10-10T09:10:00Z",
+    });
+    const { confirm, box, note } = await openVerify();
+    fireEvent.click(box);
+    fireEvent.change(note, { target: { value: "  Essai de démarrage refusé, VAT 0 V " } });
+    fireEvent.click(confirm);
+    await waitFor(() =>
+      expect(svc.verifyPermitIsolation).toHaveBeenCalledWith({
+        isolation_id: 300,
+        expected_row_version: 2,
+        lock_number: null,
+        zero_energy_confirmed: true,
+        zero_energy_note: "Essai de démarrage refusé, VAT 0 V",
+      }),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("shows the recorded test under the verifier", async () => {
+    svc.listPermitIsolations.mockResolvedValue([
+      { ...LOCK_ON, zero_energy_note: "Essai de démarrage refusé, VAT 0 V" },
+    ]);
+    const row = await renderPanel();
+    expect(within(row).getByTestId("isolation-zero-energy")).toHaveTextContent(
+      fill(enPermits.isolation.zeroEnergyShown, { note: "Essai de démarrage refusé, VAT 0 V" }),
+    );
+  });
+
+  it("says the test was not recorded on a line verified before it existed", async () => {
+    svc.listPermitIsolations.mockResolvedValue([LOCK_ON]);
+    const row = await renderPanel();
+    expect(within(row).getByTestId("isolation-zero-energy")).toHaveTextContent(
+      enPermits.isolation.zeroEnergyNotRecorded,
+    );
   });
 });

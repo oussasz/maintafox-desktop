@@ -152,6 +152,8 @@ const PermitIsolationSchema = z.object({
   verified_by_id: z.number().nullable(),
   applied_at: z.string().nullable(),
   verified_at: z.string().nullable(),
+  /** The zero-energy test recorded by the verifier; null when verified before it was recorded. */
+  zero_energy_note: z.string().nullable(),
   removal_verified_at: z.string().nullable(),
   removal_verified_by_id: z.number().nullable(),
   row_version: z.number(),
@@ -203,6 +205,8 @@ const LotoCardViewSchema = z.object({
   isolation_point: z.string(),
   lock_number: z.string().nullable(),
   verifier_signature: z.string().nullable(),
+  /** The zero-energy test recorded at verification (null when not recorded). */
+  zero_energy_note: z.string().nullable(),
   expires_at: z.string().nullable(),
   /** Taken off by a forced removal (applier absent): printed "Retrait forcé". */
   forced_removal: z.boolean(),

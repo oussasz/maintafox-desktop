@@ -173,6 +173,10 @@ pub struct PermitIsolation {
     pub verified_by_id: Option<i64>,
     pub applied_at: Option<String>,
     pub verified_at: Option<String>,
+    /// The zero-energy test recorded by the verifier (migration 283): what was measured or seen.
+    /// `None` on an isolation verified before that version ("test non enregistré").
+    #[serde(default)]
+    pub zero_energy_note: Option<String>,
     pub removal_verified_at: Option<String>,
     pub removal_verified_by_id: Option<i64>,
     pub row_version: i64,
@@ -425,7 +429,18 @@ pub struct PermitIsolationActionInput {
     /// Only for `apply`: lock number fitted at application time.
     #[serde(default)]
     pub lock_number: Option<String>,
+    /// Only for `verify`: the verifier confirms the zero-energy test was done (start attempt,
+    /// absence-of-voltage measurement). Required (`Some(true)`) to verify (L4-13, migration 283).
+    #[serde(default)]
+    pub zero_energy_confirmed: Option<bool>,
+    /// Only for `verify`: the measure or observation of the zero-energy test (required, not blank,
+    /// at most `MAX_ZERO_ENERGY_NOTE_CHARS` characters).
+    #[serde(default)]
+    pub zero_energy_note: Option<String>,
 }
+
+/// The longest zero-energy test comment kept with a verified isolation.
+pub const MAX_ZERO_ENERGY_NOTE_CHARS: usize = 500;
 
 /// Cancel a planned isolation line (`cancel_permit_isolation`): the session user is recorded.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -454,6 +469,10 @@ pub struct LotoCardView {
     pub isolation_point: String,
     pub lock_number: Option<String>,
     pub verifier_signature: Option<String>,
+    /// The zero-energy test recorded at verification (migration 283); `None` when not verified or
+    /// verified before that version.
+    #[serde(default)]
+    pub zero_energy_note: Option<String>,
     pub expires_at: Option<String>,
     /// The lock was taken off by a forced removal (applier absent): shown "Retrait forcé" with who
     /// authorised it, when and why.

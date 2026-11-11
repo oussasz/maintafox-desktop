@@ -497,6 +497,12 @@ const VALUE_OVERRIDES: &[(&str, &str, &str)] = &[
     ("permit_isolations", "informed_at", "NULL"),
     ("permit_isolations", "informed_method", "NULL"),
     ("permit_isolations", "informed_in_app", "0"),
+    // Verified with its zero-energy test recorded (L4-13, `permit::sync_check::zero_energy_breach`).
+    (
+        "permit_isolations",
+        "zero_energy_note",
+        "'Essai de démarrage refusé, VAT 0 V'",
+    ),
     // A generic work order carries no plant-rule permit flag (that trace is written at conversion and
     // judged on arrival, `permit::sync_check::inbound_permit_rule_check`).
     ("work_orders", "permit_rule_code", "NULL"),
@@ -511,6 +517,14 @@ const VALUE_OVERRIDES: &[(&str, &str, &str)] = &[
     ("work_orders", "site_assigned_by_id", "NULL"),
     ("work_orders", "site_assigned_at", "NULL"),
     ("work_orders", "site_assign_reason", "NULL"),
+    // A generic work order is not a dépannage (its facts are judged on arrival,
+    // `wo::depannage::inbound_depannage_check`) and was never validated after the fact.
+    ("work_orders", "is_depannage", "0"),
+    ("work_orders", "breakdown_at", "NULL"),
+    ("work_orders", "machine_stopped", "NULL"),
+    ("work_orders", "validated_by_id", "NULL"),
+    ("work_orders", "validated_at", "NULL"),
+    ("work_orders", "validation_auto_approved", "NULL"),
     // A generic request is not flagged "sécurité": its generic work order carries no safety origin
     // (migration 255, judged on arrival).
     ("intervention_requests", "safety_flag", "0"),

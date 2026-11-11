@@ -5427,6 +5427,16 @@ export interface WorkOrder {
   permit_rule_clear_reason: string | null;
   /** The requirement came from the request it was converted from, flagged "sécurité" (cleared like a rule flag). */
   permit_from_safety_di?: boolean;
+  /** Created and started by the dépannage path: unscheduled, planning validated after the fact. */
+  is_depannage?: boolean;
+  /** "Panne constatée à" (UTC) of a dépannage. */
+  breakdown_at?: string | null;
+  /** "Machine arrêtée" of a dépannage. */
+  machine_stopped?: boolean | null;
+  /** After-the-fact validation of a dépannage (empty until validated). */
+  validated_by_id?: number | null;
+  validated_at?: string | null;
+  validation_auto_approved?: boolean | null;
   entity_sync_id?: string | null;
   closeout_validation_profile_id?: number | null;
   closeout_validation_passed?: boolean;
@@ -5768,6 +5778,58 @@ export interface WoStartInput {
   wo_id: number;
   actor_id: number;
   expected_row_version: number;
+}
+
+/**
+ * Dépannage: creates a corrective work order and starts it at once (one transaction). The actor is
+ * the signed-in user (set by the backend).
+ */
+export interface WoDepannageInput {
+  equipment_id: number;
+  /** An OT type of a corrective nature; omitted: the plant's type for immediate corrective work. */
+  type_code?: string | null;
+  urgency_code?: string | null;
+  subtype_code?: string | null;
+  title: string;
+  description?: string | null;
+  /** "Panne constatée à": required, not in the future (the screen defaults it to now). */
+  breakdown_at: string;
+  /** "Machine arrêtée": required, no default. */
+  machine_stopped: boolean;
+  /** Who carries the work out; omitted: the user (another person needs ot.emergency_assign). */
+  assignee_id?: number | null;
+  requires_permit?: boolean | null;
+}
+
+/** Where a dépannage stopped: started, or ready ("prête") and waiting for its permit. */
+export type DepannageOutcome = "started" | "waiting_for_permit";
+
+/**
+ * The dépannage just created. A dépannage is never refused because a permit is needed: it then
+ * stays ready, assigned, not started, until every required permit is live (the normal start).
+ */
+export interface WoDepannageStartResult {
+  wo: WorkOrder;
+  /** The breakdown was found more than 7 days ago (a warning). */
+  breakdown_old_warning: boolean;
+  outcome: DepannageOutcome;
+  /** Every permit type code it waits for, sorted ("En attente de permis : …"); empty when started, or when a permit of no particular type is required. */
+  required_permit_types: string[];
+  /** The permit drafts written for it, at most one per required type (only when the user may issue permits at its site). */
+  permit_draft_ids: number[];
+}
+
+/** A dépannage after its breakdown time changed, and whether that breakdown is more than 7 days old. */
+export interface WoDepannageResult {
+  wo: WorkOrder;
+  breakdown_old_warning: boolean;
+}
+
+/** Changes the "Panne constatée à" of a dépannage until it is closed (audited). */
+export interface WoBreakdownAtInput {
+  wo_id: number;
+  expected_row_version: number;
+  breakdown_at: string;
 }
 
 export interface WoPauseInput {
@@ -11308,6 +11370,11 @@ export interface PermitIsolationActionInput {
   expected_row_version: number;
   /** Only used by apply: lock number fitted at application time. */
   lock_number: string | null;
+  /** Only used by verify (required there): the zero-energy test was done (start attempt,
+   * absence-of-voltage measurement). */
+  zero_energy_confirmed?: boolean | null;
+  /** Only used by verify (required there): what was measured or seen, at most 500 characters. */
+  zero_energy_note?: string | null;
 }
 
 /** One attempt to reach an absent worker before a forced lock removal. */

@@ -890,8 +890,9 @@ mod tests {
         // rate shown before a labour entry is saved (`preview_wo_labor_rate`). Migration 275 (L3-21):
         // the parts "à sortir" list, issue and cancellation (`list_wo_parts_to_issue`,
         // `issue_wo_part_to_issue`, `cancel_wo_part_to_issue`). L5-08: whether the user carries out
-        // the work order (`get_wo_execution_standing`).
-        assert_eq!(wo_lines.len(), 81, "invoke_handler must contain exactly 81 WO commands");
+        // the work order (`get_wo_execution_standing`). Migration 277: the dépannage
+        // (`start_depannage_wo`) and its "Panne constatée à" edit (`set_wo_breakdown_at`).
+        assert_eq!(wo_lines.len(), 83, "invoke_handler must contain exactly 83 WO commands");
 
         let mut seen = std::collections::HashSet::new();
         for line in &wo_lines {

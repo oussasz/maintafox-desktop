@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import enCommon from "@/i18n/en/common.json";
 import enPermits from "@/i18n/locale-data/en/permits.json";
@@ -229,6 +229,7 @@ function isolation(overrides: Partial<PermitIsolationRecord> = {}): PermitIsolat
     verified_by_id: null,
     applied_at: "2026-10-10T09:00:00Z",
     verified_at: null,
+    zero_energy_note: null,
     removal_verified_at: null,
     removal_verified_by_id: null,
     row_version: 2,
@@ -267,6 +268,7 @@ const VERIFIED = {
   verified_by_id: 8,
   verified_at: "2026-10-10T09:10:00Z",
   verified_by_name: "Sara Sup",
+  zero_energy_note: "Start attempt refused, 0 V between phases",
 };
 
 function renderPage(path = "/permits") {
@@ -323,7 +325,7 @@ describe("PermitsPage", () => {
     expect(within(panel).getByText(enPermits.gate.unverified)).toBeInTheDocument();
   });
 
-  it("lets a second person verify, then activates the permit", async () => {
+  it("lets a second person verify with the zero-energy test, then activates the permit", async () => {
     session.userId = 8;
     svc.verifyPermitIsolation.mockImplementation(async () => {
       // The panel reloads isolations after the write.
@@ -334,13 +336,33 @@ describe("PermitsPage", () => {
 
     const panel = await openPermit();
     fireEvent.click(await within(panel).findByRole("button", { name: "Verify" }));
+    // "Verify" opens the zero-energy test: confirmed and commented before anything is written.
+    const dialog = await screen.findByRole("dialog");
+    const confirm = within(dialog).getByRole("button", { name: enPermits.isolation.verify });
+    expect(confirm).toBeDisabled();
+    fireEvent.click(within(dialog).getByRole("checkbox"));
+    expect(confirm).toBeDisabled();
+    fireEvent.change(
+      within(dialog).getByLabelText(enPermits.isolation.zeroEnergyNote, { exact: false }),
+      {
+        target: { value: "  Start attempt refused, 0 V between phases " },
+      },
+    );
+    expect(confirm).toBeEnabled();
+    expect(svc.verifyPermitIsolation).not.toHaveBeenCalled();
+    fireEvent.click(confirm);
     await waitFor(() =>
       expect(svc.verifyPermitIsolation).toHaveBeenCalledWith({
         isolation_id: 300,
         expected_row_version: 2,
         lock_number: null,
+        zero_energy_confirmed: true,
+        zero_energy_note: "Start attempt refused, 0 V between phases",
       }),
     );
+    expect(
+      await within(panel).findByText("Zero-energy test: Start attempt refused, 0 V between phases"),
+    ).toBeInTheDocument();
 
     await waitFor(() =>
       expect(
@@ -461,6 +483,52 @@ describe("PermitsPage", () => {
     expect(within(dialog).getByText(enPermits.detail.linkError)).toBeInTheDocument();
   });
 
+  describe("Retour to the previous screen (L6-03)", () => {
+    function Where() {
+      const loc = useLocation();
+      return <p data-testid="where">{`${loc.pathname}${loc.search}`}</p>;
+    }
+    function renderFromOtherScreen() {
+      return render(
+        <MemoryRouter
+          initialEntries={[
+            "/work-orders?status=in_progress&type=corrective",
+            "/permits?permit=977",
+          ]}
+          initialIndex={1}
+        >
+          <Routes>
+            <Route path="/permits" element={<PermitsPage />} />
+            <Route path="*" element={null} />
+          </Routes>
+          <Where />
+        </MemoryRouter>,
+      );
+    }
+    afterEach(() => window.history.replaceState(null, ""));
+
+    it("shows Retour on a permit opened from another screen and goes back to it, filters intact", async () => {
+      window.history.replaceState({ idx: 1 }, "");
+      svc.getWorkPermit.mockResolvedValue(permit({ id: 977, code: "PTW-2025-000977" }));
+      renderFromOtherScreen();
+      await screen.findByRole("region", { name: "Permit PTW-2025-000977" });
+      fireEvent.click(screen.getByRole("button", { name: enCommon.action.back }));
+      await waitFor(() =>
+        expect(screen.getByTestId("where").textContent).toBe(
+          "/work-orders?status=in_progress&type=corrective",
+        ),
+      );
+    });
+
+    it("shows no Retour when the permit page is the first screen", async () => {
+      window.history.replaceState(null, "");
+      svc.getWorkPermit.mockResolvedValue(permit({ id: 977, code: "PTW-2025-000977" }));
+      renderPage("/permits?permit=977");
+      await screen.findByRole("region", { name: "Permit PTW-2025-000977" });
+      expect(screen.queryByRole("button", { name: enCommon.action.back })).toBeNull();
+    });
+  });
+
   it("keeps the list when the KPIs fail, and shows the KPI failure instead of zeros", async () => {
     svc.permitComplianceKpi30d.mockRejectedValue({ code: "DATABASE_ERROR", message: "kpi" });
     renderPage();
@@ -546,6 +614,7 @@ describe("PermitsPage", () => {
       isolation_point: "MCC-1 breaker",
       lock_number: "L-12",
       verifier_signature: "Sara Sup",
+      zero_energy_note: "Start attempt refused, 0 V between phases",
       expires_at: "2099-01-01T00:00:00Z",
     };
     svc.getLotoCardView.mockResolvedValue(card);

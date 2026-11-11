@@ -17,6 +17,11 @@ import { DATE_PARAMS, DATE_TIME_PARAMS } from "@/utils/date-params";
 export const MESSAGE_KEYS = [
   "wo_assigned",
   "wo_overdue",
+  // A dépannage started, or waiting for its permit (planners, node responsibles), and the permit
+  // to issue for it (permit issuers of its site).
+  "wo_depannage_started",
+  "wo_depannage_waiting_permit",
+  "wo_depannage_permit_needed",
   "inspection_round_missed",
   "stock_critical",
   // Stock left below zero or counted twice by sync (inv.manage holders).
