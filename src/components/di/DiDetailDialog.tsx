@@ -64,6 +64,8 @@ import { describeAppError } from "@/lib/app-error";
 import { formatAssetLabel, formatOrgNodeLabel, formatPersonLabel } from "@/lib/display";
 import { cn } from "@/lib/utils";
 import { getSlaStatus } from "@/services/di-conversion-service";
+import { closeDi } from "@/services/di-review-service";
+import { getDi } from "@/services/di-service";
 import { useDiReviewStore } from "@/stores/di-review-store";
 import { useDiStore } from "@/stores/di-store";
 import { formatDate as formatDiDate, intlLocaleForLanguage } from "@/utils/format-date";
@@ -96,6 +98,9 @@ function lastTransition(rows: DiTransitionRow[], action: string): DiTransitionRo
   }
   return undefined;
 }
+
+/** Statuses in which a decision-maker can still close a request as a duplicate. */
+const MERGEABLE_STATUSES = new Set(["in_review", "awaiting_approval", "approved"]);
 
 // ── Component ───────────────────────────────────────────────────────────────
 
@@ -135,6 +140,8 @@ export function DiDetailDialog({
     null,
   );
   const [slaStatus, setSlaStatus] = useState<DiSlaStatus | null>(null);
+  const [mergeOpen, setMergeOpen] = useState(false);
+  const [mergeNote, setMergeNote] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open || !di) {
@@ -197,6 +204,48 @@ export function DiDetailDialog({
     if (di) void openDi(di.id);
   });
 
+  const duplicates = useMemo(
+    () => (di ? similar.filter((s) => s.id !== di.id && s.status !== "closed") : []),
+    [similar, di],
+  );
+
+  // Merge: the other open requests on this equipment and symptom are closed as duplicates linked to
+  // this one, which goes on to its work order. Only those a decision can still close are merged
+  // (in review, awaiting approval, approved); the rest are named, never silently skipped.
+  const handleMerge = useCallback(async () => {
+    if (!di || info?.user_id == null) return;
+    setMergeNote(null);
+    let merged = 0;
+    const failed: string[] = [];
+    for (const dup of duplicates) {
+      try {
+        const current = await getDi(dup.id);
+        if (!MERGEABLE_STATUSES.has(current.di.status)) {
+          failed.push(dup.code);
+          continue;
+        }
+        await closeDi({
+          di_id: dup.id,
+          actor_id: info.user_id,
+          expected_row_version: current.di.row_version,
+          disposition_code: "duplicate",
+          notes: t("merge.note", { code: di.code }),
+          related_di_id: di.id,
+        });
+        merged += 1;
+      } catch {
+        failed.push(dup.code);
+      }
+    }
+    setMergeNote(
+      failed.length > 0
+        ? t("merge.partial", { merged, failed: failed.join(", ") })
+        : t("merge.done", { count: merged }),
+    );
+    refreshQueues();
+    await openDi(di.id);
+  }, [di, info, duplicates, t, refreshQueues, openDi]);
+
   const handleTriageAccept = useCallback(async () => {
     if (!di) return;
     setActionError(null);
@@ -251,10 +300,6 @@ export function DiDetailDialog({
     [transitions],
   );
   const answer = useMemo(() => lastTransition(transitions, "re_submitted"), [transitions]);
-  const duplicates = useMemo(
-    () => (di ? similar.filter((s) => s.id !== di.id && s.status !== "closed") : []),
-    [similar, di],
-  );
 
   if (!di) return null;
 
@@ -414,6 +459,26 @@ export function DiDetailDialog({
                   </li>
                 ))}
               </ul>
+              {actions.close ? (
+                <div className="flex flex-wrap items-center gap-2 border-t border-surface-border pt-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="gap-1.5"
+                    onClick={() => setMergeOpen(true)}
+                  >
+                    <Copy className="h-3.5 w-3.5" aria-hidden />
+                    {t("merge.action")}
+                  </Button>
+                  <span className="text-xs text-text-secondary">{t("merge.hint")}</span>
+                </div>
+              ) : null}
+              {mergeNote ? (
+                <p role="status" className="text-xs text-text-secondary">
+                  {mergeNote}
+                </p>
+              ) : null}
             </section>
           ) : null}
 
@@ -719,6 +784,14 @@ export function DiDetailDialog({
           onOpenChange={setResubmitOpen}
         />
       ) : null}
+      <ConfirmDialog
+        open={mergeOpen}
+        onOpenChange={setMergeOpen}
+        title={t("merge.confirmTitle", { code: di.code })}
+        description={t("merge.confirmDescription", { count: duplicates.length, code: di.code })}
+        confirmLabel={t("merge.action")}
+        onConfirm={handleMerge}
+      />
       <ConfirmDialog
         open={confirmAction != null}
         onOpenChange={(next) => !next && setConfirmAction(null)}

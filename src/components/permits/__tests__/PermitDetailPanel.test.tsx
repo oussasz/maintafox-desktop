@@ -78,6 +78,68 @@ const svc = vi.hoisted(() => ({
 }));
 vi.mock("@/services/permit-service", () => svc);
 
+/** L4-03 / L4-04 / L4-12: the safety content as the server returns it (nothing blocks by default). */
+const SAFETY = {
+  permit_id: 41,
+  permit_status: "active",
+  permit_row_version: 5,
+  work_description: "Replace the pump seal",
+  risk_assessment: "Pressure",
+  preventive_measures: "Drain, lock out",
+  ppe_required: "Gloves",
+  requires_hse_approval: false,
+  requires_gas_test: false,
+  hse_approved_by_id: null,
+  hse_approved_by_name: null,
+  hse_approved_at: null,
+  hse_approval_note: null,
+  hse_self_approved: null,
+  gas_validity_hours: 4,
+  gas_limits: {
+    o2_min_percent: 19.5,
+    o2_max_percent: 23.5,
+    lel_max_percent: 10,
+    h2s_max_ppm: 10,
+    co_max_ppm: 25,
+  },
+  gas_tests: [],
+  issue_blockers: [] as { code: string; params: Record<string, string> }[],
+};
+const safetySvc = vi.hoisted(() => ({
+  getPermitSafetyContent: vi.fn(),
+  listPermitProposedIsolationPoints: vi.fn(),
+  savePermitSafetyContent: vi.fn(),
+  recordPermitHseApproval: vi.fn(),
+  recordPermitGasTest: vi.fn(),
+}));
+vi.mock("@/services/permit-safety-service", () => safetySvc);
+/** L4-05 / L4-18: the workers of the permit (none by default). */
+const workersSvc = vi.hoisted(() => ({
+  listPermitWorkers: vi.fn(),
+  addPermitWorker: vi.fn(),
+  recordPermitWorkerInduction: vi.fn(),
+  withdrawPermitWorker: vi.fn(),
+  placeMyPermitLock: vi.fn(),
+  removeMyPermitLock: vi.fn(),
+  forceRemovePermitLock: vi.fn(),
+}));
+vi.mock("@/services/permit-workers-service", () => workersSvc);
+vi.mock("@/services/personnel-service", () => ({
+  listPersonnel: vi.fn().mockResolvedValue({ items: [], total: 0 }),
+  listExternalCompanies: vi.fn().mockResolvedValue([]),
+}));
+beforeEach(() => {
+  safetySvc.getPermitSafetyContent.mockResolvedValue(SAFETY);
+  safetySvc.listPermitProposedIsolationPoints.mockResolvedValue([]);
+  workersSvc.listPermitWorkers.mockResolvedValue({
+    permit_id: 41,
+    permit_status: "active",
+    workers: [],
+    locks: [],
+    open_lock_count: 0,
+  });
+});
+
 const session = vi.hoisted(() => ({ userId: 10 }));
 vi.mock("@/hooks/use-session", () => ({
   useSession: () => ({
@@ -216,6 +278,8 @@ describe("PermitDetailPanel — lock removal with a third person", () => {
     svc.listPermitHandoverLogs.mockResolvedValue([]);
     svc.listPermitHandoverRoles.mockResolvedValue([]);
     svc.listPermitHandoverReceivers.mockResolvedValue({ items: [], total: 0 });
+    safetySvc.getPermitSafetyContent.mockResolvedValue(SAFETY);
+    safetySvc.listPermitProposedIsolationPoints.mockResolvedValue([]);
   });
 
   it("names the isolation's verifier as someone who may not confirm the removal", async () => {
@@ -510,6 +574,8 @@ describe("PermitDetailPanel — cancelling a planned isolation line", () => {
     svc.listPermitHandoverLogs.mockResolvedValue([]);
     svc.listPermitHandoverRoles.mockResolvedValue([]);
     svc.listPermitHandoverReceivers.mockResolvedValue({ items: [], total: 0 });
+    safetySvc.getPermitSafetyContent.mockResolvedValue(SAFETY);
+    safetySvc.listPermitProposedIsolationPoints.mockResolvedValue([]);
   });
 
   it("offers it on a line never applied while the permit is a draft or waiting for review", async () => {
@@ -611,6 +677,8 @@ describe("PermitDetailPanel — four-eyes approval", () => {
     svc.listPermitHandoverLogs.mockResolvedValue([]);
     svc.listPermitHandoverRoles.mockResolvedValue([]);
     svc.listPermitHandoverReceivers.mockResolvedValue({ items: [], total: 0 });
+    safetySvc.getPermitSafetyContent.mockResolvedValue(SAFETY);
+    safetySvc.listPermitProposedIsolationPoints.mockResolvedValue([]);
   });
 
   const show = async (p: WorkPermitRecord) => {
@@ -748,6 +816,8 @@ describe("PermitDetailPanel — cancelling a permit needs a reason", () => {
     svc.listPermitHandoverLogs.mockResolvedValue([]);
     svc.listPermitHandoverRoles.mockResolvedValue([]);
     svc.listPermitHandoverReceivers.mockResolvedValue({ items: [], total: 0 });
+    safetySvc.getPermitSafetyContent.mockResolvedValue(SAFETY);
+    safetySvc.listPermitProposedIsolationPoints.mockResolvedValue([]);
   });
 
   it("asks for the reason, keeps the permit on the other button and sends the reason", async () => {
@@ -830,6 +900,8 @@ describe("PermitDetailPanel — verifying an isolation with the zero-energy test
     svc.listPermitHandoverLogs.mockResolvedValue([]);
     svc.listPermitHandoverRoles.mockResolvedValue([]);
     svc.listPermitHandoverReceivers.mockResolvedValue({ items: [], total: 0 });
+    safetySvc.getPermitSafetyContent.mockResolvedValue(SAFETY);
+    safetySvc.listPermitProposedIsolationPoints.mockResolvedValue([]);
   });
 
   async function openVerify() {
@@ -897,5 +969,88 @@ describe("PermitDetailPanel — verifying an isolation with the zero-energy test
     expect(within(row).getByTestId("isolation-zero-energy")).toHaveTextContent(
       enPermits.isolation.zeroEnergyNotRecorded,
     );
+  });
+});
+
+function renderApproved() {
+  render(
+    <MemoryRouter>
+      <PermitDetailPanel
+        permit={permit({ status: "approved", issued_at: null, activated_at: null })}
+        onChanged={vi.fn()}
+      />
+    </MemoryRouter>,
+  );
+}
+
+describe("PermitDetailPanel issue gate and proposed isolation points (L4-03 / L4-04 / L4-12)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    session.userId = 10;
+    siteRights.withheld = new Set();
+    svc.listPermitIsolations.mockResolvedValue([]);
+    svc.listPermitIsolationOptions.mockResolvedValue({ energy_types: [], isolation_methods: [] });
+    svc.listPermitSuspensions.mockResolvedValue([]);
+    svc.listPermitHandoverLogs.mockResolvedValue([]);
+  });
+
+  it("greys the issue while the server reports blockers, and lists them", async () => {
+    safetySvc.getPermitSafetyContent.mockResolvedValue({
+      ...SAFETY,
+      permit_status: "approved",
+      ppe_required: null,
+      requires_gas_test: true,
+      issue_blockers: [
+        { code: "GATE_PERMIT_PPE_MISSING", params: { permit: "PTW-2026-000041" } },
+        { code: "GATE_PERMIT_GAS_TEST_MISSING", params: { permit: "PTW-2026-000041" } },
+      ],
+    });
+    renderApproved();
+    const issue = await screen.findByRole("button", { name: enPermits.transition.issue });
+    await waitFor(() => expect(issue).toBeDisabled());
+    expect(issue).toHaveAttribute("title", enPermits.safety.issueBlocked);
+    const blockers = await screen.findByTestId("permit-issue-blockers");
+    expect(blockers).toHaveTextContent("gateError.GATE_PERMIT_PPE_MISSING");
+    expect(blockers).toHaveTextContent("gateError.GATE_PERMIT_GAS_TEST_MISSING");
+    expect(screen.getByTestId("permit-gas-limits")).toHaveTextContent(/19[.,]5 .*LEL < 10 %/);
+  });
+
+  it("offers the issue when nothing blocks it", async () => {
+    safetySvc.getPermitSafetyContent.mockResolvedValue({ ...SAFETY, permit_status: "approved" });
+    renderApproved();
+    const issue = await screen.findByRole("button", { name: enPermits.transition.issue });
+    await waitFor(() => expect(issue).toBeEnabled());
+    expect(screen.queryByTestId("permit-issue-blockers")).toBeNull();
+  });
+
+  it("pre-fills the isolation form from a point of the equipment, still editable", async () => {
+    safetySvc.listPermitProposedIsolationPoints.mockResolvedValue([
+      {
+        point: {
+          id: 5,
+          entity_sync_id: "ip5",
+          equipment_id: 900,
+          point_code: "IP-01",
+          label: "Main breaker MCC-3",
+          energy_type_id: 11,
+          energy_type_code: "ELECTRICAL",
+          energy_type_label: "Électrique",
+          isolation_method_id: 12,
+          isolation_method_label: "Disjoncteur cadenassé",
+          normal_state: "Closed",
+          is_active: true,
+          row_version: 1,
+        },
+        isolation_point_text: "IP-01 — Main breaker MCC-3",
+        already_on_permit: false,
+      },
+    ]);
+    renderApproved();
+    const box = await screen.findByTestId("permit-proposed-points");
+    fireEvent.click(within(box).getByRole("button", { name: enPermits.safety.proposed.use }));
+    const point = document.getElementById("iso-point") as HTMLInputElement;
+    expect(point.value).toBe("IP-01 — Main breaker MCC-3");
+    fireEvent.change(point, { target: { value: "IP-01 — Main breaker MCC-3 (side B)" } });
+    expect(point.value).toBe("IP-01 — Main breaker MCC-3 (side B)");
   });
 });

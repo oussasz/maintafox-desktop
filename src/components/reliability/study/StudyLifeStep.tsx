@@ -25,21 +25,16 @@ import { P } from "@shared/rbac/permissions.generated";
 
 import type { DecisionPrefill } from "./DecisionDialog";
 import { CostRateChart, ReliabilityHazardChart, WeibullProbabilityPlot } from "./RamsCharts";
+import { StudyExportMenu } from "./StudyExportMenu";
 import {
   RAMS_SELECT_CLASS,
   RAMS_TABLE_FRAME,
   RamsCallout,
   RamsCard,
   RamsReadOnlyNote,
+  roundInterval,
   useRamsRight,
 } from "./rams-ui";
-
-/** Round an interval for display and for the decision (hundreds of hours above 1 000 h). */
-export function roundInterval(h: number): number {
-  if (h >= 1000) return Math.round(h / 100) * 100;
-  if (h >= 100) return Math.round(h / 10) * 10;
-  return Math.max(1, Math.round(h));
-}
 
 /** A cost counts only when it is a positive amount. */
 function positiveAmount(v: number | null): number | null {
@@ -455,7 +450,10 @@ export function StudyLifeStep({
 
       {fit && cost ? (
         <section className="rounded-lg border border-surface-border border-s-4 border-s-primary bg-surface-1 p-4">
-          <h4 className="text-sm font-semibold text-text-primary">{t("rams.memo.title")}</h4>
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <h4 className="text-sm font-semibold text-text-primary">{t("rams.memo.title")}</h4>
+            <StudyExportMenu study={study} scope="note" analysis={analysis} />
+          </div>
           {cost.proposed?.interval != null && proposed != null ? (
             <p className="mt-1 text-sm text-text-secondary">
               {t(currentInterval != null ? "rams.memo.proposeVsCurrent" : "rams.memo.propose", {

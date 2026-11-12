@@ -1149,6 +1149,81 @@ pub async fn check_person_for_permit_role(
     .await
 }
 
+/// Every requirement of a permit type (`qualification_requirements` of target `permit_type`, matched
+/// by id, and the legacy permit-type profiles matched by its code), merged per certification / skill.
+pub async fn permit_type_requirements(
+    db: &impl ConnectionTrait,
+    permit_type_id: i64,
+) -> AppResult<Vec<JobRequirement>> {
+    let sql =
+        format!("{REQUIREMENT_SELECT} AND qr.target_kind = 'permit_type' AND qr.permit_type_id = ? ORDER BY qr.id");
+    let mut rows: Vec<JobRequirement> = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            &sql,
+            [permit_type_id.into()],
+        ))
+        .await?
+        .iter()
+        .map(map_requirement)
+        .collect::<AppResult<_>>()?;
+    let code: Option<String> = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT code FROM permit_types WHERE id = ?",
+            [permit_type_id.into()],
+        ))
+        .await?
+        .map(|r| r.try_get::<String>("", "code").map_err(|e| decode_err("code", e)))
+        .transpose()?;
+    if let Some(code) = code {
+        rows.extend(permit_profile_requirements(db, &[code]).await?);
+    }
+    Ok(merge_requirements(rows))
+}
+
+/// A worker of a permit (L4-06, `permit::workers`) against the personal (`each`) requirements of
+/// the permit's type, valid on `day` (the issue date). Overrides recorded on the work order the
+/// permit is linked to (`linked_wo_id`) are honoured as they are on that work order: an override
+/// covers the gaps it listed, a new gap blocks again. A permit without a work order has no override.
+pub async fn check_person_for_permit_type(
+    db: &impl ConnectionTrait,
+    personnel_id: i64,
+    permit_type_id: i64,
+    linked_wo_id: Option<i64>,
+    day: NaiveDate,
+) -> AppResult<PersonQualificationCheck> {
+    let requirements = permit_type_requirements(db, permit_type_id).await?;
+    match linked_wo_id {
+        Some(wo_id) => {
+            check_person(
+                db,
+                personnel_id,
+                &requirements,
+                day,
+                &OverrideContext::WorkOrder(wo_id),
+                vec!["permit_worker".to_string()],
+            )
+            .await
+        }
+        None => {
+            let (full_name, employee_code) = person_identity(db, personnel_id).await?;
+            let held = load_holdings(db, personnel_id).await?;
+            let (gaps, warnings) = person_gaps(&requirements, &held, day);
+            Ok(PersonQualificationCheck {
+                personnel_id,
+                full_name,
+                employee_code,
+                roles: vec!["permit_worker".to_string()],
+                qualified: gaps.is_empty(),
+                override_info: None,
+                gaps,
+                warnings,
+            })
+        }
+    }
+}
+
 pub(crate) fn validate_role(role: &str) -> AppResult<()> {
     if LOTO_ROLES.contains(&role) {
         Ok(())

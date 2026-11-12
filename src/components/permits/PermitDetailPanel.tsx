@@ -30,6 +30,12 @@ import { PERMIT_STATUS_TONE, toneOf } from "@/design-system/tone";
 import { useSession } from "@/hooks/use-session";
 import { appErrorReason } from "@/lib/app-error";
 import {
+  type PermitSafetyContent,
+  type ProposedIsolationPoint,
+  getPermitSafetyContent,
+  listPermitProposedIsolationPoints,
+} from "@/services/permit-safety-service";
+import {
   type IsolationOption,
   type IsolationOptions,
   type LotoCardViewRecord,
@@ -48,6 +54,7 @@ import {
   recordPermitIsolationRemoved,
   setWorkPermitStatus,
   checkWorkPermitApproval,
+  getWorkPermit,
   suspendWorkPermit,
   updateWorkPermit,
   upsertPermitIsolation,
@@ -60,7 +67,9 @@ import { P } from "@shared/rbac/permissions.generated";
 
 import { ForcedRemovalDialog } from "./ForcedRemovalDialog";
 import { PermitHandoverForm } from "./PermitHandoverForm";
+import { PermitSafetyContentPanel } from "./PermitSafetyContentPanel";
 import { PermitNoSiteBadge, usePermitAccess } from "./PermitSiteScope";
+import { PermitWorkersPanel } from "./PermitWorkersPanel";
 import { WorkerInformedDialog } from "./WorkerInformedDialog";
 import { printLotoCard } from "./loto-card-print";
 import {
@@ -111,6 +120,8 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
   const access = usePermitAccess(permit);
   const canIssue = !access.loading && access.can(P.PTW_ISSUE);
   const canClose = !access.loading && access.can(P.PTW_CLOSE);
+  const canHseApprove = !access.loading && access.can(P.PTW_HSE_APPROVE);
+  const canLockOwn = !access.loading && access.can(P.PTW_LOCK_OWN);
   const me = session?.user_id ?? null;
 
   const [isolations, setIsolations] = useState<PermitIsolationRecord[]>([]);
@@ -125,6 +136,12 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
   const [options, setOptions] = useState<IsolationOptions | null>(null);
   const [optionsError, setOptionsError] = useState<unknown>(null);
   const [optionsReload, setOptionsReload] = useState(0);
+  /** L4-03 / L4-04: content, HSE approval, gas tests and the server's issue blockers. */
+  const [safety, setSafety] = useState<PermitSafetyContent | null>(null);
+  const [safetyError, setSafetyError] = useState<unknown>(null);
+  /** L4-12: the isolation points of the permit's equipment, proposed on the isolation form. */
+  const [proposed, setProposed] = useState<ProposedIsolationPoint[]>([]);
+  const [proposedError, setProposedError] = useState<unknown>(null);
 
   const [isoDraft, setIsoDraft] = useState(EMPTY_ISOLATION);
   const [isoSubmitted, setIsoSubmitted] = useState(false);
@@ -234,13 +251,29 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
         (iso.isolation_method_label ?? t("isolation.notSet"))
       : t("isolation.notSet");
 
+  const loadSafety = useCallback(async () => {
+    try {
+      setSafety(await getPermitSafetyContent(permit.id));
+      setSafetyError(null);
+    } catch (e) {
+      setSafetyError(e);
+    }
+    try {
+      setProposed(await listPermitProposedIsolationPoints(permit.id));
+      setProposedError(null);
+    } catch (e) {
+      setProposedError(e);
+    }
+  }, [permit.id]);
+
   useEffect(() => {
     setError(null);
     setChildrenError(null);
     setCardView(null);
     setEditingExpiry(null);
     void loadChildren();
-  }, [loadChildren, permit.row_version]);
+    void loadSafety();
+  }, [loadChildren, loadSafety, permit.row_version]);
 
   /** Runs a write, then reloads children; surfaces backend errors inline. */
   const run = async (fn: () => Promise<WorkPermitRecord | void>): Promise<boolean> => {
@@ -250,6 +283,7 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
       const updated = await fn();
       if (updated) onChanged(updated);
       await loadChildren();
+      await loadSafety();
       return true;
     } catch (e) {
       setError(appErrorReason(e));
@@ -282,6 +316,12 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
   const blockerFor = (to: WorkPermitStatus): string | null => {
     // Without the isolations the safety gates cannot be explained: no lifecycle step offered.
     if (childrenError != null || childrenLoading) return "gate.isolationsUnavailable";
+    // The issue gate is the server's (`permit::safety_content`): its verdict is shown, never guessed.
+    if (to === "issued") {
+      if (safetyError != null) return "safety.loadError";
+      if (safety == null) return "safety.loading";
+      if (safety.issue_blockers.length > 0) return "safety.issueBlocked";
+    }
     if (to === "active") return activationBlocker(permit, isolations);
     if (to === "closed") return closeBlocker(isolations);
     if (to === "handed_back" && handovers.length === 0) return "gate.handoverRequired";
@@ -630,6 +670,30 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
           {error}
         </p>
       ) : null}
+
+      <PermitSafetyContentPanel
+        permit={permit}
+        content={safety}
+        loadError={safetyError}
+        onRetry={() => void loadSafety()}
+        canIssue={canIssue}
+        canHseApprove={canHseApprove}
+        onSaved={(content) => {
+          setSafety(content);
+          // The content lives on the permit: its version changed (and its status, back to draft).
+          void getWorkPermit(permit.id)
+            .then(onChanged)
+            .catch((e: unknown) => setError(appErrorReason(e)));
+        }}
+      />
+
+      <PermitWorkersPanel
+        permit={permit}
+        canIssue={canIssue}
+        canClose={canClose}
+        canLockOwn={canLockOwn}
+        onChanged={() => void loadSafety()}
+      />
 
       <section className="space-y-2">
         <h3 className="text-sm font-medium text-text-primary">{t("isolation.title")}</h3>
@@ -999,6 +1063,60 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
           </div>
         ) : null}
 
+        {canIssue && setupOpen && proposedError != null ? (
+          <p role="alert" className="text-xs text-tone-danger-fg">
+            {t("safety.proposed.loadError")} {appErrorReason(proposedError)}
+          </p>
+        ) : null}
+        {canIssue && setupOpen && proposed.length > 0 ? (
+          <div
+            className="space-y-1 rounded-md border border-surface-border p-2"
+            data-testid="permit-proposed-points"
+          >
+            <p className="text-xs font-medium text-text-primary">{t("safety.proposed.title")}</p>
+            <p className="text-xs text-text-muted">{t("safety.proposed.hint")}</p>
+            <ul className="space-y-1">
+              {proposed.map((p) => (
+                <li key={p.point.id} className="flex flex-wrap items-center gap-2 text-xs">
+                  <span className="font-medium">{p.isolation_point_text}</span>
+                  <span className="text-text-muted">
+                    {(optionLabel(optionById.get(p.point.energy_type_id), lang) ||
+                      p.point.energy_type_label) ??
+                      ""}
+                    {" · "}
+                    {(optionLabel(optionById.get(p.point.isolation_method_id), lang) ||
+                      p.point.isolation_method_label) ??
+                      ""}
+                  </span>
+                  {p.point.normal_state ? (
+                    <span className="text-text-muted">
+                      {t("safety.proposed.normalState", { state: p.point.normal_state })}
+                    </span>
+                  ) : null}
+                  {p.already_on_permit ? (
+                    <Badge variant="outline">{t("safety.proposed.alreadyOnPermit")}</Badge>
+                  ) : (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() =>
+                        setIsoDraft({
+                          point: p.isolation_point_text,
+                          energy: String(p.point.energy_type_id),
+                          method: String(p.point.isolation_method_id),
+                          lock: "",
+                        })
+                      }
+                    >
+                      {t("safety.proposed.use")}
+                    </Button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
         {canIssue && setupOpen ? (
           <form
             className="grid gap-2 rounded-md border border-dashed border-surface-border p-2 sm:grid-cols-4"

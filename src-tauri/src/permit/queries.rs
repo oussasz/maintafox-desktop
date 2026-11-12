@@ -161,7 +161,7 @@ fn now_ts() -> String {
 
 /// Parses an RFC 3339 timestamp and returns it in the canonical stored form
 /// (`%Y-%m-%dT%H:%M:%SZ`, UTC) so lexical comparisons against `now_ts()` are valid.
-fn normalize_ts(field: &str, value: &str) -> AppResult<String> {
+pub(crate) fn normalize_ts(field: &str, value: &str) -> AppResult<String> {
     chrono::DateTime::parse_from_rfc3339(value.trim())
         .map(|dt| dt.with_timezone(&Utc).format("%Y-%m-%dT%H:%M:%SZ").to_string())
         .map_err(|_| {
@@ -776,12 +776,18 @@ pub(crate) async fn activation_ready(db: &impl ConnectionTrait, wp: &WorkPermit)
             ));
         }
     }
+    // L4-04 (CMMS Advisor 2026-11-11): a permit needing a gas test is used (activated, reinstated,
+    // its work started or resumed) only on a valid reading: within the limits and younger than the
+    // re-test interval; a break longer than the interval needs a new test.
+    crate::permit::safety_content::gas_ready(db, wp.id).await?;
     Ok(())
 }
 
 /// Close gate (P0-8): every isolation must have its lock removal verified (a cancelled planned line
 /// was never fitted: nothing to remove).
 async fn close_ready(db: &impl ConnectionTrait, permit_id: i64) -> AppResult<()> {
+    // Group lockout (L4-18): every worker's padlock is off the box.
+    crate::permit::workers::ensure_no_personal_lock_on(db, permit_id).await?;
     let pending = count_isolations_where(
         db,
         permit_id,
@@ -2149,6 +2155,10 @@ async fn update_work_permit_in(
     if back_to_draft {
         clear_review_record(db, input.id).await?;
     }
+    // The HSE approval and the gas tests judged the former equipment or site (review of L4-03/04).
+    if target.equipment_changes || target.site_changes {
+        reset_safety_record(db, input.id).await?;
+    }
     let updated = require_work_permit(db, input.id).await?;
     if target.equipment_changes || target.site_changes {
         audit_equipment_change(db, &current, &updated, actor_id).await?;
@@ -2158,12 +2168,25 @@ async fn update_work_permit_in(
 
 /// A permit back to draft is submitted again (four-eyes, migration 244): who submitted it and any
 /// approval are cleared, in the transaction that sends it back.
-async fn clear_review_record(db: &impl ConnectionTrait, permit_id: i64) -> AppResult<()> {
+pub(crate) async fn clear_review_record(db: &impl ConnectionTrait, permit_id: i64) -> AppResult<()> {
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE work_permits SET submitted_by_id = NULL, submitted_at = NULL, approved_by_id = NULL, \
          approved_at = NULL, self_approved = NULL WHERE id = ? AND status = 'draft'",
         [permit_id.into()],
+    ))
+    .await?;
+    reset_safety_record(db, permit_id).await
+}
+
+/// The permit's HSE approval is cleared and its gas tests taken until now stop counting
+/// (`safety_reset_at`, `permit::safety_content::safety_content_since`): after a return to draft or a
+/// change of equipment or site, they judged another permit. The readings stay as history.
+pub(crate) async fn reset_safety_record(db: &impl ConnectionTrait, permit_id: i64) -> AppResult<()> {
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE work_permits SET hse_approved_by_id = NULL, hse_approved_at = NULL, hse_approval_note = NULL, hse_self_approved = NULL, safety_reset_at = ? WHERE id = ?",
+        [now_ts().into(), permit_id.into()],
     ))
     .await?;
     Ok(())
@@ -2330,6 +2353,12 @@ async fn set_work_permit_status_in(
         }
         ("pending_review", "approved") => {
             self_approved = Some(four_eyes_approval(db, &current, actor_id).await?);
+        }
+        // L4-03 / L4-04 (migration 290): the only way into `issued`. The permit says what work is
+        // done, its risks, preventive measures and PPE; its HSE approval is recorded when its type
+        // requires one; a permit needing a gas test has one, its latest reading within the limits.
+        ("approved", "issued") => {
+            crate::permit::safety_content::issue_ready(db, current.id).await?;
         }
         ("issued", "active") => {
             // No open-ended permit is activated (permits created before expiry was required).
@@ -2765,6 +2794,20 @@ pub async fn list_lock_removers(
     offset: Option<u64>,
 ) -> AppResult<HandoverReceiverPage> {
     let iso = get_permit_isolation(db, isolation_id).await?;
+    lock_removers_except(db, actor_id, iso.applied_by_id, search, limit, offset).await
+}
+
+/// Who may be named to take off a lock (an isolation lock, or a personal padlock of the group lock
+/// box, `permit::workers`) in a forced removal: active accounts other than the person asking and
+/// the lock's owner (`owner`), by name, paged with the total.
+pub(crate) async fn lock_removers_except(
+    db: &impl ConnectionTrait,
+    actor_id: i64,
+    owner: Option<i64>,
+    search: Option<String>,
+    limit: Option<u64>,
+    offset: Option<u64>,
+) -> AppResult<HandoverReceiverPage> {
     let name = handover_person_name_sql("ua");
     let rows = db
         .query_all(Statement::from_sql_and_values(
@@ -2773,7 +2816,7 @@ pub async fn list_lock_removers(
                 "SELECT ua.id, {name} AS display_name FROM user_accounts ua \
                  WHERE ua.is_active = 1 AND ua.deleted_at IS NULL AND ua.id <> ? AND ua.id IS NOT ?"
             ),
-            [actor_id.into(), opt_i64(iso.applied_by_id)],
+            [actor_id.into(), opt_i64(owner)],
         ))
         .await?;
     people_page(&rows, search, limit, offset)
@@ -3285,7 +3328,9 @@ async fn apply_permit_isolation_in(
 pub const CODE_WORKER_NOT_INFORMED: &str = "PERMIT_WORKER_NOT_INFORMED";
 
 /// A forced removal of `worker`'s lock that they were not told of yet, other than the isolation
-/// `except`: `(permit code, isolation point)`, the oldest first.
+/// `except`: `(permit code, isolation point)`, the oldest first. A personal padlock of a group lock
+/// box removed by force (`permit::workers`, L4-18) counts the same way (its padlock number as the
+/// point): the worker fits no lock and places no padlock until told.
 pub(crate) async fn open_forced_removal_of(
     db: &impl ConnectionTrait,
     worker: i64,
@@ -3294,12 +3339,8 @@ pub(crate) async fn open_forced_removal_of(
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT wp.code AS code, pi.isolation_point AS point FROM permit_isolations pi \
-               JOIN work_permits wp ON wp.id = pi.permit_id \
-              WHERE pi.applied_by_id = ? AND pi.forced_removal = 1 AND pi.informed_at IS NULL \
-                AND pi.id IS NOT ? \
-              ORDER BY pi.removed_at, pi.id LIMIT 1",
-            [worker.into(), opt_i64(except)],
+            "SELECT code, point FROM (SELECT wp.code AS code, pi.isolation_point AS point, pi.removed_at AS removed_at, 0 AS kind, pi.id AS id FROM permit_isolations pi JOIN work_permits wp ON wp.id = pi.permit_id WHERE pi.applied_by_id = ? AND pi.forced_removal = 1 AND pi.informed_at IS NULL AND pi.id IS NOT ? UNION ALL SELECT wp.code AS code, pl.lock_number AS point, pl.removed_at AS removed_at, 1 AS kind, pl.id AS id FROM permit_personal_locks pl JOIN work_permits wp ON wp.id = pl.permit_id WHERE pl.placed_by_id = ? AND pl.forced_removal = 1 AND pl.informed_at IS NULL) ORDER BY removed_at, kind, id LIMIT 1",
+            [worker.into(), opt_i64(except), worker.into()],
         ))
         .await?;
     row.map(|r| -> AppResult<(String, String)> {
@@ -3575,6 +3616,8 @@ async fn ensure_lock_removable(
         ));
     }
     ensure_linked_work_not_running(db, permit).await?;
+    // Group lockout (L4-18): no isolation lock comes off while a worker's padlock is on the box.
+    crate::permit::workers::ensure_no_personal_lock_on(db, permit.id).await?;
     Ok(applier)
 }
 
@@ -3647,7 +3690,7 @@ pub const AUDIT_WORKER_ACKNOWLEDGED: &str = "permit.forced_removal_acknowledged"
 pub const AUDIT_WORKER_INFORMED: &str = "permit.forced_removal_worker_informed";
 
 /// Latest time this PC accepts for a time given by a person (the tolerated clock difference).
-fn latest_accepted_ts() -> String {
+pub(crate) fn latest_accepted_ts() -> String {
     (crate::clock::now() + Duration::minutes(crate::settings::site::MAX_CLOCK_SKEW_MINUTES))
         .format("%Y-%m-%dT%H:%M:%SZ")
         .to_string()
@@ -3657,7 +3700,7 @@ fn latest_accepted_ts() -> String {
 /// one, at most [`super::domain::MAX_CONTACT_ATTEMPTS`]; each at a readable time not in the future,
 /// with a method of the plant's list (`permit::contact_methods`) and a result of 1 to
 /// [`super::domain::MAX_CONTACT_RESULT_CHARS`] characters.
-async fn checked_contact_attempts(
+pub(crate) async fn checked_contact_attempts(
     db: &impl ConnectionTrait,
     attempts: &[super::domain::ContactAttempt],
 ) -> AppResult<Vec<super::domain::ContactAttempt>> {
@@ -3695,7 +3738,7 @@ async fn checked_contact_attempts(
 }
 
 /// An active account with this id (a person who can be named on a lock record).
-async fn active_user(db: &impl ConnectionTrait, user_id: i64) -> AppResult<bool> {
+pub(crate) async fn active_user(db: &impl ConnectionTrait, user_id: i64) -> AppResult<bool> {
     Ok(db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,

@@ -39,6 +39,9 @@ pub(crate) const FOUNDATION_TYPES: &[&str] = &[
     "equipment_hierarchy",
     "equipment_meters",
     "asset_meter_readings",
+    "equipment_isolation_points",
+    "asset_five_why_analyses",
+    "asset_corrective_actions",
     "equipment_lifecycle_events",
     "asset_document_links",
     "asset_external_ids",
@@ -204,6 +207,9 @@ pub(crate) const INSPECTION_PERMIT_TYPES: &[&str] = &[
     "permit_handover_logs",
     "permit_isolations",
     "permit_suspensions",
+    "permit_gas_tests",
+    "permit_workers",
+    "permit_personal_locks",
     "loto_card_print_jobs",
 ];
 
@@ -425,6 +431,16 @@ pub(crate) async fn round_trip(entity_types: &[&str]) {
         .await;
         *row = created_row(&a, row.entity_type, row.rowid).await.expect("verification");
     }
+    // A personal padlock is placed by the worker of its line (`permit::workers_sync`): the generic
+    // placer's account is linked to the card of the padlock's worker.
+    for row in created.iter().filter(|r| r.entity_type == "permit_personal_locks") {
+        exec(
+            &a,
+            "UPDATE user_accounts SET personnel_id = (SELECT pw.personnel_id FROM permit_personal_locks pl JOIN permit_workers pw ON pw.id = pl.worker_id WHERE pl.rowid = ?) WHERE id = (SELECT placed_by_id FROM permit_personal_locks WHERE rowid = ?)",
+            vec![row.rowid.into(), row.rowid.into()],
+        )
+        .await;
+    }
     // Personal rows travel only to devices where their owner is signed in or trusted: they are
     // given to the seeded administrator (same identity on A and B), who is trusted on B. All rows
     // of personal tables move (a personal row's personal parent belongs to the same person); a
@@ -512,7 +528,14 @@ pub(crate) async fn round_trip(entity_types: &[&str]) {
     // `append_only_rows_are_never_deleted_by_sync`); media attachments are the exception. Permits
     // past draft with its isolations and suspensions, permit types and qualification requirements
     // are not deleted either (`permit::sync_check::inbound_delete_check`; the generic rows carry no
-    // real permit status).
+    // real permit status). The workers and personal padlocks of permits are withdrawn and taken
+    // off, never deleted: their deletes are sent and must be refused on B, the rows kept there.
+    const REFUSED_DELETE_TYPES: &[&str] = &["permit_workers", "permit_personal_locks"];
+    let refused: Vec<_> = created
+        .iter()
+        .filter(|row| REFUSED_DELETE_TYPES.contains(&row.entity_type))
+        .cloned()
+        .collect();
     let created: Vec<_> = created
         .into_iter()
         .filter(|row| !SINGLETON_TYPES.contains(&row.entity_type))
@@ -543,10 +566,49 @@ pub(crate) async fn round_trip(entity_types: &[&str]) {
     let pushed = server.exchange("A", &a).await;
     check_exchange(&pushed, "delete/push", &mut problems);
     let received = server.exchange("B", &b).await;
-    check_exchange(&received, "delete/receive", &mut problems);
+    if refused.is_empty() {
+        check_exchange(&received, "delete/receive", &mut problems);
+    } else {
+        // Each refused delete is one conflict on B, nothing else.
+        let m = &received.materialized;
+        if usize::try_from(m.conflicts).ok() != Some(refused.len())
+            || !m.errors.is_empty()
+            || m.deferred > 0
+            || received.conflicts > 0
+        {
+            problems.push(format!(
+                "delete/receive: expected {} refused deletes, got materialize conflicts={} deferred={} errors={:?} server conflicts={}",
+                refused.len(),
+                m.conflicts,
+                m.deferred,
+                m.errors,
+                received.conflicts
+            ));
+        }
+        let refusals = super::queries::list_sync_conflicts(
+            &b,
+            super::domain::SyncConflictFilter {
+                conflict_type: Some("PERMIT_DELETE_REFUSED".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("conflicts");
+        for row in &refused {
+            if !refusals.iter().any(|c| c.entity_sync_id == row.entity_sync_id) {
+                problems.push(format!("{} delete not refused on B", row.entity_type));
+            }
+        }
+    }
     for row in &created {
+        let kept = REFUSED_DELETE_TYPES.contains(&row.entity_type);
         match current_payload(&b, row.entity_type, &row.entity_sync_id, &row.payload).await {
-            Ok(None) => {}
+            Ok(None) if !kept => {}
+            Ok(Some(_)) if kept => {}
+            other if kept => problems.push(format!(
+                "{} not kept on B after a refused delete: {other:?}",
+                row.entity_type
+            )),
             other => problems.push(format!("{} still on B after delete: {other:?}", row.entity_type)),
         }
     }

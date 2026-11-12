@@ -305,10 +305,135 @@ pub async fn list_rcm_decision_logic(db: &impl ConnectionTrait, study_id: i64) -
     rows.iter().map(map_logic).collect()
 }
 
+/// Running to failure is refused for a critical FMECA row: its RPN is at or above the plant's
+/// critical RPN (setting `ram.fmeca_rpn_critical_threshold`, the threshold the FMECA step and the
+/// work-order close use). L2-15.
+#[must_use]
+pub fn run_to_failure_refused(tactic: &str, rpn: i64, rpn_threshold: i64) -> bool {
+    tactic == TACTIC_RUN_TO_FAILURE && rpn >= rpn_threshold
+}
+
+/// Sync conflict of a received RCM decision that leaves a critical mode to run to failure.
+pub const RCM_RUN_TO_FAILURE_CRITICAL: &str = "RCM_RUN_TO_FAILURE_CRITICAL";
+
+/// RPN of an FMECA row and the plant's critical RPN, when the row exists.
+async fn critical_rpn<C: ConnectionTrait>(
+    conn: &C,
+    sql_where: &str,
+    key: sea_orm::Value,
+) -> AppResult<Option<(i64, i64)>> {
+    let row = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT COALESCE(rpn, severity * occurrence * detectability) AS rpn FROM fmeca_items WHERE {sql_where}"
+            ),
+            [key],
+        ))
+        .await?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let rpn: Option<i64> = row.try_get("", "rpn")?;
+    let threshold = crate::reliability::advanced_rams::queries::fmeca_rpn_critical_threshold_i64_in(conn).await?;
+    Ok(Some((rpn.unwrap_or(0), threshold)))
+}
+
+/// Refuses `tactic` when it runs the FMECA row `fmeca_item_id` to failure and that row is critical.
+pub(crate) async fn check_critical_run_to_failure<C: ConnectionTrait>(
+    conn: &C,
+    fmeca_item_id: Option<i64>,
+    tactic: &str,
+) -> AppResult<()> {
+    if tactic != TACTIC_RUN_TO_FAILURE {
+        return Ok(());
+    }
+    let Some(item) = fmeca_item_id else {
+        return Ok(());
+    };
+    if let Some((rpn, threshold)) = critical_rpn(conn, "id = ?", item.into()).await? {
+        if run_to_failure_refused(tactic, rpn, threshold) {
+            return Err(AppError::ValidationFailed(vec![format!(
+                "GATE_REL_RCM_RUN_TO_FAILURE_CRITICAL: RPN {rpn} is at or above the critical RPN {threshold}: \
+                 running to failure is not accepted for this mode. Choose a task or a modification."
+            )]));
+        }
+    }
+    Ok(())
+}
+
+/// The FMECA row an RCM decision answers, if any.
+pub(crate) async fn linked_fmeca_item<C: ConnectionTrait>(conn: &C, decision_id: i64) -> AppResult<Option<i64>> {
+    let row = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT fmeca_item_id FROM rcm_decisions WHERE id = ?",
+            [decision_id.into()],
+        ))
+        .await?;
+    Ok(match row {
+        Some(r) => r.try_get::<Option<i64>>("", "fmeca_item_id")?,
+        None => None,
+    })
+}
+
+/// A received RCM decision (sync) that runs a critical FMECA row to failure is a conflict, as it
+/// is refused when recorded here (`sync::apply_hooks`). A row already held here with the same
+/// tactic and row is not judged again.
+pub(crate) async fn inbound_rcm_decision_check<C: ConnectionTrait>(
+    conn: &C,
+    entity_sync_id: &str,
+    received: &serde_json::Map<String, serde_json::Value>,
+) -> AppResult<Option<crate::settings::site::InboundVerdict>> {
+    let held = crate::permit::sync_check::local_wire(conn, "rcm_decisions", entity_sync_id).await?;
+    let row = crate::permit::sync_check::overlay(held.as_ref(), received);
+    let text = |p: &serde_json::Map<String, serde_json::Value>, k: &str| {
+        p.get(k).and_then(serde_json::Value::as_str).map(str::to_string)
+    };
+    if text(&row, "selected_tactic").as_deref() != Some(TACTIC_RUN_TO_FAILURE) {
+        return Ok(None);
+    }
+    let Some(item_sync) = text(&row, "fmeca_item_sync_id") else {
+        return Ok(None);
+    };
+    if let Some(h) = held.as_ref() {
+        if text(h, "selected_tactic").as_deref() == Some(TACTIC_RUN_TO_FAILURE)
+            && text(h, "fmeca_item_sync_id").as_deref() == Some(item_sync.as_str())
+        {
+            return Ok(None);
+        }
+    }
+    let Some((rpn, threshold)) = critical_rpn(conn, "entity_sync_id = ?", item_sync.into()).await? else {
+        return Ok(None);
+    };
+    if !run_to_failure_refused(TACTIC_RUN_TO_FAILURE, rpn, threshold) {
+        return Ok(None);
+    }
+    Ok(Some(crate::settings::site::InboundVerdict::Conflict {
+        code: RCM_RUN_TO_FAILURE_CRITICAL,
+        message: format!(
+            "an RCM decision received leaves a critical FMECA mode (RPN {rpn}, critical from {threshold}) to run to \
+             failure, which is refused here"
+        ),
+    }))
+}
+
 /// Runs the decision logic and records answers, path, consequence, recommendation and the
-/// retained tactic. Choosing another tactic than the recommendation requires a justification.
+/// retained tactic. Choosing another tactic than the recommendation requires a justification;
+/// a critical FMECA row is never run to failure.
 pub async fn apply_rcm_decision_logic(
     db: &DatabaseConnection,
+    input: ApplyRcmLogicInput,
+) -> AppResult<RcmDecisionLogic> {
+    let txn = db.begin().await?;
+    let out = apply_rcm_decision_logic_in(&txn, input).await?;
+    txn.commit().await?;
+    Ok(out)
+}
+
+/// [`apply_rcm_decision_logic`] on a connection the caller holds (a transaction).
+pub(crate) async fn apply_rcm_decision_logic_in<C: ConnectionTrait>(
+    conn: &C,
     input: ApplyRcmLogicInput,
 ) -> AppResult<RcmDecisionLogic> {
     let rec = recommend_tactic(&input.answers);
@@ -343,8 +468,9 @@ pub async fn apply_rcm_decision_logic(
             "GATE_REL_REDESIGN_COMPULSORY: Redesign is compulsory: no task brings the safety or environmental risk to a tolerable level.".into(),
         ]));
     }
-    let txn = db.begin().await?;
-    let aff = txn
+    let item = linked_fmeca_item(conn, input.decision_id).await?;
+    check_critical_run_to_failure(conn, item, &selected).await?;
+    let aff = conn
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "UPDATE rcm_decisions SET consequence_category = ?, selected_tactic = ?, justification = ?, \
@@ -369,9 +495,7 @@ pub async fn apply_rcm_decision_logic(
                 .into(),
         ]));
     }
-    let out = get_rcm_decision_logic(&txn, input.decision_id).await?;
-    txn.commit().await?;
-    Ok(out)
+    get_rcm_decision_logic(conn, input.decision_id).await
 }
 
 // ── Actions: PM revision / work order from an FMECA item or an RCM decision ────────────────

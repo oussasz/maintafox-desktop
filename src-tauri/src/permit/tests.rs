@@ -149,6 +149,11 @@ pub(super) async fn set_status_as(
     status: &str,
     actor: i64,
 ) -> Result<WorkPermit, AppError> {
+    // The issue gate (L4-03 / L4-04): the permit says what is done, its risks, measures and PPE,
+    // with its HSE approval and gas test when needed.
+    if status == "issued" {
+        crate::permit::safety_content::fill_issue_requirements_for_tests(db, wp.id).await;
+    }
     queries::set_work_permit_status(
         db,
         WorkPermitStatusInput {

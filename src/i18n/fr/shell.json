@@ -126,6 +126,7 @@
       "DECISION_NOT_DESIGNATED_APPROVER": "Une décision de fiabilité approuvée par une autre personne que l'approbateur désigné. Gardez la décision de ce poste : elle est alors refusée sur tous les postes",
       "DECISION_APPROVER_UNAUTHORISED": "Une décision de fiabilité approuvée par quelqu'un sans le droit d'approuver (ram.manage, toute l'usine) ici. Le conflit se ferme seul si le droit arrive ; sinon gardez la décision de ce poste",
       "DECISION_APPLIER_UNAUTHORISED": "Une décision de fiabilité appliquée par quelqu'un sans les droits d'appliquer (ram.manage et pm.edit ou ot.create) ici. Le conflit se ferme seul si les droits arrivent ; sinon gardez la décision de ce poste",
+      "RCM_RUN_TO_FAILURE_CRITICAL": "Une décision MBF reçue d'un autre poste laisse un mode AMDEC critique (IPR au niveau du seuil critique de l'usine ou au-dessus) fonctionner jusqu'à la panne, ce qui est refusé ici : vérifiez la décision avec l'analyste fiabilité avant de décider",
       "WO_PART_LINE_HAS_USE": "Une ligne de pièce planifiée a été annulée sur un autre poste, mais des pièces ont déjà été utilisées ou sorties du magasin pour elle ici : vérifiez la ligne avec le planificateur et le magasin avant de décider",
       "SITE_SETTING_UNAUDITED": "Une règle de site modifiée sans sa trace d'audit (réauthentification, motif, droit paramètres)",
       "SITE_SETTING_INVALID": "Une règle de site dont la valeur ou la date est illisible",
@@ -167,7 +168,7 @@
       "PERMIT_ISOLATION_CANCEL_APPLIED": "Une ligne d'isolement annulée sur un autre poste alors qu'elle a été posée (ici ou là-bas)",
       "PERMIT_ISOLATION_CANCEL_WRONG_STATUS": "Une ligne d'isolement annulée sur un autre poste alors que son permis n'est plus en brouillon ni en attente de revue ici",
       "PERMIT_ISOLATION_CANCEL_INVALID": "Une ligne d'isolement annulée sans auteur ni date lisible",
-      "PERMIT_DELETE_REFUSED": "Un permis, isolement ou suspension qui protège encore le travail a été supprimé ailleurs",
+      "PERMIT_DELETE_REFUSED": "Un permis, isolement, suspension, intervenant de permis ou cadenas personnel qui protège encore le travail a été supprimé ailleurs",
       "QUALIFICATION_OVERRIDE_USE_PERSON": "Une dérogation de qualification sur un compte relié à une fiche personnel",
       "SYNC_GROUP_REFUSED": "Une modification est arrivée avec des lignes dont elle dépend, et l'une d'elles enfreint une règle",
       "SYNC_TIME_INCONSISTENT": "Une modification reçue porte des dates incohérentes (ou dans le futur)",
@@ -253,7 +254,27 @@
       "SITE_ASSIGNMENT_NODE_INVALID": "Un site donné sur un autre poste à un enregistrement sans site, sur une unité supprimée ici",
       "SITE_ASSIGNMENT_NOT_ALLOWED": "Un site donné sur un autre poste à un enregistrement sans site, par une personne sans le droit d'administration de l'organisation pour toute l'usine",
       "SITE_SET_WITHOUT_ASSIGNMENT": "Un OT ou une demande sans site reçu avec un site, sans l'attribution de site d'un administrateur de l'organisation",
-      "other": "À examiner"
+      "other": "À examiner",
+      "PERMIT_ISSUE_CONTENT_MISSING": "Un permis délivré sur un autre poste sans son contenu (travail, analyse des risques, mesures de prévention, EPI)",
+      "PERMIT_ISSUE_HSE_APPROVAL_MISSING": "Un permis délivré sur un autre poste sans l'approbation HSE que son type exige",
+      "PERMIT_ISSUE_GAS_TEST_MISSING": "Un permis délivré sur un autre poste sans le test atmosphérique qu'il exige",
+      "PERMIT_ISSUE_GAS_TEST_OUT_OF_LIMITS": "Un permis délivré sur un autre poste sur un test atmosphérique hors des limites fixées ici",
+      "PERMIT_ISSUE_HSE_SELF_APPROVAL": "Un permis délivré sur un autre poste dont l'approbation HSE a été enregistrée par son rédacteur ou la personne qui l'a soumis, sans dérogation aux 4 yeux sur son site ici",
+      "PERMIT_ISSUE_GAS_TEST_EXPIRED": "Un permis délivré sur un autre poste sur un test atmosphérique plus ancien que la durée de validité fixée ici",
+      "PERMIT_ACTIVE_GAS_TEST_INVALID": "Un permis activé sur un autre poste sans test atmosphérique valable (manquant, périmé ou hors limites) au moment de l'activation",
+      "PERMIT_ISSUE_WORKER_INDUCTION_MISSING": "Un permis délivré sur un autre poste avec un intervenant extérieur sans accueil sécurité",
+      "PERMIT_ISSUE_WORKER_QUALIFICATION": "Un permis délivré sur un autre poste avec un intervenant sans les habilitations valables exigées par son type",
+      "PERMIT_PERSONAL_LOCK_RECORD_CHANGED": "La pose, le retrait d'un cadenas personnel ou l'information de son propriétaire, connus ici, ont été modifiés",
+      "PERMIT_PERSONAL_LOCK_PLACEMENT_INVALID": "Un cadenas personnel posé sans qui ni quand, ou à une heure illisible ou future",
+      "PERMIT_PERSONAL_LOCK_NOT_OWNER": "Un cadenas personnel posé par une autre personne que l'intervenant de sa ligne",
+      "PERMIT_PERSONAL_LOCK_PERMIT_NOT_ISSUED": "Un cadenas personnel posé sur un autre poste sur un permis non délivré ici",
+      "PERMIT_WORKER_RECORD_CHANGED": "L'identité, l'accueil sécurité ou le retrait d'un intervenant de permis, connus ici, ont été modifiés",
+      "PERMIT_WORKER_WITHDRAWN_LOCK_ON": "Un intervenant retiré du permis alors que son cadenas est encore sur la boîte de consignation ici",
+      "PERMIT_ISOLATION_PERSONAL_LOCKS_ON": "Un cadenas d'isolement retiré alors qu'un cadenas personnel est encore sur la boîte de consignation ici",
+      "PERMIT_CLOSED_PERSONAL_LOCKS_ON": "Un permis clôturé ou restitué sur un autre poste alors qu'un cadenas personnel est encore sur sa boîte de consignation ici",
+      "PERMIT_WORKER_ADDED_INDUCTION_MISSING": "Un intervenant extérieur ajouté après la délivrance, sans accueil sécurité",
+      "PERMIT_WORKER_ADDED_QUALIFICATION": "Un intervenant ajouté après la délivrance sans les habilitations valables exigées par le type du permis",
+      "PERMIT_WO_START_GAS_TEST_INVALID": "Un OT démarré ou repris sur un autre poste alors que le test atmosphérique de son permis n'était pas valable (manquant, périmé ou hors limites)"
     },
     "history": {
       "fromOtherDevice": "D'un autre appareil (enregistré avant cette version) : les numéros de cette entrée sont les identifiants de cet appareil et ne désignent pas les enregistrements d'ici."
@@ -444,7 +465,11 @@
       "budget_lines": "Ligne de budget",
       "training_sessions": "Session de formation",
       "failure_events": "Événement de défaillance",
-      "app_settings": "Paramètre"
+      "app_settings": "Paramètre",
+      "permit_gas_tests": "Test atmosphérique de permis",
+      "permit_workers": "Intervenant de permis",
+      "permit_personal_locks": "Cadenas personnel de permis",
+      "equipment_isolation_points": "Point d'isolement d'équipement"
     },
     "negativeStock": "{{count}} emplacement(s) de stock sous zéro après synchronisation, à rapprocher par un comptage (Stock › Contrôles).",
     "doubleCount": "{{count}} emplacement(s) de stock compté(s) sur deux postes sans se connaître : double comptage à vérifier (Stock › Contrôles).",
@@ -604,7 +629,8 @@
     "profile": "Mon profil",
     "help": "Aide",
     "reports": "Rapports",
-    "admin": "Administration"
+    "admin": "Administration",
+    "myPadlocks": "Mes cadenas"
   },
   "notFound": {
     "title": "Cette page n'existe pas",

@@ -57,6 +57,8 @@ pub struct WoAssignInput {
     pub assigned_team_id: Option<i64>,
     pub primary_responsible_id: Option<i64>,
     pub scheduled_at: Option<String>,
+    /// Only the emergency override needs a reason; a routine assignment sends none.
+    #[serde(default)]
     pub override_reason: String,
 }
 

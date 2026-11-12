@@ -186,6 +186,7 @@ pub(crate) async fn notify_received_rule_change(
         "site_settings" => site_rule(conn, entity_sync_id, received).await,
         "permit_types" => three_person(conn, entity_sync_id, received).await,
         "permit_isolations" => received_forced_removal(conn, entity_sync_id, received).await,
+        "permit_personal_locks" => received_padlock_forced_removal(conn, entity_sync_id, received).await,
         "inspection_anomalies" => received_anomaly_cancel(conn, entity_sync_id, received).await,
         _ => Ok(()),
     }
@@ -1616,6 +1617,7 @@ struct ForcedRemovalNotice {
 /// notice).
 async fn send_forced_removal(
     conn: &impl ConnectionTrait,
+    entity_type: &'static str,
     isolation_sync_id: &str,
     n: ForcedRemovalNotice,
 ) -> AppResult<()> {
@@ -1644,7 +1646,7 @@ async fn send_forced_removal(
         category: FORCED_REMOVAL_CATEGORY,
         source_module: "permit",
         source_record_id: n.permit_id.to_string(),
-        entity_type: "permit_isolations",
+        entity_type,
         entity_sync_id: isolation_sync_id,
         org_node_id: None,
     };
@@ -1700,7 +1702,7 @@ pub(crate) async fn announce_forced_removal(
         removed_at: iso.removed_at.clone().unwrap_or_default(),
         reason: iso.forced_reason.clone().unwrap_or_default(),
     };
-    send_forced_removal(conn, &iso.entity_sync_id, notice).await
+    send_forced_removal(conn, "permit_isolations", &iso.entity_sync_id, notice).await
 }
 
 /// A forced removal received by sync that passed its checks (`permit::sync_check`) and is new here
@@ -1739,7 +1741,79 @@ async fn received_forced_removal(
         removed_at: text(&row, "removed_at").unwrap_or_default().to_string(),
         reason: text(&row, "forced_reason").unwrap_or_default().to_string(),
     };
-    send_forced_removal(conn, entity_sync_id, notice).await
+    send_forced_removal(conn, "permit_isolations", entity_sync_id, notice).await
+}
+
+/// The notice of a personal padlock of a permit's group lock box removed by force (L4-18, the
+/// isolation locks' process of migration 249, `permit::workers::force_remove_personal_lock`), in
+/// the caller's transaction: the same notice to the `ptw.close` holders of the permit's site.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn announce_padlock_forced_removal(
+    conn: &impl ConnectionTrait,
+    permit_id: i64,
+    permit_code: &str,
+    lock_sync_id: &str,
+    lock_number: &str,
+    worker: Option<String>,
+    remover_id: i64,
+    authoriser_id: i64,
+    removed_at: &str,
+    reason: &str,
+) -> AppResult<()> {
+    let notice = ForcedRemovalNotice {
+        permit_id,
+        permit_code: permit_code.to_string(),
+        point: padlock_point(lock_number),
+        worker,
+        remover: person_by_id(conn, Some(remover_id)).await?,
+        authoriser: person_by_id(conn, Some(authoriser_id)).await?,
+        removed_at: removed_at.to_string(),
+        reason: reason.to_string(),
+    };
+    send_forced_removal(conn, "permit_personal_locks", lock_sync_id, notice).await
+}
+
+/// How a notice names a personal padlock (both languages, as the notice texts).
+fn padlock_point(lock_number: &str) -> String {
+    format!("cadenas personnel {lock_number} / personal padlock {lock_number}")
+}
+
+/// A personal padlock's forced removal received by sync that passed its checks and is new here: the
+/// `ptw.close` holders of the permit's site on this PC are told, as for an isolation lock.
+async fn received_padlock_forced_removal(
+    conn: &impl ConnectionTrait,
+    entity_sync_id: &str,
+    received: &Payload,
+) -> AppResult<()> {
+    let local = crate::permit::sync_check::local_wire(conn, "permit_personal_locks", entity_sync_id).await?;
+    let row = crate::permit::sync_check::overlay(local.as_ref(), received);
+    if !on(&row, "forced_removal") || local.as_ref().is_some_and(|l| on(l, "forced_removal")) {
+        return Ok(());
+    }
+    let Some(permit_sync) = text(&row, "permit_sync_id") else {
+        return Ok(());
+    };
+    let Some(permit) = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id, code FROM work_permits WHERE entity_sync_id = ?",
+            [permit_sync.into()],
+        ))
+        .await?
+    else {
+        return Ok(());
+    };
+    let notice = ForcedRemovalNotice {
+        permit_id: permit.try_get("", "id").map_err(hook_err)?,
+        permit_code: permit.try_get("", "code").map_err(hook_err)?,
+        point: padlock_point(text(&row, "lock_number").unwrap_or_default()),
+        worker: person(conn, text(&row, "placed_by_sync_id")).await?,
+        remover: person(conn, text(&row, "removed_by_sync_id")).await?,
+        authoriser: person(conn, text(&row, "forced_authorized_by_sync_id")).await?,
+        removed_at: text(&row, "removed_at").unwrap_or_default().to_string(),
+        reason: text(&row, "forced_reason").unwrap_or_default().to_string(),
+    };
+    send_forced_removal(conn, "permit_personal_locks", entity_sync_id, notice).await
 }
 
 /// Writes a notice of a permit's work in a savepoint, logged when it cannot be written: the change it
