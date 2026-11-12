@@ -102,6 +102,7 @@ const fleetView = {
       downtime_share: 0.6066,
       mtbf_hours: 1820,
       mttr_hours: 7.4,
+      failure_cost: 125000,
       time_basis: "run_hours_meter",
       data_quality: "to_check",
       records_to_check: 2,
@@ -120,6 +121,7 @@ const fleetView = {
       downtime_share: 0.3934,
       mtbf_hours: 2410,
       mttr_hours: 8.1,
+      failure_cost: null,
       time_basis: "run_hours_meter",
       data_quality: "complete",
       records_to_check: 0,
@@ -492,6 +494,80 @@ describe("RamsFleetPage", () => {
     );
     fireEvent.click(await screen.findByRole("button", { name: "Data quality" }));
     expect(await screen.findByText("?months=12&site=4&class=7")).toBeInTheDocument();
+  });
+});
+
+describe("RamsFleetPage ranking (L2-17 / L2-23)", () => {
+  function mountFleet(entry = "/reliability") {
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_reliability_fleet_view") return fleetView;
+      if (cmd === "list_reliability_studies") return [];
+      throw new Error(`unexpected ${cmd}`);
+    });
+    render(
+      <MemoryRouter initialEntries={[entry]}>
+        <RamsFleetPage />
+        <LocationProbe />
+      </MemoryRouter>,
+    );
+  }
+
+  it("sorts by a column on the backend and reverses on a second click", async () => {
+    mountFleet();
+    expect(await screen.findByText("P-101")).toBeInTheDocument();
+    // The column header's sort button (rows also carry a "failures → OTs" button, L2-21).
+    const failuresSort = () => {
+      const header = screen
+        .getAllByRole("columnheader")
+        .find((h) => /Failures|Failur/.test(h.textContent ?? ""));
+      if (!header) throw new Error("failures column header not found");
+      return within(header).getByRole("button");
+    };
+    fireEvent.click(failuresSort());
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith("get_reliability_fleet_view", {
+        filter: expect.objectContaining({ sort_by: "failures", sort_desc: true }),
+      }),
+    );
+    expect(await screen.findByText(/sort=failures/)).toBeInTheDocument();
+    fireEvent.click(failuresSort());
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith("get_reliability_fleet_view", {
+        filter: expect.objectContaining({ sort_by: "failures", sort_desc: false }),
+      }),
+    );
+  });
+
+  it("offers the 10 most failing and 10 most costly views", async () => {
+    mountFleet();
+    expect(await screen.findByText("P-101")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "10 most costly" }));
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith("get_reliability_fleet_view", {
+        filter: expect.objectContaining({ sort_by: "cost", sort_desc: true, limit: 10 }),
+      }),
+    );
+  });
+
+  it("shows the cost column and the percentage on the share bar", async () => {
+    mountFleet();
+    expect(await screen.findByText("P-101")).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: /Cost/ })).toBeInTheDocument();
+    // 0.6066 of the fleet downtime, in text next to the bar.
+    expect(screen.getByText(/60[.,]7\s?%/)).toBeInTheDocument();
+  });
+
+  it("keeps the ticked equipment in the address, restored when coming back", async () => {
+    mountFleet("/reliability?sel=10,11");
+    expect(await screen.findByRole("button", { name: /Study 2 equipment/ })).toBeEnabled();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select P-101" }));
+    await waitFor(() => expect(screen.getByText(/sel=11/)).toBeInTheDocument());
+  });
+
+  it("names the filter in the availability tile and says when the figures were calculated", async () => {
+    mountFleet("/reliability?site=1");
+    expect(await screen.findByText("Operational availability — Main plant")).toBeInTheDocument();
+    expect(screen.getByTestId("rams-calculated-at")).toHaveTextContent(/Calculated on/);
   });
 });
 

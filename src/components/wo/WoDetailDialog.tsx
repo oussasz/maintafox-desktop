@@ -30,6 +30,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useNavigate } from "react-router-dom";
 
 import { LinkedEntityBadge, roundTitle } from "@/components/common/LinkedEntityBadge";
 import { UrgencyBadge } from "@/components/common/urgency/UrgencyBadge";
@@ -70,9 +71,11 @@ import { useWoExecutionStanding } from "@/components/wo/use-wo-execution-standin
 import { useWoTypeLabels } from "@/components/wo/use-wo-type-labels";
 import { formatWoShift } from "@/components/wo/wo-shift-label";
 import { useFormatters } from "@/hooks/use-formatters";
+import { usePermissions } from "@/hooks/use-permissions";
 import { needsPlanningApproval, useWoLifecycleActions } from "@/hooks/use-wo-lifecycle-actions";
 import { describeAppError } from "@/lib/app-error";
 import { formatAssetLabel } from "@/lib/display";
+import { listLinks } from "@/lib/list-links";
 import { joinWo } from "@/services/wo-execution-service";
 import { evaluateWoCompletionGates } from "@/services/wo-service";
 import { pushAppToast } from "@/store/app-toast-store";
@@ -118,6 +121,8 @@ export function WoDetailDialog({
   onBackToOrigin,
 }: WoDetailDialogProps) {
   const { t, i18n } = useTranslation("ot");
+  const navigate = useNavigate();
+  const { can: canGlobal } = usePermissions();
   const { formatHours } = useFormatters();
   const { typeLabel, natureLabel } = useWoTypeLabels();
   // The actions offered are the user's rights at this work order's site (its org node), not
@@ -464,8 +469,22 @@ export function WoDetailDialog({
                   <InfoRow
                     label={t("detail.fields.sourceRca")}
                     value={
-                      <span className="text-text-secondary">
-                        {t("detail.fields.sourceRcaCause")}: {wo.source_rca_cause_text}
+                      <span className="flex flex-col items-end gap-1 text-text-secondary">
+                        <span>
+                          {t("detail.fields.sourceRcaCause")}: {wo.source_rca_cause_text}
+                        </span>
+                        {canGlobal(P.RAM_VIEW) && wo.equipment_id != null ? (
+                          <Button
+                            variant="link"
+                            className="h-auto min-h-[36px] p-0 text-xs"
+                            onClick={() => {
+                              if (wo.equipment_id != null)
+                                void navigate(listLinks.ramsAsset(wo.equipment_id));
+                            }}
+                          >
+                            {t("detail.fields.sourceRcaOpen")}
+                          </Button>
+                        ) : null}
                       </span>
                     }
                   />

@@ -192,6 +192,7 @@
       "ageM": "{{months}}m",
       "ageD": "{{days}}d",
       "availabilityAsOf": "Latest reliability analysis, to {{date}}",
+      "failuresRams": "Same calculation as the RAMS module, over the last {{months}} months",
       "availabilityNone": "No reliability analysis computed for this asset yet"
     },
     "today": "Today",
@@ -512,8 +513,8 @@
       "pm": "PM Plans",
       "failure": "Failure Events",
       "document": "Documents",
-      "iot": "IoT Signals",
-      "erp": "ERP Mappings"
+      "iot": "Sensor readings",
+      "erp": "ERP correspondence"
     }
   },
   "import": {
@@ -740,7 +741,13 @@
     "title": "Reliability profile",
     "schedule": "Operating schedule",
     "scheduleNone": "Not set (24/7 assumed)",
-    "utilization": "Utilisation factor (K_u)",
+    "utilization": "Utilisation factor",
+    "failures": "Failures (last {{months}} months)",
+    "mtbf": "MTBF",
+    "hoursUnit": "h",
+    "tooShort": "Period too short to calculate the MTBF.",
+    "noMtbf": "No failure in the period: no MTBF.",
+    "open": "Open in RAMS",
     "hint": "Used by RAMS to convert calendar time into operating time."
   },
   "moveComponent": {
@@ -788,6 +795,7 @@
       "openHint_other": "{{count}} open",
       "failures": "Failures (corrective & emergency)",
       "lastFailure": "Last on {{date}}",
+      "failuresRams": "Same calculation as the RAMS module, over the last {{months}} months",
       "noFailure": "No failure recorded",
       "downtime": "Downtime",
       "hours": "h",

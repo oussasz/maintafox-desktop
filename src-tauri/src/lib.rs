@@ -1139,6 +1139,7 @@ pub fn run() {
         commands::advanced_rams::upsert_ram_ishikawa_diagram,
         commands::advanced_rams::delete_ram_ishikawa_diagram,
         commands::reliability_study::get_reliability_fleet_view,
+        commands::reliability_study::get_reliability_asset_figures,
         commands::reliability_study::list_reliability_studies,
         commands::reliability_study::create_reliability_study,
         commands::reliability_study::update_reliability_study,

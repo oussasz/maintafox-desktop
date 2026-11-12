@@ -19,6 +19,21 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe("AppToastHost", () => {
+  it("offers the follow-up action of a message and dismisses it once taken", () => {
+    const onClick = vi.fn();
+    render(<AppToastHost />);
+    act(() => {
+      pushAppToast({
+        title: "Work order OT-1 created",
+        variant: "success",
+        action: { label: "Open the work order", onClick },
+      });
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Open the work order" }));
+    expect(onClick).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText("Work order OT-1 created")).toBeNull();
+  });
+
   it("keeps a persistent warning until it is dismissed", () => {
     render(<AppToastHost />);
     act(() => {

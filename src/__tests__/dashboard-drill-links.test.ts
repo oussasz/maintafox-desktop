@@ -39,6 +39,7 @@ const PAGE_SOURCE: Record<string, string> = {
 const PARAM_SPELLING: Record<string, string[]> = {
   queue: ['"queue"'],
   permit: ["PERMIT_QUERY_SELECT"],
+  openWo: ["LIST_PARAM.openWo"],
 };
 
 function readsParam(path: string, param: string): boolean {

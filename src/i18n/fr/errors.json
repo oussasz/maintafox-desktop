@@ -1040,6 +1040,7 @@
     "GATE_REL_MARKOV_GRAPH_INVALID": "Modèle de Markov refusé : la description des états n'est pas valide. Corrigez-la puis réessayez.",
     "GATE_REL_MARKOV_STATES_LIMIT": "Calcul refusé : {{states}} états dépassent la limite autorisée de {{max}}. Réduisez le nombre d'états.",
     "GATE_REL_PARETO_METRIC_INVALID": "Pareto refusé : l'indicateur choisi n'est pas reconnu. Choisissez l'un des indicateurs proposés.",
+    "GATE_REL_FLEET_SORT_INVALID": "Classement refusé : la colonne de tri n'est pas reconnue. Choisissez l'une des colonnes proposées.",
     "GATE_REL_TITLE_REQUIRED": "Revue refusée : indiquez un titre.",
     "GATE_REL_EFFECT_PROBABILITY_RANGE": "Criticité refusée : la probabilité d'effet β doit être comprise entre 0 et 1.",
     "GATE_REL_MODE_RATIO_RANGE": "Criticité refusée : la part du mode de défaillance α doit être comprise entre 0 et 1.",
