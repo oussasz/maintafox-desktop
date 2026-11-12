@@ -104,6 +104,20 @@ function eventStatus(event: AssetHistoryEvent, t: TranslateFn): string | undefin
   return assetStatusKey ? t(assetStatusKey) : code;
 }
 
+/** A move / transfer: "From <unit> to <unit>", then the reason recorded with it. */
+function orgMoveDescription(event: AssetHistoryEvent, t: TranslateFn): string | undefined {
+  const label = (prefix: "from" | "to") => {
+    const code = event.metadata?.[`${prefix}_node_code`];
+    const name = event.metadata?.[`${prefix}_node_name`];
+    return [code, name].filter((v): v is string => typeof v === "string" && v !== "").join(" — ");
+  };
+  const from = label("from");
+  const to = label("to");
+  if (from === "" && to === "") return event.description ?? undefined;
+  const move = t("history.orgMove", { from, to });
+  return event.description ? `${move} · ${event.description}` : move;
+}
+
 export function AssetTimelineList({
   events,
   onOpenRef,
@@ -157,12 +171,14 @@ export function AssetTimelineList({
           id: event.id,
           title: eventTitle(event, tr, formatDate),
           description:
-            event.description ??
-            (typeof event.metadata?.["source_type"] === "string"
-              ? tr(`history.failureSource.${event.metadata["source_type"]}`, {
-                  defaultValue: event.metadata["source_type"],
-                })
-              : undefined),
+            event.event_type === "org_changed"
+              ? orgMoveDescription(event, tr)
+              : (event.description ??
+                (typeof event.metadata?.["source_type"] === "string"
+                  ? tr(`history.failureSource.${event.metadata["source_type"]}`, {
+                      defaultValue: event.metadata["source_type"],
+                    })
+                  : undefined)),
           timestamp: event.occurred_at,
           subtitle: eventStatus(event, tr),
           badges: [{ label: typeLabel, tone: "muted" as const }],

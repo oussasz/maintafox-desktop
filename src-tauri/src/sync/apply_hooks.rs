@@ -290,6 +290,15 @@ pub(crate) async fn before_upsert_checked(
         "permit_handover_logs" => {
             Some(crate::permit::sync_check::inbound_handover_check(conn, entity_sync_id, payload).await?)
         }
+        // The workers of a permit and their personal padlocks (L4-05 / L4-18, migration 294):
+        // the group lockout, a padlock taken off by its owner or by a recorded forced removal, a
+        // worker added after the issue (`permit::workers_sync`).
+        "permit_workers" => {
+            Some(crate::permit::workers_sync::inbound_worker_check(conn, entity_sync_id, payload).await?)
+        }
+        "permit_personal_locks" => {
+            Some(crate::permit::workers_sync::inbound_personal_lock_check(conn, entity_sync_id, payload).await?)
+        }
         "work_orders" => Some(
             match crate::permit::sync_check::inbound_permit_rule_check(conn, entity_sync_id, payload).await? {
                 Some(verdict) => Some(verdict),
@@ -351,6 +360,10 @@ pub(crate) async fn before_upsert_checked(
         // A crew's site change carrying its committed jobs across a week frozen here (AU-129).
         "teams" => Some(crate::planning::sync_check::inbound_crew_site_check(conn, entity_sync_id, payload).await?),
         "work_order_parts" => Some(crate::wo::parts::inbound_part_line_check(conn, entity_sync_id, payload).await?),
+        // An RCM decision leaving a critical FMECA mode to run to failure (`reliability::rcm_loop`, L2-15).
+        "rcm_decisions" => {
+            Some(crate::reliability::rcm_loop::inbound_rcm_decision_check(conn, entity_sync_id, payload).await?)
+        }
         // An anomaly closed without a decision, reopened, its link changed or its "revue permis
         // requise" cleared (`inspection::sync_check`, audit finding AU-72).
         "inspection_anomalies" => {
@@ -621,7 +634,13 @@ pub(crate) async fn before_delete_checked(
         }
     }
     let verdict = match layout.def.entity_type {
-        "work_permits" | "permit_isolations" | "permit_suspensions" | "permit_types" | "qualification_requirements" => {
+        "work_permits"
+        | "permit_isolations"
+        | "permit_suspensions"
+        | "permit_types"
+        | "qualification_requirements"
+        | "permit_workers"
+        | "permit_personal_locks" => {
             crate::permit::sync_check::inbound_delete_check(conn, layout.def.entity_type, entity_sync_id).await?
         }
         // Rows of the safety rule notice are local to each PC: never deleted by sync.

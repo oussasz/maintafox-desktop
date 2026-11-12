@@ -8,6 +8,37 @@
   "criticalityReview": {
     "hint": "Criticality taken from the old criticality list: a planner should set it in the Criticality tab."
   },
+  "transfer": {
+    "action": "Transfer",
+    "title": "Transfer the asset",
+    "description": "{{code}} leaves {{from}} for another unit of the organisation (line, workshop, site). The transfer is recorded in the history with the reason, the date and your name.",
+    "noLocation": "No unit",
+    "target": "Destination unit",
+    "targetHint": "Only units where you manage equipment are offered.",
+    "targetPlaceholder": "Choose a unit…",
+    "targetRequired": "Choose the destination unit.",
+    "noDestination": "No other unit in your scope can receive this asset.",
+    "date": "Effective date",
+    "dateRequired": "Give a valid effective date (not in the future).",
+    "reason": "Reason for the transfer",
+    "reasonRequired": "Give the reason for the transfer.",
+    "impact": {
+      "title": "Still attached to the asset",
+      "none": "No active preventive plan, no spare part and no open work order on this asset.",
+      "pmPlans_one": "{{count}} active preventive plan",
+      "pmPlans_other": "{{count}} active preventive plans",
+      "spareParts_one": "{{count}} spare-parts line ({{critical}} critical)",
+      "spareParts_other": "{{count}} spare-parts lines ({{critical}} critical)",
+      "openWo_one": "{{count}} work order not yet closed",
+      "openWo_other": "{{count}} work orders not yet closed",
+      "notChanged": "Nothing is stopped or reassigned automatically: check them after the transfer."
+    },
+    "cancel": "Cancel",
+    "confirm": "Transfer",
+    "done": "{{code}} transferred to {{to}}.",
+    "editHint": "The unit is changed with “Transfer”: reason, date and history.",
+    "saveEditFirst": "Save or cancel your changes first."
+  },
   "recommission": {
     "action": "Recommission",
     "title": "Return the asset to service?",
@@ -38,7 +69,8 @@
       "criticality": "Criticality",
       "family": "Family",
       "parentName": "Parent equipment",
-      "primaryMeter": "Main meter"
+      "primaryMeter": "Main meter",
+      "repeatFailures": "Repeat failures"
     },
     "filters": {
       "status": "Status",
@@ -66,7 +98,7 @@
       "parentEquipment": "Parent equipment",
       "criticality": "Criticality",
       "status": "Status",
-      "site": "Site",
+      "site": "Organisation unit",
       "entity": "Entity",
       "manufacturer": "Manufacturer",
       "model": "Model",
@@ -91,7 +123,9 @@
       "spares": "Spare parts",
       "documents": "Documents & photos",
       "criticality": "Criticality",
-      "history": "History"
+      "history": "History",
+      "isolation": "Isolation points",
+      "repeatFailures": "Repeat failures"
     }
   },
   "form": {
@@ -135,6 +169,7 @@
     "more": "More actions"
   },
   "history": {
+    "orgMove": "From {{from}} to {{to}}",
     "noRightToOpen": "You do not have the right to open this item.",
     "loadError": "This equipment's history could not be loaded",
     "partial": "The {{count}} most recent events are shown; older events may exist.",
@@ -834,7 +869,34 @@
     "rateHint": "Used to forecast meter-based maintenance.",
     "rollover": "Rollover value",
     "rolloverHint": "Value at which the counter restarts from zero, if any.",
-    "primary": "Main meter of the asset"
+    "primary": "Main meter of the asset",
+    "thresholds": {
+      "edit": "Alarm thresholds",
+      "title": "Alarm thresholds — {{name}}",
+      "description": "A reading that crosses a threshold raises an intervention request (only one per threshold while it is open).",
+      "direction": "The threshold is crossed",
+      "directionPlaceholder": "Choose the direction",
+      "above": "Upwards (value too high: temperature, vibration…)",
+      "below": "Downwards (value too low: level, flow…)",
+      "alert": "Alert threshold {{unit}}",
+      "critical": "Critical threshold {{unit}}",
+      "hint": "Leave both thresholds empty to stop monitoring this meter. The critical threshold raises an urgent request, the alert threshold a high-priority one.",
+      "save": "Save thresholds",
+      "none": "—",
+      "orderError": "The alert threshold must be reached before the critical threshold.",
+      "summary": {
+        "above": "Alert from {{alert}} {{unit}} · critical from {{critical}} {{unit}}",
+        "below": "Alert below {{alert}} {{unit}} · critical below {{critical}} {{unit}}"
+      },
+      "level": {
+        "alert": "alert",
+        "critical": "critical"
+      },
+      "raised": "{{level}} threshold crossed: request {{code}} raised.",
+      "alreadyOpen": "{{level}} threshold crossed: request {{code}} is still open, no new request.",
+      "notRaised": "{{level}} threshold crossed, but no request was raised.",
+      "raisedChip": "{{level}} threshold → {{code}}"
+    }
   },
   "spares": {
     "searchFailed": "The article search failed (this is not an empty result).",
@@ -948,5 +1010,90 @@
     "ASSET_RECOMMISSION_REASON_REQUIRED": "Give the reason for returning the asset to service.",
     "ASSET_RECOMMISSION_TARGET_RETIRED": "Choose a status in service: a retired status is not a return to service.",
     "ASSET_RECOMMISSION_VERSION_REQUIRED": "Reload the asset before returning it to service."
+  },
+  "isolationPoints": {
+    "title": "Isolation points",
+    "description": "Where the energies of this equipment are isolated. They are proposed on every work permit raised for the equipment.",
+    "empty": "No isolation point defined.",
+    "add": "Add a point",
+    "edit": "Edit",
+    "deactivate": "Deactivate",
+    "reactivate": "Reactivate",
+    "inactive": "Deactivated",
+    "showInactive": "Show deactivated points",
+    "code": "Code",
+    "label": "Label",
+    "energy": "Energy type",
+    "method": "Isolation method / device",
+    "normalState": "Normal state",
+    "normalStatePlaceholder": "e.g. closed, energised",
+    "listsHint": "Energy types and methods: Reference data (permit lists).",
+    "save": "Save",
+    "cancel": "Cancel",
+    "dialogTitleNew": "New isolation point",
+    "dialogTitleEdit": "Edit the isolation point",
+    "required": "This field is required.",
+    "optionsError": "The energy type and method lists could not be read."
+  },
+  "characteristics": {
+    "title": "Technical characteristics",
+    "noFamily": "Choose a family for this equipment: its characteristics show here.",
+    "none": "No characteristic is defined for the family {{family}}. Add them in Reference data (Technical characteristics per family).",
+    "hint": "Defined for the family {{family}} in Reference data.",
+    "edit": "Edit",
+    "save": "Save",
+    "cancel": "Cancel",
+    "yes": "Yes",
+    "no": "No",
+    "notSet": "Not set",
+    "required": "required",
+    "definitionProblem": "Definition to fix in Reference data: {{problem}}",
+    "unlisted": "Values whose characteristic is no longer in the family's list",
+    "saved": "Characteristics saved.",
+    "numberError": "Enter a number.",
+    "requiredError": "Required for this family."
+  },
+  "repeatFailures": {
+    "badge": "Repeat failures",
+    "badgeCount": "Repeat failures ({{count}})",
+    "badgeTitle": "{{count}} unplanned failures in {{days}} days (threshold: {{min}}).",
+    "listUnavailable": "Repeat failures unavailable: {{reason}}",
+    "status": {
+      "flagged": "Repeat failures: {{count}} unplanned failures in {{days}} days (threshold: {{min}} — Settings > Reliability).",
+      "notFlagged": "{{count}} unplanned failure(s) in {{days}} days (repeat failures from {{min}}).",
+      "actions": "{{open}} open action(s), {{overdue}} overdue."
+    },
+    "fiveWhy": {
+      "title": "5 whys",
+      "add": "New analysis",
+      "empty": "No “5 whys” analysis for this equipment.",
+      "problem": "Problem analysed",
+      "why": "Why {{n}}?",
+      "rootCause": "Root cause",
+      "save": "Save the analysis",
+      "edit": "Edit",
+      "cancel": "Cancel",
+      "by": "By {{name}}, on {{date}}",
+      "saved": "Analysis saved."
+    },
+    "actions": {
+      "title": "Corrective actions",
+      "add": "New action",
+      "empty": "No corrective action for this equipment.",
+      "action": "Action",
+      "owner": "Owner",
+      "dueDate": "Due date",
+      "status": "Status",
+      "overdue": "Overdue",
+      "save": "Save the action",
+      "cancel": "Cancel",
+      "edit": "Edit",
+      "saved": "Action saved.",
+      "statuses": {
+        "open": "Open",
+        "done": "Done",
+        "cancelled": "Cancelled"
+      }
+    }
   }
 }

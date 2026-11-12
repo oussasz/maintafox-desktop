@@ -777,6 +777,14 @@
         "label": "Close or cancel work permits",
         "description": "Close and cancel work permits. Sensitive action: password re-confirmation required."
       },
+      "ptw_hse_approve": {
+        "label": "Approve permits for HSE",
+        "description": "Record the HSE approval of a work permit whose type requires it, on a permit one neither wrote nor submitted. Sensitive action."
+      },
+      "ptw_lock_own": {
+        "label": "Place / remove my padlock",
+        "description": "Place and remove only one's own personal padlock on the group lock box of a permit one is listed on as a worker. Gives no other right on the permit."
+      },
       "fin_view": {
         "label": "View budgets and costs",
         "description": "View budgets and cost data."

@@ -657,6 +657,62 @@ fn is_gate(err: &AppError, gate: &str) -> bool {
 }
 
 #[tokio::test]
+async fn reversal_refuses_ot_settlement_entries_and_closed_months() {
+    let db = setup_db().await;
+    let (version_id, posted) = posted_actual(&db, "CC-REV-GATES").await;
+
+    // Closed month: the reversal would write into a locked period.
+    db.execute(Statement::from_string(
+        DbBackend::Sqlite,
+        "INSERT INTO budget_periods (entity_sync_id, fiscal_year, period_month, status, closed_at, row_version, created_at, updated_at)
+         VALUES ('rev-closed-m1', 2028, 1, 'closed', '2028-02-01T00:00:00Z', 1, '2028-02-01T00:00:00Z', '2028-02-01T00:00:00Z')",
+    ))
+    .await
+    .expect("close month 1");
+    let err = queries::reverse_budget_actual(
+        &db,
+        1,
+        ReverseBudgetActualInput {
+            actual_id: posted.id,
+            expected_row_version: posted.row_version,
+            reason: "closed month".to_string(),
+        },
+    )
+    .await
+    .expect_err("closed month is refused");
+    assert!(is_gate(&err, "GATE_FIN_PERIOD_CLOSED"), "{err:?}");
+
+    // OT settlement entry: only reopening the work order reverses it.
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE budget_actuals SET source_type = 'wo_settlement' WHERE id = ?",
+        [posted.id.into()],
+    ))
+    .await
+    .expect("mark as settlement entry");
+    db.execute(Statement::from_string(
+        DbBackend::Sqlite,
+        "DELETE FROM budget_periods WHERE entity_sync_id = 'rev-closed-m1'",
+    ))
+    .await
+    .expect("reopen month 1");
+    let fresh = version_actuals(&db, version_id).await;
+    let row_version = fresh.iter().find(|a| a.id == posted.id).expect("entry").row_version;
+    let err = queries::reverse_budget_actual(
+        &db,
+        1,
+        ReverseBudgetActualInput {
+            actual_id: posted.id,
+            expected_row_version: row_version,
+            reason: "settlement".to_string(),
+        },
+    )
+    .await
+    .expect_err("settlement entry is refused");
+    assert!(is_gate(&err, "GATE_FIN_REVERSAL_FOLLOWS_WO"), "{err:?}");
+}
+
+#[tokio::test]
 async fn reversal_with_stale_version_leaves_no_reversal_row() {
     let db = setup_db().await;
     let (version_id, posted) = posted_actual(&db, "CC-REV-STALE").await;

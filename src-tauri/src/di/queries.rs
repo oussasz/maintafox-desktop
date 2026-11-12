@@ -652,7 +652,16 @@ pub async fn create_intervention_request_in(
     // Catalog membership (Category B) — same philosophy as equipment taxonomy.
     let origin_type = crate::di::reference_catalog::validate_di_origin_code(db, &input.origin_type).await?;
     let request_type = crate::di::reference_catalog::validate_di_request_type(db, &input.request_type).await?;
-    let symptom_code_id = crate::di::reference_catalog::require_di_symptom_id(db, input.symptom_code_id).await?;
+    // The symptom is optional on a new request (an operator may not know it; the planner sets it at
+    // screening, and the work order cannot be completed without it): when given, it must be a value
+    // of the shared list.
+    let symptom_code_id = match input.symptom_code_id {
+        Some(id) => {
+            crate::di::reference_catalog::validate_di_symptom_id(db, id).await?;
+            Some(id)
+        }
+        None => None,
+    };
     // Shared DI / OT urgency scale (`WORK.URGENCY`).
     let reported_urgency = crate::reference::urgency_scale::validate_urgency_code(&input.reported_urgency)?;
     // A request flagged "sécurité" is urgent at least (CMMS Advisor decision on L4-11): raised,
@@ -849,9 +858,7 @@ pub async fn update_di_draft_fields(
     if let Some(ref symptom_code_id) = input.symptom_code_id {
         match symptom_code_id {
             None => {
-                return Err(AppError::ValidationFailed(vec![
-                    "GATE_DI_SYMPTOM_REQUIRED: Le symptôme est obligatoire.".into(),
-                ]));
+                sets.push("symptom_code_id = NULL".into());
             }
             Some(id) => {
                 // Validate only when writing a new value (legacy rows keep existing id until changed).

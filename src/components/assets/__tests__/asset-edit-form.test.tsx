@@ -4,10 +4,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AssetEditForm } from "@/components/assets/AssetEditForm";
 import type * as EntityForm from "@/components/entity-form";
 import { PermissionContext, type PermissionContextValue } from "@/contexts/PermissionContext";
+import { useAssetSearchStore } from "@/stores/asset-search-store";
 import { useAssetStore } from "@/stores/asset-store";
 import { useEquipmentTaxonomyStore } from "@/stores/equipment-taxonomy-store";
 import type { Asset, EquipmentTaxonomyCatalog } from "@shared/ipc-types";
-import { P, type PermissionName } from "@shared/rbac/permissions.generated";
 
 const i18nMock = vi.hoisted(() => ({
   t: (key: string) => key,
@@ -25,8 +25,6 @@ vi.mock("@/services/asset-lifecycle-service", () => lifecycle);
 vi.mock("@/services/asset-service", () => ({
   getEquipmentTaxonomyCatalog: vi.fn(() => Promise.resolve(null)),
 }));
-const orgSvc = vi.hoisted(() => ({ listOrgTree: vi.fn(() => Promise.resolve([])) }));
-vi.mock("@/services/org-node-service", () => orgSvc);
 
 // Reference lists have their own tests: here only what the form passes them matters.
 vi.mock("@/components/reference/ReferenceCombobox", () => ({
@@ -87,6 +85,7 @@ const ASSET = {
   status_code: "ACTIVE_IN_SERVICE",
   maintainable_boundary: true,
   org_node_id: 1,
+  org_node_name: "Ligne 1",
   decommissioned_at: null,
   row_version: 1,
   updated_at: "2026-10-01T10:00:00Z",
@@ -106,24 +105,18 @@ beforeEach(() => {
 });
 
 describe("AssetEditForm", () => {
-  it("names the missing right for the location instead of an empty list", async () => {
-    const can = (p: PermissionName) => p !== P.ORG_VIEW;
-    const perms: PermissionContextValue = {
-      permissions: [],
-      isLoading: false,
-      can,
-      canAny: (...ps) => ps.some(can),
-      canAll: (...ps) => ps.every(can),
-      refresh: vi.fn(),
-    };
-    useAssetStore.setState({ showEditForm: true, editingAsset: ASSET });
-    render(
-      <PermissionContext.Provider value={perms}>
-        <AssetEditForm />
-      </PermissionContext.Provider>,
-    );
-    expect(await screen.findByTestId("list-access-orgNodes")).toBeInTheDocument();
-    expect(orgSvc.listOrgTree).not.toHaveBeenCalled();
+  it("shows the unit read-only: it changes only through Transférer", async () => {
+    useAssetSearchStore.setState({ selectedResultId: null });
+    useAssetStore.setState({ transferRequestAssetId: null });
+    open(ASSET);
+    const unit = await screen.findByDisplayValue("Ligne 1");
+    expect(unit).toHaveAttribute("readonly");
+
+    fireEvent.click(screen.getByRole("button", { name: /transfer\.action/ }));
+
+    expect(useAssetStore.getState().showEditForm).toBe(false);
+    expect(useAssetStore.getState().transferRequestAssetId).toBe(5);
+    expect(useAssetSearchStore.getState().selectedResultId).toBe(5);
   });
 
   it("never offers a retired status: retirement goes through Decommission", async () => {
@@ -199,8 +192,7 @@ describe("AssetEditForm", () => {
     // A role change reloads the rights: the lists flip to "not yet readable" and back.
     rerender(view(true));
     rerender(view(false));
-    await waitFor(() => expect(orgSvc.listOrgTree).toHaveBeenCalledTimes(2));
-    expect(screen.getByDisplayValue("Pompe de relevage")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByDisplayValue("Pompe de relevage")).toBeInTheDocument());
     expect(lifecycle.listAssetPhotos).toHaveBeenCalledTimes(1);
   });
 });

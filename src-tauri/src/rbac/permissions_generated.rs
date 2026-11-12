@@ -177,6 +177,10 @@ pub const PTW_VIEW: &str = "ptw.view";
 pub const PTW_ISSUE: &str = "ptw.issue";
 /// Close and cancel work permits
 pub const PTW_CLOSE: &str = "ptw.close";
+/// Record the HSE approval of work permits
+pub const PTW_HSE_APPROVE: &str = "ptw.hse_approve";
+/// Place and remove one's own personal padlock on the group lock box of a work permit one is listed on
+pub const PTW_LOCK_OWN: &str = "ptw.lock_own";
 /// View budgets and cost data
 pub const FIN_VIEW: &str = "fin.view";
 /// Manage governed budget baselines
@@ -937,6 +941,25 @@ pub const CATALOG: &[PermissionMeta] = &[
         aliases: &["ptw.cancel"],
     },
     PermissionMeta {
+        name: PTW_HSE_APPROVE,
+        description: "Record the HSE approval of work permits",
+        category: "ptw",
+        is_dangerous: true,
+        requires_step_up: false,
+        usage: "both",
+        aliases: &[],
+    },
+    PermissionMeta {
+        name: PTW_LOCK_OWN,
+        description:
+            "Place and remove one's own personal padlock on the group lock box of a work permit one is listed on",
+        category: "ptw",
+        is_dangerous: false,
+        requires_step_up: false,
+        usage: "both",
+        aliases: &[],
+    },
+    PermissionMeta {
         name: FIN_VIEW,
         description: "View budgets and cost data",
         category: "fin",
@@ -1370,6 +1393,16 @@ pub const DEPENDENCIES: &[PermissionDep] = &[
         dep_type: "hard",
     },
     PermissionDep {
+        permission: PTW_HSE_APPROVE,
+        requires: PTW_VIEW,
+        dep_type: "hard",
+    },
+    PermissionDep {
+        permission: PTW_LOCK_OWN,
+        requires: PTW_VIEW,
+        dep_type: "warn",
+    },
+    PermissionDep {
         permission: INV_APPROVE,
         requires: INV_PROCURE,
         dep_type: "hard",
@@ -1610,6 +1643,7 @@ pub const OPERATOR_PERMISSIONS: &[&str] = &[
     ERP_VIEW,
     PTW_VIEW,
     PTW_ISSUE,
+    PTW_LOCK_OWN,
     FIN_VIEW,
     FIN_REPORT,
     INS_VIEW,
@@ -1725,6 +1759,7 @@ pub const ROLE_TEMPLATES: &[(&str, &[&str])] = &[
             INS_VIEW,
             INS_EXECUTE,
             PTW_VIEW,
+            PTW_LOCK_OWN,
             DOC_VIEW,
             TRN_VIEW,
         ],
@@ -1798,8 +1833,22 @@ pub const ROLE_TEMPLATES: &[(&str, &[&str])] = &[
     (
         "HSE Manager Template",
         &[
-            PTW_VIEW, PTW_ISSUE, PTW_CLOSE, OT_VIEW, DI_VIEW, DI_CREATE, EQ_VIEW, INS_VIEW, TRN_VIEW, PER_VIEW,
-            ORG_VIEW, LOG_VIEW, DOC_VIEW, REP_VIEW,
+            PTW_VIEW,
+            PTW_ISSUE,
+            PTW_CLOSE,
+            PTW_HSE_APPROVE,
+            PTW_LOCK_OWN,
+            OT_VIEW,
+            DI_VIEW,
+            DI_CREATE,
+            EQ_VIEW,
+            INS_VIEW,
+            TRN_VIEW,
+            PER_VIEW,
+            ORG_VIEW,
+            LOG_VIEW,
+            DOC_VIEW,
+            REP_VIEW,
         ],
     ),
     (

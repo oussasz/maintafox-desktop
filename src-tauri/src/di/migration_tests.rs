@@ -122,6 +122,9 @@ mod tests {
             "site_assigned_by_id",
             "site_assigned_at",
             "site_assign_reason",
+            // Request raised by a meter reading crossing a threshold (migration 289).
+            "source_meter_reading_id",
+            "source_threshold_level",
             // Sync identity (outbox staging).
             "entity_sync_id",
             "row_version",

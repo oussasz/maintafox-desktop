@@ -399,9 +399,36 @@ pub const ROW_SPECS: &[RowSpec] = &[
         ],
     ),
     spec("equipment_meters", &[r("equipment_id", "equipment")]),
+    // Isolation points kept on the equipment, proposed on its permits (L4-12, migration 290).
+    spec(
+        "equipment_isolation_points",
+        &[
+            r("equipment_id", "equipment"),
+            r("energy_type_id", "reference_values"),
+            r("isolation_method_id", "reference_values"),
+        ],
+    ),
     spec(
         "asset_meter_readings",
         &[r("meter_id", "equipment_meters"), r("created_by_id", USER)],
+    ),
+    // Repeat-failure follow-up of an equipment (L2-09, migration 289).
+    spec(
+        "asset_five_why_analyses",
+        &[
+            r("equipment_id", "equipment"),
+            r("created_by_id", USER),
+            r("updated_by_id", USER),
+        ],
+    ),
+    spec(
+        "asset_corrective_actions",
+        &[
+            r("equipment_id", "equipment"),
+            r("owner_personnel_id", "personnel"),
+            r("created_by_id", USER),
+            r("updated_by_id", USER),
+        ],
     ),
     RowSpec {
         // The parents of a component move (`assets::lifecycle::record_parent_change_in`).
@@ -503,6 +530,8 @@ pub const ROW_SPECS: &[RowSpec] = &[
                 // A request converted to a work order points to it, and the work order points
                 // back to its source request.
                 soft("converted_to_wo_id", "work_orders"),
+                // The meter reading that crossed an alarm threshold and raised it (migration 289).
+                r("source_meter_reading_id", "asset_meter_readings"),
             ],
         )
     },
@@ -809,9 +838,39 @@ pub const ROW_SPECS: &[RowSpec] = &[
             r("approved_by_id", USER),
             // Who cancelled it (L4-15, migration 272).
             r("cancelled_by_id", USER),
+            // Who recorded its HSE approval (L4-03, migration 290).
+            r("hse_approved_by_id", USER),
         ],
     ),
     spec("permit_handover_logs", &[r("permit_id", "work_permits")]),
+    // Gas tests of a permit (L4-04, migration 290): append-only measurements.
+    spec(
+        "permit_gas_tests",
+        &[r("permit_id", "work_permits"), r("measured_by_id", USER)],
+    ),
+    // Workers of a permit and their padlocks on its group lock box (L4-05 / L4-18, migration 294).
+    spec(
+        "permit_workers",
+        &[
+            r("permit_id", "work_permits"),
+            r("personnel_id", "personnel"),
+            r("external_company_id", "external_companies"),
+            r("induction_by_id", USER),
+            r("added_by_id", USER),
+            r("withdrawn_by_id", USER),
+        ],
+    ),
+    spec(
+        "permit_personal_locks",
+        &[
+            r("permit_id", "work_permits"),
+            r("worker_id", "permit_workers"),
+            r("placed_by_id", USER),
+            r("removed_by_id", USER),
+            r("forced_authorized_by_id", USER),
+            r("informed_by_id", USER),
+        ],
+    ),
     spec(
         "permit_isolations",
         &[

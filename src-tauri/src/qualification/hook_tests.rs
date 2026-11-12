@@ -437,6 +437,9 @@ async fn loto_roles_require_the_authorisation_until_overridden() {
         } else {
             admin(&db).await
         };
+        if status == "issued" {
+            crate::permit::safety_content::fill_issue_requirements_for_tests(&db, wp.id).await;
+        }
         wp = crate::permit::queries::set_work_permit_status(
             &db,
             crate::permit::domain::WorkPermitStatusInput {

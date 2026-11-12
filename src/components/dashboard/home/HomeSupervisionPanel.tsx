@@ -1,7 +1,7 @@
 /**
  * Supervisor / manager panel (`get_home_supervision`): open requests against their SLA, the OT
  * backlog by nature and urgency, PM, stock to reorder, permits and lockouts, critical assets
- * down. Each section is the module's own figure; a module the user may not open has none.
+ * down and equipment with repeat failures. Each section is the module's own figure; a module the user may not open has none.
  */
 import { ShieldCheck } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
@@ -24,6 +24,7 @@ import {
   HomeSection,
   usePanelLoad,
 } from "./HomeParts";
+import { HomeRepeatFailuresSection } from "./HomeRepeatFailuresSection";
 import { homeLinks } from "./home-links";
 
 export function HomeSupervisionPanel({ refreshSignal = 0 }: { refreshSignal?: number }) {
@@ -41,12 +42,18 @@ export function HomeSupervisionPanel({ refreshSignal = 0 }: { refreshSignal?: nu
       state={state}
       testId="home-supervision"
     >
-      {state.data ? <SupervisionBody data={state.data} /> : null}
+      {state.data ? <SupervisionBody data={state.data} refreshSignal={refreshSignal} /> : null}
     </HomePanel>
   );
 }
 
-function SupervisionBody({ data }: { data: HomeSupervision }) {
+function SupervisionBody({
+  data,
+  refreshSignal,
+}: {
+  data: HomeSupervision;
+  refreshSignal: number;
+}) {
   const { t } = useTranslation("dashboard");
   const { formatNumber, formatPercent, formatDecimal, formatDateTime } = useFormatters();
   const queues = useVisibleDiQueues();
@@ -336,6 +343,8 @@ function SupervisionBody({ data }: { data: HomeSupervision }) {
           />
         </HomeSection>
       ) : null}
+      {/* Same right as the assets section (equipment view). */}
+      {assets ? <HomeRepeatFailuresSection refreshSignal={refreshSignal} /> : null}
     </div>
   );
 }

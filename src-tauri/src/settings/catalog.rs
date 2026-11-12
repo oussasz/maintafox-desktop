@@ -116,6 +116,91 @@ pub const SETTINGS_CATALOG: &[SettingDefinition] = &[
         editor: SettingEditor::Section,
         risk: "low",
     },
+    // ── Work permits ────────────────────────────────────────────────────────────────────────
+    // Acceptance limits of a permit's gas test (L4-04, migration 290): a permit that needs a gas
+    // test is issued only when its latest reading is within them (`permit::safety_content`).
+    // Shipped values: the usual confined-space limits (O2 19.5-23.5 %, LEL < 10 %, H2S < 10 ppm,
+    // CO < 25 ppm). Safety values: a change needs a step-up and a reason.
+    // Lowest oxygen reading accepted (%, inclusive).
+    SettingDefinition {
+        key: crate::permit::safety_content::SETTING_GAS_O2_MIN,
+        category: "permits",
+        scope: "tenant",
+        shipped_value_json: r"19.5",
+        kind: SettingKind::Decimal {
+            min_millionths: 0,
+            max_millionths: 100_000_000,
+        },
+        editor: SettingEditor::Section,
+        risk: "high",
+    },
+    // Highest oxygen reading accepted (%, inclusive).
+    SettingDefinition {
+        key: crate::permit::safety_content::SETTING_GAS_O2_MAX,
+        category: "permits",
+        scope: "tenant",
+        shipped_value_json: r"23.5",
+        kind: SettingKind::Decimal {
+            min_millionths: 0,
+            max_millionths: 100_000_000,
+        },
+        editor: SettingEditor::Section,
+        risk: "high",
+    },
+    // Flammable gas (% of the lower explosive limit): a reading must stay below it.
+    SettingDefinition {
+        key: crate::permit::safety_content::SETTING_GAS_LEL_MAX,
+        category: "permits",
+        scope: "tenant",
+        shipped_value_json: r"10",
+        kind: SettingKind::Decimal {
+            min_millionths: 0,
+            max_millionths: 100_000_000,
+        },
+        editor: SettingEditor::Section,
+        risk: "high",
+    },
+    // Hydrogen sulphide (ppm): a reading must stay below it.
+    SettingDefinition {
+        key: crate::permit::safety_content::SETTING_GAS_H2S_MAX,
+        category: "permits",
+        scope: "tenant",
+        shipped_value_json: r"10",
+        kind: SettingKind::Decimal {
+            min_millionths: 0,
+            max_millionths: 1_000_000_000,
+        },
+        editor: SettingEditor::Section,
+        risk: "high",
+    },
+    // Carbon monoxide (ppm), when measured: a reading must stay below it.
+    SettingDefinition {
+        key: crate::permit::safety_content::SETTING_GAS_CO_MAX,
+        category: "permits",
+        scope: "tenant",
+        shipped_value_json: r"25",
+        kind: SettingKind::Decimal {
+            min_millionths: 0,
+            max_millionths: 10_000_000_000,
+        },
+        editor: SettingEditor::Section,
+        risk: "high",
+    },
+    // Re-test interval of a gas test (hours; CMMS Advisor 2026-11-11): a reading older than this is
+    // out of date at the issue, the activation, the reinstatement and each start or resume of the
+    // work. Shipped value 4 h; between a quarter of an hour and 24 h.
+    SettingDefinition {
+        key: crate::permit::safety_content::SETTING_GAS_VALIDITY_HOURS,
+        category: "permits",
+        scope: "tenant",
+        shipped_value_json: r"4",
+        kind: SettingKind::Decimal {
+            min_millionths: 250_000,
+            max_millionths: 24_000_000,
+        },
+        editor: SettingEditor::Section,
+        risk: "high",
+    },
     // ── Inventory ───────────────────────────────────────────────────────────────────────────
     // Four-eyes tolerance of a stock count variance (D11, migration 259): above it ("critique"), the
     // variance is approved by someone other than the counter. Above = any threshold set is exceeded
@@ -168,6 +253,26 @@ pub const SETTINGS_CATALOG: &[SettingDefinition] = &[
         shipped_value_json: r"150",
         // RPN = severity × occurrence × detection, each 1..10.
         kind: SettingKind::Integer { min: 1, max: 1000 },
+        editor: SettingEditor::Section,
+        risk: "low",
+    },
+    // Repeat failures (L2-09): an equipment is flagged when it has at least this many unplanned
+    // failures within the window below (`assets::repeat_failures`).
+    SettingDefinition {
+        key: crate::assets::repeat_failures::SETTING_COUNT,
+        category: "reliability",
+        scope: "tenant",
+        shipped_value_json: r"3",
+        kind: SettingKind::Integer { min: 2, max: 100 },
+        editor: SettingEditor::Section,
+        risk: "low",
+    },
+    SettingDefinition {
+        key: crate::assets::repeat_failures::SETTING_WINDOW_DAYS,
+        category: "reliability",
+        scope: "tenant",
+        shipped_value_json: r"90",
+        kind: SettingKind::Integer { min: 1, max: 3650 },
         editor: SettingEditor::Section,
         risk: "low",
     },
@@ -663,6 +768,27 @@ pub async fn decimal_setting<C: ConnectionTrait>(db: &C, key: &str) -> AppResult
     let raw: String = row.try_get("", "setting_value_json")?;
     let canonical = validate_value(def, &raw)?;
     serde_json::from_str(&canonical).map_err(|_| invalid(key, "GATE_SET_VALUE_NOT_NUMBER", "expected a number"))
+}
+
+/// An integer setting's value, checked against its catalog bounds. A missing or out-of-bounds
+/// value is an error: nothing is computed on a guessed value.
+pub async fn integer_setting<C: ConnectionTrait>(db: &C, key: &str) -> AppResult<i64> {
+    let def = definition(key)
+        .filter(|d| matches!(d.kind, SettingKind::Integer { .. }))
+        .ok_or_else(|| AppError::ValidationFailed(vec![format!("{key}: not an integer setting of the catalog")]))?;
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT setting_value_json FROM app_settings WHERE setting_key = ? AND setting_scope = ?",
+            [def.key.into(), def.scope.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::ValidationFailed(vec![format!("{key}: the setting is missing")]))?;
+    let raw: String = row.try_get("", "setting_value_json")?;
+    let canonical = validate_value(def, &raw)?;
+    canonical
+        .parse::<i64>()
+        .map_err(|_| invalid(key, "GATE_SET_VALUE_NOT_INTEGER", "expected a whole number"))
 }
 
 /// An optional decimal setting's value: `None` when blank (no row), never read as zero. A stored

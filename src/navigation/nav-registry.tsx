@@ -20,6 +20,7 @@ import {
   DollarSign,
   CheckSquare,
   FileUp,
+  Lock,
 } from "lucide-react";
 
 import type { NavItem } from "@/components/layout/Sidebar";
@@ -93,6 +94,14 @@ export const defaultNavItems: NavItem[] = [
     path: "/permits",
     icon: <ShieldCheck className="h-4 w-4" />,
     requiredPermission: P.PTW_VIEW,
+  },
+  {
+    // "Mes cadenas" (L4-18): a worker's own padlocks, with the narrow padlock right alone.
+    key: "my-padlocks",
+    labelKey: "nav.myPadlocks",
+    path: "/my-padlocks",
+    icon: <Lock className="h-4 w-4" />,
+    requiredPermission: P.PTW_LOCK_OWN,
   },
   {
     key: "inspections",

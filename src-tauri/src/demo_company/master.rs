@@ -299,6 +299,32 @@ async fn reference_data(ctx: &mut Ctx<'_>, admin: i64) -> AppResult<Refs> {
     let classes: Vec<(&str, &str, Option<i64>)> = catalog::EXTRA_CLASSES.iter().map(|(c, l)| (*c, *l, None)).collect();
     ensure_values(ctx, "EQUIPMENT.CLASS", &classes, admin).await?;
     crate::assets::taxonomy_reference::sync_equipment_classes_from_published_reference(ctx.db).await?;
+    // The shipped families hang under the class values of the set just published (L2-07).
+    crate::assets::taxonomy_reference::ensure_equipment_taxonomy_reference_integrity(ctx.db).await?;
+    // One family and one sub-family for each class the company added (the shipped classes come
+    // with theirs), so every machine has its family and sub-family.
+    let mut families: Vec<(String, String, Option<i64>)> = Vec::new();
+    for (class, label) in catalog::EXTRA_CLASSES {
+        let class_id = ref_value_id(ctx.db, "EQUIPMENT.CLASS", class).await?;
+        families.push((format!("{class}_FAMILY"), format!("Famille {label}"), Some(class_id)));
+    }
+    let family_refs: Vec<(&str, &str, Option<i64>)> =
+        families.iter().map(|(c, l, p)| (c.as_str(), l.as_str(), *p)).collect();
+    ensure_values(ctx, "EQUIPMENT.FAMILY", &family_refs, admin).await?;
+    let mut subfamilies: Vec<(String, String, Option<i64>)> = Vec::new();
+    for (class, label) in catalog::EXTRA_CLASSES {
+        let family_id = ref_value_id(ctx.db, "EQUIPMENT.FAMILY", &format!("{class}_FAMILY")).await?;
+        subfamilies.push((
+            format!("{class}_STANDARD"),
+            format!("{label} standard"),
+            Some(family_id),
+        ));
+    }
+    let subfamily_refs: Vec<(&str, &str, Option<i64>)> = subfamilies
+        .iter()
+        .map(|(c, l, p)| (c.as_str(), l.as_str(), *p))
+        .collect();
+    ensure_values(ctx, "EQUIPMENT.SUBFAMILY", &subfamily_refs, admin).await?;
 
     ensure_values(
         ctx,
@@ -679,6 +705,35 @@ async fn cost_centers(ctx: &mut Ctx<'_>, nodes: &BTreeMap<String, i64>) -> AppRe
 
 // ── Assets ───────────────────────────────────────────────────────────────────────────────────
 
+/// The family of a class in Données de référence (the active family under the class's published
+/// value, first by order) and its first sub-family; `None` when the class has none.
+async fn family_of_class(db: &sea_orm::DatabaseConnection, class: &str) -> AppResult<(Option<String>, Option<String>)> {
+    let class_id = ref_value_id(db, "EQUIPMENT.CLASS", class).await?;
+    let family = scalar_text(
+        db,
+        "SELECT rv.code FROM reference_values rv \
+         JOIN reference_sets rs ON rs.id = rv.set_id AND rs.status = 'published' \
+         JOIN reference_domains rd ON rd.id = rs.domain_id AND rd.code = 'EQUIPMENT.FAMILY' \
+         WHERE rv.parent_id = ? AND rv.is_active = 1 ORDER BY rv.sort_order ASC, rv.code ASC LIMIT 1",
+        vec![class_id.into()],
+    )
+    .await?;
+    let Some(family) = family else {
+        return Ok((None, None));
+    };
+    let family_id = ref_value_id(db, "EQUIPMENT.FAMILY", &family).await?;
+    let subfamily = scalar_text(
+        db,
+        "SELECT rv.code FROM reference_values rv \
+         JOIN reference_sets rs ON rs.id = rv.set_id AND rs.status = 'published' \
+         JOIN reference_domains rd ON rd.id = rs.domain_id AND rd.code = 'EQUIPMENT.SUBFAMILY' \
+         WHERE rv.parent_id = ? AND rv.is_active = 1 ORDER BY rv.sort_order ASC, rv.code ASC LIMIT 1",
+        vec![family_id.into()],
+    )
+    .await?;
+    Ok((Some(family), subfamily))
+}
+
 async fn assets(
     ctx: &mut Ctx<'_>,
     nodes: &BTreeMap<String, i64>,
@@ -700,6 +755,7 @@ async fn assets(
         // Commissioned 3 to 14 years before the history (fixed by position, not random).
         let years = 3 + (i as i64 * 7) % 12;
         let commissioned = start_day - Duration::days(365 * years + (i as i64 * 37) % 300);
+        let (family, subfamily) = family_of_class(ctx.db, m.class).await?;
         ctx.tick()?;
         let asset = crate::assets::identity::create_asset(
             ctx.db,
@@ -707,8 +763,8 @@ async fn assets(
                 "asset_code": m.code,
                 "asset_name": m.name,
                 "class_code": m.class,
-                "family_code": null,
-                "subfamily_code": null,
+                "family_code": family,
+                "subfamily_code": subfamily,
                 "criticality_code": m.criticality,
                 "status_code": "ACTIVE_IN_SERVICE",
                 "manufacturer": m.manufacturer,
