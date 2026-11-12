@@ -2370,7 +2370,8 @@
         "stock_reservations",
         "work_orders",
         "articles",
-        "stock_locations"
+        "stock_locations",
+        "personnel"
       ],
       "sync_status": "synced"
     },

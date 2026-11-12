@@ -18,7 +18,7 @@ const REPAIRABLE_STATUS_DOMAIN: &str = "inventory.repairable_status";
 const PO_DOCUMENT_ENTITY_TYPE: &str = "PURCHASE_ORDER";
 const REPAIRABLE_DOCUMENT_ENTITY_TYPE: &str = "REPAIRABLE_ORDER";
 
-fn now_iso() -> String {
+pub(crate) fn now_iso() -> String {
     crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
 
@@ -348,6 +348,20 @@ pub async fn create_procurement_requisition(
     db: &DatabaseConnection,
     input: CreateProcurementRequisitionInput,
 ) -> AppResult<ProcurementRequisition> {
+    let tx = db.begin().await?;
+    let req_id = insert_procurement_requisition(&tx, input, None).await?;
+    tx.commit().await?;
+    get_procurement_requisition(db, req_id).await
+}
+
+/// One-line requisition written on the caller's connection (a work-order hors-stock purchase
+/// writes its article, work-order line and requisition in one transaction). `projected_unit_cost`
+/// is the estimated unit price (tenant currency) used for the approval amount.
+pub(crate) async fn insert_procurement_requisition<C: ConnectionTrait>(
+    db: &C,
+    input: CreateProcurementRequisitionInput,
+    projected_unit_cost: Option<f64>,
+) -> AppResult<i64> {
     if input.requested_qty <= 0.0 {
         return Err(AppError::ValidationFailed(vec![
             "GATE_INV_QTY_POSITIVE: requested_qty must be greater than zero.".to_string(),
@@ -375,9 +389,10 @@ pub async fn create_procurement_requisition(
         }
     }
 
-    let tx = db.begin().await?;
+    crate::inventory::non_stock::ensure_requisition_demand(db, &input).await?;
+    let tx = db;
     let req_number = crate::sync::code_clash::PROCUREMENT_REQUISITIONS
-        .next_number(&tx)
+        .next_number(tx)
         .await?;
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -417,8 +432,8 @@ pub async fn create_procurement_requisition(
         DbBackend::Sqlite,
         "INSERT INTO procurement_requisition_lines
             (requisition_id, article_id, preferred_location_id, requested_qty, demand_source_line_id,
-             source_reservation_id, source_reorder_trigger, status, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'OPEN', ?)",
+             source_reservation_id, source_reorder_trigger, status, created_at, projected_unit_cost)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'OPEN', ?, ?)",
         [
             req_id.into(),
             input.article_id.into(),
@@ -431,12 +446,13 @@ pub async fn create_procurement_requisition(
                 .clone()
                 .map_or(Value::String(None), Value::from),
             now_iso().into(),
+            projected_unit_cost.map_or(Value::Double(None), Value::from),
         ],
     ))
     .await?;
 
     record_state_event(
-        &tx,
+        tx,
         "requisition",
         req_id,
         None,
@@ -446,8 +462,7 @@ pub async fn create_procurement_requisition(
         Some("requisition_created"),
     )
     .await?;
-    tx.commit().await?;
-    get_procurement_requisition(db, req_id).await
+    Ok(req_id)
 }
 
 pub async fn transition_procurement_requisition(
@@ -1137,6 +1152,26 @@ pub async fn receive_purchase_order_goods(
         ))
         .await?;
 
+        // A hors-stock article (L3-04) never enters the store: the accepted quantity is booked
+        // straight to its work order as parts actual, with no stock movement and no valuation.
+        if crate::inventory::non_stock::is_non_stock_article(&tx, line.article_id).await? {
+            if line.lots.as_ref().is_some_and(|l| !l.is_empty()) {
+                return Err(AppError::ValidationFailed(vec![
+                    "GATE_INV_NOT_LOT_TRACKED: This article is not lot-tracked; receive it without lots.".to_string(),
+                ]));
+            }
+            let unit_cost_tenant = po_unit_price.filter(|p| p.is_finite() && *p >= 0.0).map(|p| p * rate);
+            crate::inventory::non_stock::book_receipt_to_work_order(
+                &tx,
+                line.po_line_id,
+                accepted_qty,
+                unit_cost_tenant,
+            )
+            .await?;
+            // Nothing entered the store: no reservation or issue follows for this line.
+            accepted_stock.push(0.0);
+            continue;
+        }
         accepted_stock.push(accepted_qty);
         if accepted_qty > 0.0 {
             // Tracked articles: the accepted quantity is received into its lots / serials.
@@ -2083,7 +2118,7 @@ pub async fn list_inventory_state_events(
         .collect()
 }
 
-async fn get_procurement_requisition(
+pub(crate) async fn get_procurement_requisition(
     db: &DatabaseConnection,
     requisition_id: i64,
 ) -> AppResult<ProcurementRequisition> {
@@ -2377,7 +2412,12 @@ pub async fn check_wo_part_stock_availability(
                     wop.quantity_planned AS planned_qty,
                     COALESCE(wop.quantity_reserved, 0.0) AS quantity_reserved,
                     wop.stock_location_id AS preferred_location_id,
-                    COALESCE(sb_sum.available_qty, 0.0) AS available_qty
+                    -- A hors-stock part (L3-04) is never in the store: what is available is what
+                    -- the supplier delivered for this line.
+                    CASE WHEN EXISTS (SELECT 1 FROM lookup_values nslv
+                                       WHERE nslv.id = a.stocking_type_value_id AND nslv.code = 'NON_STOCK')
+                         THEN COALESCE(wop.non_stock_received_qty, 0.0)
+                         ELSE COALESCE(sb_sum.available_qty, 0.0) END AS available_qty
              FROM work_order_parts wop
              LEFT JOIN articles a ON a.id = wop.article_id
              LEFT JOIN (
@@ -2537,6 +2577,7 @@ async fn validate_requisition_lines<C: ConnectionTrait>(
             }
         }
         ensure_article_active(db, line.article_id).await?;
+        crate::inventory::non_stock::ensure_stock_article_line(db, line.article_id).await?;
         if let Some(location_id) = line.preferred_location_id.filter(|id| *id > 0) {
             ensure_location_active(db, location_id).await?;
         }

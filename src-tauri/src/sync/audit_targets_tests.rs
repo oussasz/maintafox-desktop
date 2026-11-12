@@ -86,7 +86,14 @@ const DYNAMIC_SITES: &[(&str, &str)] = &[
 
 /// Types kept on their device by an action-code term of the row filter (not by their type). Only
 /// this action is covered: a notification audit with another action code must be handled on its own.
-const KEPT_BY_ACTION: &[(&str, &str)] = &[("notification", "notification.safety_notice_acknowledged")];
+/// A received execution change applied without its author (`wo::execution_actor_sync`) is kept on
+/// the PC that applied it, whatever its target (a work order or task, both also mapped for the
+/// audits that travel).
+const KEPT_BY_ACTION: &[(&str, &str)] = &[
+    ("notification", "notification.safety_notice_acknowledged"),
+    ("work_order", "WO_EXECUTION_AUTHOR_NOT_RECEIVED"),
+    ("work_order_task", "WO_EXECUTION_AUTHOR_NOT_RECEIVED"),
+];
 
 /// Known gaps, reported to their domain leads (not decided here): written with a target the codec
 /// cannot encode, so their events stay on the PC that wrote them (stub only) and `seal` logs an

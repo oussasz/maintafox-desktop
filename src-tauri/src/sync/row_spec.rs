@@ -602,6 +602,8 @@ pub const ROW_SPECS: &[RowSpec] = &[
         &[
             r("article_id", "articles"),
             r("stock_location_id", "stock_locations"),
+            // Who a received hors-stock part was handed to (migration 291).
+            r("handed_to_personnel_id", "personnel"),
             unmapped("cost_override_by_id"),
         ],
     ),
@@ -1105,8 +1107,13 @@ pub const ROW_SPECS: &[RowSpec] = &[
         // The audit of an applied bulk import (`bulk_import::apply_batch`, target `bulk_import_batch`)
         // stays on this PC too: the staging batch is local-only (`bulk_import_batches`) and its id means
         // nothing on another PC; the records the import created or updated travel on their own rows.
+        // A received execution change applied here without its author (`wo::execution_actor_sync`,
+        // `WO_EXECUTION_AUTHOR_NOT_RECEIVED`) is recorded on this PC only, like a conflict resolved
+        // here: it says what this PC did on arrival, and it names a work order or task that the
+        // sending PC may have deleted since (a travelling event would wait there for it forever).
+        // Only its stub travels (queued by `audit::chain::seal`, the apply suppresses capture).
         row_filter: Some(
-            "{row}.action_code NOT IN ('notification.safety_notice_acknowledged', 'sync.conflict_resolved') \
+            "{row}.action_code NOT IN ('notification.safety_notice_acknowledged', 'sync.conflict_resolved', 'WO_EXECUTION_AUTHOR_NOT_RECEIVED') \
              AND COALESCE({row}.target_type, '') NOT IN ('work_permit', 'permit_type', 'stock_location_article', 'stock_reservation', 'app_session', 'bulk_import_batch') \
              AND substr(COALESCE({row}.chain_hash, ''), 1, 3) NOT IN ('L1:', 'L2:')",
         ),
@@ -1122,7 +1129,9 @@ pub const ROW_SPECS: &[RowSpec] = &[
                         ("user_scope_assignment", "user_scope_assignments"),
                         ("work_order", "work_orders"),
                         // A received execution change applied without its author here (`wo::execution_actor_sync`):
-                        // the target is the work order or one of its tasks.
+                        // the target is the work order or one of its tasks. That audit is kept on
+                        // its PC (row filter above); the mapping stays for the work-order audits
+                        // that travel.
                         ("work_order_task", "work_order_tasks"),
                         // A site given to an old record without one (`org::site_assignment`).
                         ("intervention_request", "intervention_requests"),
@@ -1423,7 +1432,15 @@ pub const ROW_SPECS: &[RowSpec] = &[
     spec("user_analytics_dashboard_layouts", &[r("user_id", USER)]),
     // ── Inventory and procurement ───────────────────────────────────────────────────────────
     spec("article_families", &[]),
-    spec("articles", &[]),
+    spec(
+        "articles",
+        &[
+            // A hors-stock article created from a work order, and the article a duplicate
+            // duplicates (migration 291). The origin is only a link back: written once known.
+            soft("origin_work_order_id", "work_orders"),
+            r("duplicate_of_article_id", "articles"),
+        ],
+    ),
     spec("unit_conversions", &[]),
     spec("inventory_lots", &[]),
     spec("currency_exchange_rates", &[]),

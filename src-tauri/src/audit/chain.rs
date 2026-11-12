@@ -348,6 +348,8 @@ pub(crate) async fn seal(
 ) -> AppResult<()> {
     let with_stubs = stubs_table_exists(conn).await?;
     let (hash, digest) = event_hash(conn, entity_sync_id, prev_hash, with_stubs).await?;
+    // Hashed over its sync payload (not a local form, `L1:` or `L2:`): the event itself travels.
+    let travels = digest.is_none() && !hash.starts_with(LOCAL_FORM_PREFIX_BEFORE_STUBS);
     if digest.is_some() {
         // A diagnostic only: it never stops the event from being written.
         if let Err(e) = report_unmapped_kept_event(conn, entity_sync_id).await {
@@ -376,7 +378,7 @@ pub(crate) async fn seal(
                     origin.into(),
                     seq.into(),
                     prev_hash.map(str::to_string).into(),
-                    hash.into(),
+                    hash.clone().into(),
                     digest.into(),
                 ],
             ))
@@ -388,7 +390,74 @@ pub(crate) async fn seal(
             );
         }
     }
-    Ok(())
+    if !travels && !with_stubs {
+        // Sealed before stubs existed (`L1:`): migration 250 gives it its stub.
+        return Ok(());
+    }
+    queue_while_capture_suppressed(conn, entity_sync_id, &hash, travels).await
+}
+
+/// An event written while sync capture is suppressed in this transaction (an audit written by the
+/// apply of a received row, `sync::materialize::apply_inbound_payload`, or by a job that writes
+/// device-derived rows) is not seen by the capture triggers. It is still chained, so it is queued
+/// here explicitly: the event when it travels, its stub when it is kept on this device. Otherwise
+/// the other PCs would see its position missing from this device's chain. Without the capture
+/// tables (before migration 162) nothing is captured and nothing is queued.
+async fn queue_while_capture_suppressed(
+    conn: &impl ConnectionTrait,
+    entity_sync_id: &str,
+    hash: &str,
+    travels: bool,
+) -> AppResult<()> {
+    let has_capture = conn
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'sync_capture_suppression'"
+                .to_string(),
+        ))
+        .await?
+        .is_some();
+    if !has_capture {
+        return Ok(());
+    }
+    let suppressed = conn
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT 1 AS present FROM sync_capture_suppression LIMIT 1".to_string(),
+        ))
+        .await?
+        .is_some();
+    if !suppressed {
+        return Ok(());
+    }
+    let (entity_type, row) = if travels {
+        (
+            "audit_events",
+            conn.query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT id FROM audit_events WHERE entity_sync_id = ?",
+                [entity_sync_id.into()],
+            ))
+            .await?,
+        )
+    } else {
+        (
+            "audit_chain_stubs",
+            conn.query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT id FROM audit_chain_stubs WHERE chain_hash = ?",
+                [hash.into()],
+            ))
+            .await?,
+        )
+    };
+    // A kept event whose position was already held by another stub (logged above) has no stub of
+    // its own: nothing to send (its own stub is found by its hash, never the one holding the place).
+    let Some(row) = row else {
+        return Ok(());
+    };
+    let local_id: i64 = row.try_get("", "id").map_err(|e| decode_err("id", e))?;
+    crate::sync::capture::capture_row_change(conn, entity_type, local_id).await
 }
 
 /// Checks a stub received by synchronisation (`sync::apply_hooks::before_upsert_checked`):

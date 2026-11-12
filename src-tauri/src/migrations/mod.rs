@@ -265,6 +265,7 @@ mod m20261111_000287_library_document_control;
 mod m20261111_000288_library_document_versions;
 mod m20261111_000289_asset_condition_and_repeat_failures;
 mod m20261111_000290_permit_safety_content;
+mod m20261111_000291_non_stock_wo_purchase;
 mod m20261111_000292_pm_plan_coverage;
 mod m20261111_000294_permit_workers;
 mod m20261201_000037_observability_permissions;
@@ -539,6 +540,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261104_000277_wo_depannage::Migration),
             Box::new(m20261110_000286_wo_history_records::Migration),
             Box::new(m20261111_000290_permit_safety_content::Migration),
+            Box::new(m20261111_000291_non_stock_wo_purchase::Migration),
             Box::new(m20261111_000294_permit_workers::Migration),
         ]
     }

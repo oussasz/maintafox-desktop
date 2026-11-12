@@ -407,8 +407,8 @@
     "dashboard": {
       "title": "Vue d'ensemble achats",
       "openRequisitions": "Demandes ouvertes",
-      "openPos": "BCs ouverts",
-      "latePos": "BCs en retard",
+      "openPos": "Commandes ouvertes",
+      "latePos": "Commandes en retard",
       "receivingToday": "Réceptions du jour",
       "pendingApprovals": "En attente d'approbation",
       "pendingReceipts": "Réceptions en attente",
@@ -425,7 +425,7 @@
       "title": "Alertes",
       "kinds": {
         "CRITICAL_STOCK": "Stock critique",
-        "LATE_PO": "BC en retard",
+        "LATE_PO": "Commande en retard",
         "SUPPLIER_DELAY": "Risque fournisseur",
         "REPAIRABLE_OVERDUE": "Réparation en retard",
         "other": "Alerte"
@@ -760,8 +760,8 @@
         "avgLeadTime": "Délai moyen (j)",
         "deliveryAccuracy": "Précision livraison",
         "avgPrice": "Prix moyen",
-        "openPos": "BCs ouverts",
-        "completedPos": "BCs clôturés",
+        "openPos": "Commandes ouvertes",
+        "completedPos": "Commandes clôturées",
         "lastPurchase": "Dernier achat",
         "rejectedPct": "Quantité rejetée",
         "risk": "Niveau de risque",
@@ -1260,7 +1260,7 @@
     "current": "Stock actuel",
     "currentOnHand": "En stock",
     "available": "Disponible",
-    "incoming": "BC en cours",
+    "incoming": "En commande",
     "delta": "Cet écart",
     "projected": "Projeté"
   },
@@ -1496,6 +1496,27 @@
       "locationCode": "ex. A-01-02",
       "locationName": "ex. Allée A, rayon 1, étagère 2"
     }
+  },
+  "nonStock": {
+    "tab": "Hors stock",
+    "title": "Pièces hors stock",
+    "description": "Pièces achetées pour un OT, jamais en magasin : hors des listes de stock, des inventaires, du réapprovisionnement et de la valorisation. Celles créées depuis un OT sont à revoir.",
+    "toReviewOnly": "À revoir seulement",
+    "loading": "Chargement des pièces hors stock…",
+    "loadFailed": "Les pièces hors stock n’ont pas pu être chargées.",
+    "empty": "Aucune pièce hors stock à afficher.",
+    "fromWorkOrder": "Créée depuis l’OT {{code}}",
+    "state": {
+      "toReview": "À revoir",
+      "reviewed": "Revue",
+      "duplicate": "Doublon"
+    },
+    "keep": "Garder hors stock",
+    "promote": "Passer en stock",
+    "duplicateOf": "Doublon de…",
+    "markDuplicate": "Marquer doublon",
+    "chooseDuplicate": "Choisissez l’article que celle-ci double.",
+    "reviewFailed": "La revue n’a pas pu être enregistrée."
   },
   "unitConversions": {
     "loadError": "Les conversions d’unités n’ont pas pu être chargées",

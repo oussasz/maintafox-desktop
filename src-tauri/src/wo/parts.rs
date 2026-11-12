@@ -75,6 +75,16 @@ pub struct WoPart {
     /// someone without the stock right, issued or cancelled by the storekeeper. 0 otherwise.
     #[serde(default)]
     pub pending_issue_qty: f64,
+    /// Hors-stock article (stocking type `NON_STOCK`, L3-04): bought for this work order, received
+    /// without any stock movement; its use is the receipt.
+    #[serde(default)]
+    pub is_non_stock: bool,
+    /// Hors-stock quantity received from the supplier ("reçu").
+    #[serde(default)]
+    pub non_stock_received_qty: f64,
+    /// Optional "remis à <personne>" of a received hors-stock part.
+    #[serde(default)]
+    pub handed_to_personnel_id: Option<i64>,
 }
 
 /// Two quantities closer than this are the same (sums of decimal quantities in floating point).
@@ -201,6 +211,16 @@ fn map_part(row: &sea_orm::QueryResult) -> AppResult<WoPart> {
         pending_issue_qty: row
             .try_get::<f64>("", "pending_issue_qty")
             .map_err(|e| decode_err("pending_issue_qty", e))?,
+        is_non_stock: row
+            .try_get::<i64>("", "is_non_stock")
+            .map_err(|e| decode_err("is_non_stock", e))?
+            > 0,
+        non_stock_received_qty: row
+            .try_get::<f64>("", "non_stock_received_qty")
+            .map_err(|e| decode_err("non_stock_received_qty", e))?,
+        handed_to_personnel_id: row
+            .try_get::<Option<i64>>("", "handed_to_personnel_id")
+            .map_err(|e| decode_err("handed_to_personnel_id", e))?,
     })
 }
 
@@ -230,7 +250,10 @@ const PART_COLS: &str = concat!(
      wop.quantity_reserved, wop.quantity_issued, wop.notes, \
      COALESCE(NULLIF(TRIM(wop.article_ref), ''), a.article_code) AS article_label, \
      wop.origin, wop.consumption_status, wop.not_used_reason_id, wop.not_used_comment, \
-     nur.label AS not_used_reason_label, wop.is_required, wop.pending_issue_qty, ",
+     nur.label AS not_used_reason_label, wop.is_required, wop.pending_issue_qty, \
+     wop.non_stock_received_qty, wop.handed_to_personnel_id, \
+     (SELECT COUNT(*) FROM lookup_values nslv \
+       WHERE nslv.id = a.stocking_type_value_id AND nslv.code = 'NON_STOCK') AS is_non_stock, ",
     crate::reference::units::unit_symbol_of!("a.unit_value_id"),
     " AS unit_symbol"
 );
@@ -681,6 +704,7 @@ async fn record_actual_usage_in<C: ConnectionTrait>(
         })?;
     let part = map_part(&part_row)?;
     refuse_if_cancelled(&part)?;
+    refuse_if_non_stock(&part)?;
 
     let status_code = load_wo_status_code(db, part.work_order_id).await?;
     if !matches!(status_code.as_str(), "in_progress" | "on_hold" | "completed") {
@@ -830,6 +854,7 @@ pub async fn mark_part_not_used(db: &DatabaseConnection, input: MarkPartNotUsedI
         })?;
     let part = map_part(&part_row)?;
     refuse_if_cancelled(&part)?;
+    refuse_non_stock_not_used(db, &part).await?;
 
     let status_code = load_wo_status_code(db, part.work_order_id).await?;
     if !matches!(status_code.as_str(), "in_progress" | "on_hold" | "completed") {
@@ -1061,6 +1086,62 @@ pub async fn unconfirm_no_parts_used(db: &DatabaseConnection, wo_id: i64, actor_
 // D) list_wo_parts
 // ═══════════════════════════════════════════════════════════════════════════════
 
+/// Work-order line of a hors-stock purchase (L3-04), written on the caller's transaction with the
+/// article and the requisition (`inventory::non_stock`). No store location and no use yet: the
+/// receipt books the quantity and its cost. Planned before execution, "added" during it.
+pub(crate) async fn insert_non_stock_line<C: ConnectionTrait>(
+    conn: &C,
+    wo_id: i64,
+    article_id: i64,
+    quantity: f64,
+    estimated_unit_cost: Option<f64>,
+    notes: Option<String>,
+) -> AppResult<WoPart> {
+    let status_code = load_wo_status_code(conn, wo_id).await?;
+    if matches!(status_code.as_str(), "closed" | "cancelled") {
+        let status_key = status_i18n_key(&status_code);
+        return Err(AppError::ValidationFailed(vec![format!(
+            "GATE_WO_PART_WO_LOCKED:status={status_key}: Impossible d'ajouter des pièces à un OT {status_code}."
+        )]));
+    }
+    let origin = if matches!(status_code.as_str(), "in_progress" | "on_hold" | "completed") {
+        "execution_added"
+    } else {
+        "planned"
+    };
+    let inserted = conn
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO work_order_parts \
+             (work_order_id, article_id, article_ref, quantity_planned, quantity_used, unit_cost, \
+              stock_location_id, notes, origin, consumption_status, is_required, pending_issue_qty) \
+             VALUES (?, ?, NULL, ?, NULL, ?, NULL, ?, ?, 'pending', 1, 0)",
+            [
+                wo_id.into(),
+                article_id.into(),
+                quantity.into(),
+                estimated_unit_cost
+                    .map(sea_orm::Value::from)
+                    .unwrap_or(sea_orm::Value::from(None::<f64>)),
+                notes
+                    .map(sea_orm::Value::from)
+                    .unwrap_or(sea_orm::Value::from(None::<String>)),
+                origin.into(),
+            ],
+        ))
+        .await?;
+    let part_rowid = crate::db::inserted_id(&inserted)?;
+    let row = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!("SELECT {PART_COLS} FROM {PART_FROM} WHERE wop.rowid = ?"),
+            [part_rowid.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Failed to re-read part after insert")))?;
+    map_part(&row)
+}
+
 pub async fn list_wo_parts(db: &DatabaseConnection, wo_id: i64) -> AppResult<Vec<WoPart>> {
     let rows = db
         .query_all(Statement::from_sql_and_values(
@@ -1087,6 +1168,10 @@ pub mod part_line_codes {
     pub const SETTLED: &str = "WO_PART_LINE_SETTLED";
     pub const CANCELLED: &str = "WO_PART_LINE_CANCELLED";
     pub const CHANGED: &str = "WO_PART_LINE_CHANGED";
+    /// A hors-stock line's use is its receipt: no use or "not used" is recorded by hand.
+    pub const NON_STOCK_BY_RECEIPT: &str = "WO_PART_LINE_NON_STOCK_BY_RECEIPT";
+    /// A hors-stock line whose purchase is still open: cancel the purchase first.
+    pub const NON_STOCK_PURCHASE_OPEN: &str = "WO_PART_LINE_NON_STOCK_PURCHASE_OPEN";
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1104,6 +1189,38 @@ fn part_line_refusal(code: &str, message: impl Into<String>, params: &[(&str, St
     crate::errors::org_validation_failed(code, message, crate::errors::issue_params(params))
 }
 
+/// A hors-stock line takes no hand-recorded use or "not used": the receipt books what arrived.
+fn refuse_if_non_stock(part: &WoPart) -> AppResult<()> {
+    if part.is_non_stock {
+        return Err(part_line_refusal(
+            part_line_codes::NON_STOCK_BY_RECEIPT,
+            "This hors-stock part is booked to the work order when it is received; its use is not entered by hand.",
+            &[],
+        ));
+    }
+    Ok(())
+}
+
+/// A hors-stock line is settled by its receipt. When its purchase ended without anything received
+/// (request refused or cancelled, order cancelled, delivery rejected), it is marked "not used"
+/// with a reason like any planned line, so the work order can still be completed.
+async fn refuse_non_stock_not_used<C: ConnectionTrait>(conn: &C, part: &WoPart) -> AppResult<()> {
+    if !part.is_non_stock {
+        return Ok(());
+    }
+    if part.non_stock_received_qty > 0.0 {
+        return refuse_if_non_stock(part);
+    }
+    if crate::inventory::non_stock::part_has_open_purchase(conn, part.id).await? {
+        return Err(part_line_refusal(
+            part_line_codes::NON_STOCK_PURCHASE_OPEN,
+            "The purchase of this hors-stock part is still open: cancel the request or the order first.",
+            &[],
+        ));
+    }
+    Ok(())
+}
+
 /// A cancelled line takes no usage and no "not used" disposition.
 fn refuse_if_cancelled(part: &WoPart) -> AppResult<()> {
     if part.consumption_status == PART_STATUS_CANCELLED {
@@ -1116,7 +1233,7 @@ fn refuse_if_cancelled(part: &WoPart) -> AppResult<()> {
     Ok(())
 }
 
-async fn load_part_in<C: ConnectionTrait>(conn: &C, wo_part_id: i64) -> AppResult<WoPart> {
+pub(crate) async fn load_part_in<C: ConnectionTrait>(conn: &C, wo_part_id: i64) -> AppResult<WoPart> {
     let row = conn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -1194,6 +1311,13 @@ pub async fn cancel_planned_part(
     use sea_orm::TransactionTrait;
     let txn = db.begin().await?;
     let part = check_planned_line_editable(&txn, input.wo_part_id).await?;
+    if part.is_non_stock && crate::inventory::non_stock::part_has_open_purchase(&txn, part.id).await? {
+        return Err(part_line_refusal(
+            part_line_codes::NON_STOCK_PURCHASE_OPEN,
+            "The purchase of this hors-stock part is still open: cancel the request or order first.",
+            &[],
+        ));
+    }
 
     if let Some(reservation_id) = part.reservation_id {
         // The store desk can issue against the WO reservation before execution (the line's own
