@@ -1,4 +1,6 @@
-import { render, screen } from "@testing-library/react";
+import { render as rtlRender, screen } from "@testing-library/react";
+import type { ReactElement } from "react";
+import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { IshikawaDiagramCanvas } from "@/components/reliability/IshikawaDiagramCanvas";
@@ -25,6 +27,10 @@ const svc = vi.hoisted(() => ({
   upsertRamIshikawaDiagram: vi.fn(),
 }));
 vi.mock("@/services/reliability-service", () => svc);
+vi.mock("@/services/asset-service", () => ({
+  getAssetById: vi.fn(() => Promise.resolve({ id: 10, asset_code: "P-101", asset_name: "Pump" })),
+}));
+const render = (ui: ReactElement) => rtlRender(<MemoryRouter>{ui}</MemoryRouter>);
 vi.mock("@/services/wo-service", () => ({
   createWo: vi.fn(),
   listWorkOrderTypes: vi.fn(() => Promise.resolve([])),
@@ -66,6 +72,15 @@ describe("IshikawaDiagramCanvas", () => {
     expect(add.length).toBeGreaterThan(0);
     for (const b of add) expect(b).toBeDisabled();
     expect(screen.getByRole("note")).toHaveTextContent("rams.rights.readOnly");
+  });
+
+  it("offers a visible promote button that says what to do first (L2-19)", async () => {
+    svc.listRamIshikawaDiagrams.mockResolvedValueOnce([]);
+    render(<IshikawaDiagramCanvas equipmentId={10} />);
+    const promote = await screen.findByRole("button", { name: "governance.promoteMenu" });
+    expect(promote).toBeDisabled();
+    expect(screen.getByText("governance.promoteSelectFirst")).toBeInTheDocument();
+    expect(promote).toHaveAttribute("aria-describedby", "ishikawa-promote-reason");
   });
 
   it("leaves the buttons enabled with ram.manage", async () => {

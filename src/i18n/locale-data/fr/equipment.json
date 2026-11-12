@@ -192,6 +192,7 @@
       "ageM": "{{months}}m",
       "ageD": "{{days}}j",
       "availabilityAsOf": "Dernière analyse de fiabilité, au {{date}}",
+      "failuresRams": "Même calcul que le module RAMS, sur les {{months}} derniers mois",
       "availabilityNone": "Aucune analyse de fiabilité calculée pour cet actif"
     },
     "today": "Aujourd'hui",
@@ -512,7 +513,7 @@
       "pm": "Plans de maintenance",
       "failure": "Événements de panne",
       "document": "Documents",
-      "iot": "Signaux IoT",
+      "iot": "Mesures de capteurs",
       "erp": "Correspondance avec l'ERP"
     }
   },
@@ -741,6 +742,12 @@
     "schedule": "Régime de fonctionnement",
     "scheduleNone": "Non défini (24 h/24 supposé)",
     "utilization": "Facteur d’utilisation",
+    "failures": "Pannes ({{months}} derniers mois)",
+    "mtbf": "MTBF",
+    "hoursUnit": "h",
+    "tooShort": "Période trop courte pour calculer le MTBF.",
+    "noMtbf": "Aucune panne sur la période : pas de MTBF.",
+    "open": "Ouvrir dans RAMS",
     "hint": "Utilisé par le module RAMS pour convertir le temps calendaire en temps de fonctionnement."
   },
   "moveComponent": {
@@ -788,6 +795,7 @@
       "openHint_other": "{{count}} en cours",
       "failures": "Pannes (correctif et urgence)",
       "lastFailure": "Dernière le {{date}}",
+      "failuresRams": "Même calcul que le module RAMS, sur les {{months}} derniers mois",
       "noFailure": "Aucune panne enregistrée",
       "downtime": "Arrêts",
       "hours": "h",

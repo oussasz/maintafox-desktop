@@ -7,6 +7,8 @@ export interface AppToastItem {
   variant?: "default" | "destructive" | "success";
   /** Stays until the user dismisses it (a warning that must not be missed). */
   persistent?: boolean;
+  /** A follow-up the message offers (e.g. "Open" the record it just created). */
+  action?: { label: string; onClick: () => void };
 }
 
 interface AppToastState {
