@@ -45,11 +45,13 @@ async fn exec(db: &DatabaseConnection, sql: &str) {
         .expect(sql);
 }
 
+/// A personnel record with its sync identity, as the personnel commands create one (a worker line
+/// naming a record without one cannot be written on the wire).
 async fn person(db: &DatabaseConnection, code: &str, name: &str, origin: &str) -> i64 {
     exec(
         db,
         &format!(
-            "INSERT INTO personnel (employee_code, full_name, availability_status, employment_origin) VALUES ('{code}', '{name}', 'available', '{origin}')"
+            "INSERT INTO personnel (entity_sync_id, employee_code, full_name, availability_status, employment_origin) VALUES ('per-{code}', '{code}', '{name}', 'available', '{origin}')"
         ),
     )
     .await;

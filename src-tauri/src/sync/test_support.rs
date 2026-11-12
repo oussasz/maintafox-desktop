@@ -494,6 +494,10 @@ const VALUE_OVERRIDES: &[(&str, &str, &str)] = &[
     // active (its generic times are in order: fitted, verified, activated, lock removed, expiry),
     // so its generic isolations arrive with it as a valid group.
     ("work_permits", "status", "'active'"),
+    // An active permit of a type that needs a gas test is judged on its latest gas test at its
+    // activation (L4-04, `permit::sync_check::gas_verdict`); the generic permit is created alone,
+    // with no gas test, so its generic type needs none (a generic `requires_*` flag is otherwise 1).
+    ("permit_types", "requires_atmospheric_test", "0"),
     // An active permit names who approved it (four-eyes, `permit::sync_check::four_eyes_check`): its
     // author, submitter and approver are three generic accounts (one parent row per reference), so
     // a four-eyes approval, not flagged a self-approval, approved after it was submitted.
