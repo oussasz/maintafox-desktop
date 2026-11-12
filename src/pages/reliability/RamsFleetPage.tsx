@@ -5,13 +5,17 @@
 import {
   Activity,
   Archive,
+  ArrowDown,
   ArrowRight,
+  ArrowUp,
+  ArrowUpDown,
+  ClipboardCheck,
   FolderOpen,
   Pencil,
   Search,
   ShieldCheck,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
@@ -49,6 +53,7 @@ import { cn } from "@/lib/utils";
 import { getAssetById } from "@/services/asset-service";
 import {
   type FleetAssetRow,
+  type FleetSortKey,
   type FleetView,
   type ReliabilityStudy,
   createReliabilityStudy,
@@ -56,9 +61,23 @@ import {
   listReliabilityStudies,
   updateReliabilityStudy,
 } from "@/services/reliability-study-service";
+import { pushAppToast } from "@/store/app-toast-store";
 import { P } from "@shared/rbac/permissions.generated";
 
 const PAGE = 50;
+/** Rows of the "10 most failing / 10 most costly" views. */
+const TOP_N = 10;
+/** Ranking columns the backend can order by. */
+const SORT_KEYS: readonly FleetSortKey[] = ["failures", "downtime", "mtbf", "cost"];
+
+/** Ids of a `1,2,3` address value (the equipment ticked for a study). */
+function parseIds(raw: string | null): number[] {
+  if (!raw) return [];
+  return raw
+    .split(",")
+    .map((x) => Number(x))
+    .filter((n) => Number.isInteger(n) && n > 0);
+}
 /** Step of a study an analysis method opens on (the step keys of the study page). */
 type AnalysisStep = "life" | "fmeca" | "rcm";
 /** The analysis methods offered on the home page, each with the study step it opens. */
@@ -72,7 +91,8 @@ const ANALYSIS_METHODS: readonly { key: string; step: AnalysisStep }[] = [
 export function RamsFleetPage() {
   const { t } = useTranslation("reliability");
   const fleetText = useFleetKpiText();
-  const { formatNumber, formatDecimal, formatPercent, formatDate } = useFormatters();
+  const { formatNumber, formatDecimal, formatPercent, formatDate, formatCurrency, formatTime } =
+    useFormatters();
   const navigate = useNavigate();
   const { can } = usePermissions();
   const [loadingMore, setLoadingMore] = useState(false);
@@ -81,7 +101,6 @@ export function RamsFleetPage() {
   const [view, setView] = useState<FleetView | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
-  const [selected, setSelected] = useState<number[]>([]);
   // An equipment handed over in the address (/reliability?equipment=<id>, e.g. from the asset
   // record): selected for a study, named, or the failure shown.
   const [searchParams, setSearchParams] = useSearchParams();
@@ -91,6 +110,18 @@ export function RamsFleetPage() {
   const months: RamsPeriodMonths = (RAMS_PERIOD_MONTHS as readonly number[]).includes(monthsParam)
     ? (monthsParam as RamsPeriodMonths)
     : RAMS_DEFAULT_MONTHS;
+  // The ranking order, the 10-row views and the ticked equipment live in the address too:
+  // opening an equipment or a study and coming back keeps them.
+  const sortParam = searchParams.get("sort");
+  const sortKey: FleetSortKey | null = (SORT_KEYS as readonly string[]).includes(sortParam ?? "")
+    ? (sortParam as FleetSortKey)
+    : null;
+  const sortDesc = searchParams.get("dir")
+    ? searchParams.get("dir") === "desc"
+    : sortKey !== "mtbf";
+  const topOnly = searchParams.get("top") === String(TOP_N);
+  const selectedParam = searchParams.get("sel");
+  const selected = useMemo(() => parseIds(selectedParam), [selectedParam]);
   const orgNodeId = idParam(searchParams.get("site"));
   const classId = idParam(searchParams.get("class"));
   const setQueryValue = (key: string, value: string | null) =>
@@ -103,6 +134,39 @@ export function RamsFleetPage() {
       },
       { replace: true },
     );
+  const updateSelected = (fn: (prev: number[]) => number[]) =>
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        const ids = fn(parseIds(prev.get("sel")));
+        if (ids.length === 0) next.delete("sel");
+        else next.set("sel", ids.join(","));
+        return next;
+      },
+      { replace: true },
+    );
+  const updateSelectedRef = useRef(updateSelected);
+  updateSelectedRef.current = updateSelected;
+  const setRanking = (key: FleetSortKey | null, desc: boolean, top: boolean) =>
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        if (key == null) {
+          next.delete("sort");
+          next.delete("dir");
+        } else {
+          next.set("sort", key);
+          next.set("dir", desc ? "desc" : "asc");
+        }
+        if (top) next.set("top", String(TOP_N));
+        else next.delete("top");
+        return next;
+      },
+      { replace: true },
+    );
+  /** Clicking a column orders by it; clicking it again reverses the order. */
+  const sortBy = (key: FleetSortKey) =>
+    setRanking(key, sortKey === key ? !sortDesc : key !== "mtbf", topOnly);
   const setMonths = (m: RamsPeriodMonths) =>
     setQueryValue("months", m === RAMS_DEFAULT_MONTHS ? null : String(m));
   const setOrgNodeId = (id: number | null) => setQueryValue("site", id == null ? null : String(id));
@@ -118,7 +182,7 @@ export function RamsFleetPage() {
       .then((a) => {
         if (cancelled) return;
         setHanded({ id: a.id, code: a.asset_code });
-        setSelected((prev) => (prev.includes(a.id) ? prev : [...prev, a.id]));
+        updateSelectedRef.current((prev) => (prev.includes(a.id) ? prev : [...prev, a.id]));
       })
       .catch((e: unknown) => {
         if (!cancelled) setHandedError(e);
@@ -137,6 +201,8 @@ export function RamsFleetPage() {
   const [query, setQuery] = useState("");
 
   const period = useMemo(() => periodFromMonths(months), [months]);
+  /** When the figures on screen were last calculated (each load recalculates them live). */
+  const [calculatedAt, setCalculatedAt] = useState<string | null>(null);
   // A failure figure opens the OTs behind it: the same failure records (period, class, site), so
   // the list holds what the figure counts (L2-21). Only for those who may read work orders.
   const canOpenOts = can(P.OT_VIEW);
@@ -146,7 +212,7 @@ export function RamsFleetPage() {
       ramsFailures: { from: period.start, to: period.end, classId, orgNodeId },
     });
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (): Promise<boolean> => {
     setLoading(true);
     setError(null);
     try {
@@ -156,19 +222,34 @@ export function RamsFleetPage() {
           period_end: period.end,
           org_node_id: orgNodeId,
           equipment_class_id: classId,
-          limit: PAGE,
+          limit: topOnly ? TOP_N : PAGE,
           offset: 0,
+          sort_by: sortKey,
+          sort_desc: sortKey == null ? null : sortDesc,
         }),
         listReliabilityStudies(false),
       ]);
       setView(v);
       setStudies(s);
+      setCalculatedAt(new Date().toISOString());
+      return true;
     } catch (e) {
       setError(e);
+      return false;
     } finally {
       setLoading(false);
     }
-  }, [period, orgNodeId, classId]);
+  }, [period, orgNodeId, classId, sortKey, sortDesc, topOnly]);
+
+  /** Header "Actualiser": recalculates and says so, with the time of the calculation. */
+  const refresh = async () => {
+    if (await load()) {
+      pushAppToast({
+        title: t("rams.fleet.refreshed", { time: formatTime(new Date().toISOString()) }),
+        variant: "success",
+      });
+    }
+  };
 
   /** Next page of the ranking (the backend serves it by offset; the KPIs already cover all). */
   const loadMore = useCallback(async () => {
@@ -182,6 +263,8 @@ export function RamsFleetPage() {
         equipment_class_id: classId,
         limit: PAGE,
         offset: view.rows.length,
+        sort_by: sortKey,
+        sort_desc: sortKey == null ? null : sortDesc,
       });
       setView((v) =>
         v ? { ...v, rows: [...v.rows, ...next.rows], total_rows: next.total_rows } : next,
@@ -191,7 +274,7 @@ export function RamsFleetPage() {
     } finally {
       setLoadingMore(false);
     }
-  }, [view, period, orgNodeId, classId]);
+  }, [view, period, orgNodeId, classId, sortKey, sortDesc]);
 
   useEffect(() => {
     void load();
@@ -219,7 +302,7 @@ export function RamsFleetPage() {
   const periodLabel = t("rams.fleet.periodMonths", { count: months });
 
   const toggle = (id: number) =>
-    setSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+    updateSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
 
   /** "Étudier": the study is named (or named automatically) before it is created (L2-13). */
   const startStudy = (step?: AnalysisStep) => {
@@ -252,6 +335,14 @@ export function RamsFleetPage() {
   const basisHint = fleetText.basis(k);
   const hours = (v: number | null | undefined) => (v == null ? "—" : formatNumber(Math.round(v)));
   const qualityHref = dataQualityHref(months, orgNodeId, classId);
+  /** What the figures cover, named from the filters: the whole fleet, a site, a class or both. */
+  const scopeLabel =
+    [
+      (view?.org_nodes ?? []).find((n) => n.id === orgNodeId)?.label,
+      (view?.equipment_classes ?? []).find((c) => c.id === classId)?.label,
+    ]
+      .filter((x): x is string => x != null)
+      .join(" · ") || t("rams.fleet.scopeFleet");
   const exclusions = fleetText.exclusions;
   /** Hint of a rate figure: its definition, then what was left out, or why it is not given. */
   const rateHint = (definition: string, excluded: string[]) =>
@@ -270,6 +361,7 @@ export function RamsFleetPage() {
               disabled={selected.length === 0 || creating}
               onClick={() => startStudy()}
               aria-describedby={selected.length === 0 ? "rams-study-reason" : undefined}
+              title={selected.length === 0 ? t("rams.fleet.selectFirst") : undefined}
             >
               <ArrowRight className="h-4 w-4" aria-hidden />
               {selected.length === 0
@@ -281,7 +373,16 @@ export function RamsFleetPage() {
             <ShieldCheck className="h-4 w-4" aria-hidden />
             {t("rams.quality.title")}
           </Button>
-          <RefreshButton onRefresh={() => void load()} loading={loading} />
+          <Button
+            variant="outline"
+            className="h-11"
+            onClick={() => navigate("/inspections?tab=signals")}
+            title={t("rams.fleet.signalsHint")}
+          >
+            <ClipboardCheck className="h-4 w-4" aria-hidden />
+            {t("rams.fleet.signals")}
+          </Button>
+          <RefreshButton onRefresh={() => void refresh()} loading={loading} />
         </>
       }
       filterBar={
@@ -414,7 +515,7 @@ export function RamsFleetPage() {
 
           <div className="grid grid-cols-[repeat(auto-fit,minmax(170px,1fr))] gap-3">
             <KpiTile
-              label={t("rams.kpi.availability")}
+              label={t("rams.kpi.availabilityOf", { scope: scopeLabel })}
               value={
                 k?.availability_operational == null
                   ? "—"
@@ -496,7 +597,43 @@ export function RamsFleetPage() {
             title={t("rams.fleet.badActorsTitle")}
             subtitle={t("rams.fleet.badActorsHint")}
             headingId="rams-bad-actors"
+            actions={
+              <div
+                className="flex flex-wrap gap-2"
+                role="group"
+                aria-label={t("rams.fleet.viewsLabel")}
+              >
+                {(
+                  [
+                    ["all", null, true, false],
+                    ["topFailing", "failures", true, true],
+                    ["topCostly", "cost", true, true],
+                  ] as const
+                ).map(([id, key, desc, top]) => {
+                  const active = top === topOnly && key === sortKey;
+                  return (
+                    <Button
+                      key={id}
+                      variant={active ? "default" : "outline"}
+                      className="h-9"
+                      aria-pressed={active}
+                      onClick={() => setRanking(key, desc, top)}
+                    >
+                      {t(`rams.fleet.view.${id}`, { count: TOP_N })}
+                    </Button>
+                  );
+                })}
+              </div>
+            }
           >
+            {calculatedAt ? (
+              <p className="mb-2 text-xs text-text-muted" data-testid="rams-calculated-at">
+                {t("rams.fleet.calculatedAt", {
+                  date: formatDate(calculatedAt),
+                  time: formatTime(calculatedAt),
+                })}
+              </p>
+            ) : null}
             {mixedClasses ? (
               <div className="mb-3">
                 <RamsCallout tone="warning" title={t("rams.fleet.mixedClassesTitle")}>
@@ -531,10 +668,35 @@ export function RamsFleetPage() {
                         </th>
                         <th className="px-3 py-2 text-start">{t("rams.fleet.colAsset")}</th>
                         <th className="px-3 py-2 text-start">{t("rams.fleet.colClass")}</th>
-                        <th className="px-3 py-2 text-end">{t("rams.fleet.colFailures")}</th>
-                        <th className="px-3 py-2 text-end">{t("rams.fleet.colDowntime")}</th>
+                        <SortTh
+                          label={t("rams.fleet.colFailures")}
+                          sortKey="failures"
+                          active={sortKey}
+                          desc={sortDesc}
+                          onSort={sortBy}
+                        />
+                        <SortTh
+                          label={t("rams.fleet.colDowntime")}
+                          sortKey="downtime"
+                          active={sortKey}
+                          desc={sortDesc}
+                          onSort={sortBy}
+                        />
                         <th className="px-3 py-2 text-start">{t("rams.fleet.colShare")}</th>
-                        <th className="px-3 py-2 text-end">{t("rams.fleet.colMtbf")}</th>
+                        <SortTh
+                          label={t("rams.fleet.colCost")}
+                          sortKey="cost"
+                          active={sortKey}
+                          desc={sortDesc}
+                          onSort={sortBy}
+                        />
+                        <SortTh
+                          label={t("rams.fleet.colMtbf")}
+                          sortKey="mtbf"
+                          active={sortKey}
+                          desc={sortDesc}
+                          onSort={sortBy}
+                        />
                         <th className="px-3 py-2 text-end">{t("rams.fleet.colMttr")}</th>
                         <th className="px-3 py-2 text-start">{t("rams.fleet.colLastStudy")}</th>
                         <th className="px-3 py-2 text-start">{t("rams.fleet.colData")}</th>
@@ -549,6 +711,7 @@ export function RamsFleetPage() {
                           canSelect={can(P.RAM_ANALYZE)}
                           onToggle={() => toggle(r.equipment_id)}
                           onOpenStudy={(id) => navigate(`/reliability/studies/${id}`)}
+                          onOpenAsset={(id) => navigate(listLinks.asset(id))}
                           {...(canOpenOts
                             ? { onOpenFailures: () => navigate(failureOtsHref(r.equipment_id)) }
                             : {})}
@@ -556,6 +719,7 @@ export function RamsFleetPage() {
                           formatDecimal={formatDecimal}
                           formatPercent={formatPercent}
                           formatDate={formatDate}
+                          formatCurrency={formatCurrency}
                         />
                       ))}
                     </tbody>
@@ -563,7 +727,7 @@ export function RamsFleetPage() {
                 </div>
               </div>
             )}
-            {rows.length < view.total_rows ? (
+            {!topOnly && rows.length < view.total_rows ? (
               <TruncationNotice
                 className="mt-3"
                 shown={rows.length}
@@ -709,23 +873,27 @@ function FleetRow({
   canSelect,
   onToggle,
   onOpenStudy,
+  onOpenAsset,
   onOpenFailures,
   formatNumber,
   formatDecimal,
   formatPercent,
   formatDate,
+  formatCurrency,
 }: {
   row: FleetAssetRow;
   picked: boolean;
   canSelect: boolean;
   onToggle: () => void;
   onOpenStudy: (id: number) => void;
+  onOpenAsset: (id: number) => void;
   /** Opens the OTs behind this row's failures (absent without the right to read OTs). */
   onOpenFailures?: () => void;
   formatNumber: (v: number) => string;
   formatDecimal: (v: number, dp?: number) => string;
   formatPercent: (v: number) => string;
   formatDate: (v: string) => string;
+  formatCurrency: (v: number) => string;
 }) {
   const { t } = useTranslation("reliability");
   const label = t("rams.fleet.selectAsset", { code: row.asset_code });
@@ -760,8 +928,20 @@ function FleetRow({
         ) : null}
       </td>
       <td className="px-3">
-        <span className="font-mono text-xs font-semibold text-text-primary">{row.asset_code}</span>{" "}
-        <span className="text-text-secondary">{row.asset_name}</span>
+        <span className="flex flex-wrap items-center gap-1.5">
+          <button
+            type="button"
+            className="min-h-9 font-mono text-xs font-semibold text-primary underline underline-offset-2"
+            title={t("rams.fleet.openAsset", { code: row.asset_code })}
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenAsset(row.equipment_id);
+            }}
+          >
+            {row.asset_code}
+          </button>
+          <span className="text-text-secondary">{row.asset_name}</span>
+        </span>
       </td>
       <td className="px-3 text-text-secondary">{row.class_name ?? "—"}</td>
       <td className="px-3 text-end font-mono tabular-nums">
@@ -786,18 +966,26 @@ function FleetRow({
         {formatNumber(Math.round(row.downtime_hours))}
       </td>
       <td className="px-3">
-        <div
-          className="h-2 min-w-[90px] overflow-hidden rounded bg-surface-3"
-          role="img"
-          aria-label={t("rams.fleet.shareLabel", {
-            share: formatPercent(row.downtime_share * 100),
-          })}
-        >
-          <span
-            className="block h-full bg-primary"
-            style={{ width: `${Math.round(row.downtime_share * 100)}%` }}
-          />
+        <div className="flex items-center gap-2">
+          <div
+            className="h-2 min-w-[90px] flex-1 overflow-hidden rounded bg-surface-3"
+            role="img"
+            aria-label={t("rams.fleet.shareLabel", {
+              share: formatPercent(row.downtime_share * 100),
+            })}
+          >
+            <span
+              className="block h-full bg-primary"
+              style={{ width: `${Math.round(row.downtime_share * 100)}%` }}
+            />
+          </div>
+          <span className="w-12 shrink-0 text-end font-mono text-xs tabular-nums text-text-secondary">
+            {formatPercent(row.downtime_share * 100)}
+          </span>
         </div>
+      </td>
+      <td className="px-3 text-end font-mono tabular-nums">
+        {row.failure_cost == null ? "—" : formatCurrency(row.failure_cost)}
       </td>
       <td className="px-3 text-end font-mono tabular-nums">
         {row.mtbf_hours == null ? "—" : formatNumber(Math.round(row.mtbf_hours))}
@@ -828,5 +1016,38 @@ function FleetRow({
         />
       </td>
     </tr>
+  );
+}
+
+/** A sortable column header: the button orders the ranking, `aria-sort` tells the state. */
+function SortTh({
+  label,
+  sortKey,
+  active,
+  desc,
+  onSort,
+}: {
+  label: string;
+  sortKey: FleetSortKey;
+  active: FleetSortKey | null;
+  desc: boolean;
+  onSort: (key: FleetSortKey) => void;
+}) {
+  const on = active === sortKey;
+  const Icon = !on ? ArrowUpDown : desc ? ArrowDown : ArrowUp;
+  return (
+    <th
+      className="px-3 py-2 text-end"
+      aria-sort={on ? (desc ? "descending" : "ascending") : "none"}
+    >
+      <button
+        type="button"
+        className="inline-flex min-h-9 items-center gap-1 uppercase tracking-wide hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        onClick={() => onSort(sortKey)}
+      >
+        {label}
+        <Icon className="h-3 w-3" aria-hidden />
+      </button>
+    </th>
   );
 }

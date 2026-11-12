@@ -14,12 +14,16 @@ import {
   addEdge,
   useEdgesState,
   useNodesState,
+  useReactFlow,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { type MouseEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useNavigate } from "react-router-dom";
 
+import { AssetPicker } from "@/components/assets/AssetPicker";
 import { RamsReadOnlyNote, useRamsRight } from "@/components/reliability/study/rams-ui";
+import { ActionReason } from "@/components/ui/action-reason";
 import { ErrorState } from "@/components/ui/data-state";
 import {
   Dialog,
@@ -40,7 +44,9 @@ import { UnsavedChangesGuard } from "@/components/ui/unsaved-changes-guard";
 import { woTypeLabel } from "@/components/wo/use-wo-type-labels";
 import { mfCard } from "@/design-system/tokens";
 import { useSession } from "@/hooks/use-session";
+import { listLinks } from "@/lib/list-links";
 import { cn } from "@/lib/utils";
+import { getAssetById } from "@/services/asset-service";
 import { listRamIshikawaDiagrams, upsertRamIshikawaDiagram } from "@/services/reliability-service";
 import { createWo } from "@/services/wo-service";
 import { pushAppToast } from "@/store/app-toast-store";
@@ -359,6 +365,8 @@ function IshikawaDiagramInner({
 }) {
   const { t, i18n } = useTranslation("reliability");
   const { info } = useSession();
+  const navigate = useNavigate();
+  const { fitView } = useReactFlow();
   // The backend asks ram.manage for every write of the diagram, plus ot.create for a work order.
   const { can, reasonFor } = useRamsRight();
   const canManage = can(P.RAM_MANAGE);
@@ -405,6 +413,17 @@ function IshikawaDiagramInner({
   const [promoteCause, setPromoteCause] = useState("");
   const [promoteBusy, setPromoteBusy] = useState(false);
   const [promoteWoType, setPromoteWoType] = useState("");
+  /** The cause clicked on the canvas: what the visible "Promote" button acts on. */
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  /** The equipment the work order is raised on: the diagram's one, confirmed or changed here. */
+  const [promoteEquipment, setPromoteEquipment] = useState<{
+    id: number;
+    code: string;
+    name: string;
+  } | null>(null);
+  const [changingEquipment, setChangingEquipment] = useState(false);
+  /** Fit the view to the whole diagram once it is shown (no saved viewport to restore). */
+  const fitOnShowRef = useRef(false);
   /** Set when the stored diagram could not be read: nothing may be saved over it. */
   const [loadError, setLoadError] = useState<unknown>(null);
   const [reloading, setReloading] = useState(false);
@@ -442,6 +461,7 @@ function IshikawaDiagramInner({
             setEdges(nextEdges);
             const vp = parsed.viewport;
             setLoadedViewport(isViewport(vp) ? vp : null);
+            fitOnShowRef.current = !isViewport(vp);
             viewportRef.current = isViewport(vp) ? vp : { x: 0, y: 0, zoom: 1 };
             setFlowMountKey((k) => k + 1);
             setMeta(row);
@@ -457,6 +477,7 @@ function IshikawaDiagramInner({
         setNodes(d.nodes);
         setEdges(d.edges);
         setLoadedViewport(null);
+        fitOnShowRef.current = true;
         viewportRef.current = { x: 0, y: 0, zoom: 1 };
         setFlowMountKey((k) => k + 1);
         setMeta(row);
@@ -466,6 +487,7 @@ function IshikawaDiagramInner({
       setNodes(d.nodes);
       setEdges(d.edges);
       setLoadedViewport(null);
+      fitOnShowRef.current = true;
       viewportRef.current = { x: 0, y: 0, zoom: 1 };
       setFlowMountKey((k) => k + 1);
       setMeta(null);
@@ -480,6 +502,16 @@ function IshikawaDiagramInner({
   useEffect(() => {
     void load();
   }, [load]);
+
+  // The diagram is laid out wider than the canvas: fit it as soon as it is shown so it opens
+  // readable (a saved viewport is restored instead).
+  useEffect(() => {
+    if (!fitOnShowRef.current) return;
+    const frame = window.requestAnimationFrame(() => {
+      void fitView({ padding: 0.1, minZoom: 0.35, maxZoom: 1 });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [flowMountKey, fitView]);
 
   const onConnect = useCallback(
     (c: Connection) => {
@@ -605,25 +637,51 @@ function IshikawaDiagramInner({
     }
   };
 
-  const openPromoteFromCtx = (nodeId: string) => {
+  const openPromoteFromCtx = (nodeId: string, target: "wo" | "fmeca" = "wo") => {
     const n = nodes.find((x) => x.id === nodeId);
     if (!n) {
       return;
     }
     setPromoteNodeId(nodeId);
     setPromoteCause(labelFromNode(n));
-    setPromoteTarget("wo");
+    setPromoteTarget(target);
     setPromoteWoType("");
+    setChangingEquipment(false);
+    setPromoteEquipment(null);
     setPromoteOpen(true);
     setCtxMenu(null);
   };
+
+  // The work order is raised on an equipment the person sees and confirms: the diagram's one by
+  // default (named here), or any other chosen with the asset picker.
+  useEffect(() => {
+    if (!promoteOpen) return;
+    let cancelled = false;
+    getAssetById(equipmentId)
+      .then((a) => {
+        if (!cancelled) {
+          setPromoteEquipment(
+            (prev) => prev ?? { id: a.id, code: a.asset_code, name: a.asset_name },
+          );
+        }
+      })
+      .catch(() => {
+        // The global IPC toast reports the failure; an equipment can still be picked.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [promoteOpen, equipmentId]);
 
   const onPromoteSubmit = async () => {
     const cause = promoteCause.trim();
     if (cause === "" || promoteNodeId == null) {
       return;
     }
-    if (promoteTarget === "wo" && (info?.user_id == null || promoteWoType === "")) {
+    if (
+      promoteTarget === "wo" &&
+      (info?.user_id == null || promoteWoType === "" || promoteEquipment == null)
+    ) {
       return;
     }
     setPromoteBusy(true);
@@ -632,10 +690,10 @@ function IshikawaDiagramInner({
       const saved = await persistFlow();
       setMeta(saved);
       setDirty(false);
-      if (promoteTarget === "wo" && info?.user_id != null) {
-        await createWo({
+      if (promoteTarget === "wo" && info?.user_id != null && promoteEquipment != null) {
+        const wo = await createWo({
           type_code: promoteWoType,
-          equipment_id: equipmentId,
+          equipment_id: promoteEquipment.id,
           title: t("governance.promoteWoTitle", { cause }),
           description: cause,
           creator_id: info.user_id,
@@ -643,7 +701,14 @@ function IshikawaDiagramInner({
           source_ishikawa_flow_node_id: promoteNodeId,
           source_rca_cause_text: cause,
         });
-        pushAppToast({ title: t("governance.promoteSuccessWo"), variant: "success" });
+        pushAppToast({
+          title: t("governance.promoteSuccessWo", { code: wo.code }),
+          variant: "success",
+          action: {
+            label: t("governance.promoteOpenWo"),
+            onClick: () => navigate(listLinks.workOrder(wo.id)),
+          },
+        });
       } else if (onPromoteToFmeca) {
         // The study's FMECA form opens: the analyst chooses the mode and every rating.
         onPromoteToFmeca({ cause, diagramId: saved.id, nodeId: promoteNodeId });
@@ -685,6 +750,17 @@ function IshikawaDiagramInner({
           >
             {t("governance.promoteMenu")}
           </button>
+          {onPromoteToFmeca ? (
+            <button
+              type="button"
+              className="block w-full px-3 py-2 text-left text-text-primary hover:bg-surface-2 disabled:opacity-50"
+              disabled={!canManage}
+              title={manageReason}
+              onClick={() => openPromoteFromCtx(ctxMenu.nodeId, "fmeca")}
+            >
+              {t("governance.promoteMenuFmeca")}
+            </button>
+          ) : null}
         </div>
       ) : null}
       {err ? <p className="text-xs text-text-danger">{err}</p> : null}
@@ -719,8 +795,25 @@ function IshikawaDiagramInner({
         >
           {saving ? t("governance.promoteBusy") : t("governance.save")}
         </button>
+        <button
+          type="button"
+          disabled={!canManage || selectedNodeId == null}
+          title={manageReason}
+          aria-describedby={selectedNodeId == null ? "ishikawa-promote-reason" : undefined}
+          className="rounded-md border border-surface-border bg-surface-2 px-3 py-1 text-xs font-medium text-text-primary hover:bg-surface-3 disabled:opacity-50"
+          onClick={() => {
+            if (selectedNodeId != null) openPromoteFromCtx(selectedNodeId);
+          }}
+        >
+          {t("governance.promoteMenu")}
+        </button>
         {dirty ? <StatusChip tone="warning" dot label={t("governance.unsaved")} /> : null}
       </div>
+      {canManage && selectedNodeId == null ? (
+        <ActionReason id="ishikawa-promote-reason">
+          {t("governance.promoteSelectFirst")}
+        </ActionReason>
+      ) : null}
       {canManage ? null : <RamsReadOnlyNote right={P.RAM_MANAGE} />}
       <UnsavedChangesGuard
         when={dirty}
@@ -740,7 +833,21 @@ function IshikawaDiagramInner({
           nodesDraggable={canManage}
           nodesConnectable={canManage}
           deleteKeyCode={canManage ? "Backspace" : null}
-          onPaneClick={() => setCtxMenu(null)}
+          onPaneClick={() => {
+            setCtxMenu(null);
+            setSelectedNodeId(null);
+          }}
+          onNodeClick={(_e, node) => {
+            setSelectedNodeId(isPromotableNodeId(node.id) ? node.id : null);
+          }}
+          ariaLabelConfig={{
+            "controls.ariaLabel": t("governance.canvas.controls"),
+            "controls.zoomIn.ariaLabel": t("governance.canvas.zoomIn"),
+            "controls.zoomOut.ariaLabel": t("governance.canvas.zoomOut"),
+            "controls.fitView.ariaLabel": t("governance.canvas.fitView"),
+            "controls.interactive.ariaLabel": t("governance.canvas.interactive"),
+            "minimap.ariaLabel": t("governance.canvas.minimap"),
+          }}
           onNodeContextMenu={(e, node) => {
             e.preventDefault();
             if (!isPromotableNodeId(node.id)) {
@@ -817,7 +924,9 @@ function IshikawaDiagramInner({
           <DialogHeader>
             <DialogTitle>{t("governance.promoteTitle")}</DialogTitle>
           </DialogHeader>
-          <p className="text-xs text-text-muted">{t("governance.promoteBody")}</p>
+          <p className="text-xs text-text-muted">
+            {onPromoteToFmeca ? t("governance.promoteBody") : t("governance.promoteBodyWoOnly")}
+          </p>
           <label className="grid gap-1.5 text-sm">
             <span className="text-text-muted">{t("governance.causeModalLabel")}</span>
             <input
@@ -863,6 +972,45 @@ function IshikawaDiagramInner({
             ) : null}
           </div>
           {promoteTarget === "wo" ? (
+            <div className="grid gap-1.5 text-sm">
+              <span className="text-text-muted">{t("governance.promoteEquipment")}</span>
+              {changingEquipment ? (
+                <AssetPicker
+                  value={null}
+                  size="sm"
+                  onChange={(a) => {
+                    if (a) {
+                      setPromoteEquipment({ id: a.id, code: a.asset_code, name: a.asset_name });
+                      setChangingEquipment(false);
+                    }
+                  }}
+                />
+              ) : (
+                <div className="flex items-center justify-between gap-2 rounded-md border border-surface-border bg-surface-2 px-3 py-2">
+                  <span className="min-w-0 truncate text-text-primary">
+                    {promoteEquipment ? (
+                      <>
+                        <span className="font-mono text-xs font-semibold">
+                          {promoteEquipment.code}
+                        </span>{" "}
+                        {promoteEquipment.name}
+                      </>
+                    ) : (
+                      "…"
+                    )}
+                  </span>
+                  <button
+                    type="button"
+                    className="shrink-0 text-xs font-medium text-primary underline underline-offset-2"
+                    onClick={() => setChangingEquipment(true)}
+                  >
+                    {t("governance.promoteEquipmentChange")}
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : null}
+          {promoteTarget === "wo" ? (
             <label className="grid gap-1.5 text-sm">
               <span className="text-text-muted">{t("governance.promoteWoType")}</span>
               <Select value={promoteWoType} onValueChange={setPromoteWoType}>
@@ -895,7 +1043,8 @@ function IshikawaDiagramInner({
                 promoteBusy ||
                 (promoteTarget === "wo" && !can(P.OT_CREATE)) ||
                 promoteCause.trim() === "" ||
-                (promoteTarget === "wo" && (promoteWoType === "" || info?.user_id == null))
+                (promoteTarget === "wo" &&
+                  (promoteWoType === "" || info?.user_id == null || promoteEquipment == null))
               }
               title={promoteTarget === "wo" ? reasonFor(P.OT_CREATE) : undefined}
               className="min-h-[44px] rounded-md border border-primary/35 bg-primary/10 px-3 py-1.5 text-xs font-medium text-text-primary disabled:opacity-50"

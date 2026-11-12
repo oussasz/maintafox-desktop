@@ -6,10 +6,12 @@
 
 import { Activity, Building2, Cog, Receipt, Tag } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { useNavigate } from "react-router-dom";
 
 import { PermissionGate } from "@/components/PermissionGate";
 import { AssetBindingSummary } from "@/components/assets/AssetBindingSummary";
 import { AssetCharacteristicsCard } from "@/components/assets/detail/AssetCharacteristicsCard";
+import { useAssetRamFigures } from "@/components/assets/detail/use-asset-ram-figures";
 import {
   WARRANTY_TONE,
   warrantyDaysLeft,
@@ -19,6 +21,7 @@ import { DetailFieldRow, DetailSectionCard } from "@/components/detail";
 import { Button } from "@/components/ui/button";
 import { StatusChip } from "@/components/ui/status-chip";
 import { useFormatters } from "@/hooks/use-formatters";
+import { listLinks } from "@/lib/list-links";
 import type { Asset } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
@@ -29,7 +32,9 @@ interface AssetOverviewTabProps {
 
 export function AssetOverviewTab({ asset, onEditCommercial }: AssetOverviewTabProps) {
   const { t } = useTranslation("equipment");
-  const { formatDate, formatCurrency, formatDecimal } = useFormatters();
+  const { formatDate, formatCurrency, formatDecimal, formatNumber } = useFormatters();
+  const navigate = useNavigate();
+  const ram = useAssetRamFigures(asset.id);
   const today = new Date();
   const warranty = warrantyState(asset.warranty_expiry_date, today);
   const daysLeft = warrantyDaysLeft(asset.warranty_expiry_date, today);
@@ -137,6 +142,38 @@ export function AssetOverviewTab({ asset, onEditCommercial }: AssetOverviewTabPr
               : null
           }
         />
+        {/* Same calculation and period as the RAMS screen (one source of the failure figures). */}
+        {ram.allowed ? (
+          <>
+            <DetailFieldRow
+              label={t("rams.failures", { months: ram.months })}
+              value={ram.data ? formatNumber(ram.data.failures) : "—"}
+            />
+            <DetailFieldRow
+              label={t("rams.mtbf")}
+              value={
+                ram.data?.mtbf_hours != null
+                  ? `${formatNumber(Math.round(ram.data.mtbf_hours))} ${t("rams.hoursUnit")}`
+                  : "—"
+              }
+            />
+            {ram.data?.window_too_short ? (
+              <p className="text-xs text-text-muted">{t("rams.tooShort")}</p>
+            ) : ram.data && ram.data.mtbf_hours == null ? (
+              <p className="text-xs text-text-muted">{t("rams.noMtbf")}</p>
+            ) : null}
+            <div className="flex justify-end pt-1">
+              <Button
+                variant="outline"
+                className="h-9 gap-1.5"
+                onClick={() => void navigate(listLinks.ramsAsset(asset.id))}
+              >
+                <Activity className="h-4 w-4" aria-hidden />
+                {t("rams.open")}
+              </Button>
+            </div>
+          </>
+        ) : null}
         <p className="text-xs text-text-muted">{t("rams.hint")}</p>
       </DetailSectionCard>
 

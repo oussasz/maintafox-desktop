@@ -49,6 +49,7 @@ import {
   refreshReliabilityKpiSnapshot,
   upsertRuntimeExposureLog,
 } from "@/services/reliability-service";
+import { pushAppToast } from "@/store/app-toast-store";
 import { P } from "@shared/rbac/permissions.generated";
 
 /** `YYYY-MM-DD` of a date in the local calendar. */
@@ -115,11 +116,16 @@ export function RamsDataQualityPage() {
   }, [load]);
 
   /** Runs one correction and reloads the worklist; false when it failed (IPC toast shown). */
-  const act = async (key: string, fn: () => Promise<unknown>): Promise<boolean> => {
+  const act = async (
+    key: string,
+    fn: () => Promise<unknown>,
+    doneMessage?: string,
+  ): Promise<boolean> => {
     setBusy(key);
     try {
       await fn();
       await load();
+      if (doneMessage) pushAppToast({ title: doneMessage, variant: "success" });
       return true;
     } catch {
       return false;
@@ -397,18 +403,22 @@ export function RamsDataQualityPage() {
                               className="h-10"
                               disabled={busy != null}
                               onClick={() =>
-                                void act(key, () => {
-                                  const end = new Date();
-                                  const start = new Date(end);
-                                  start.setMonth(start.getMonth() - months);
-                                  return refreshReliabilityKpiSnapshot({
-                                    equipment_id: i.equipment_id,
-                                    period_start: start.toISOString(),
-                                    period_end: end.toISOString(),
-                                    min_sample_n: null,
-                                    repeat_lookback_days: null,
-                                  });
-                                })
+                                void act(
+                                  key,
+                                  () => {
+                                    const end = new Date();
+                                    const start = new Date(end);
+                                    start.setMonth(start.getMonth() - months);
+                                    return refreshReliabilityKpiSnapshot({
+                                      equipment_id: i.equipment_id,
+                                      period_start: start.toISOString(),
+                                      period_end: end.toISOString(),
+                                      min_sample_n: null,
+                                      repeat_lookback_days: null,
+                                    });
+                                  },
+                                  t("rams.quality.refreshKpiDone", { code: i.asset_code }),
+                                )
                               }
                             >
                               {t("rams.quality.refreshKpi")}

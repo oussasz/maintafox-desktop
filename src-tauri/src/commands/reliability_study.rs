@@ -6,9 +6,9 @@ use crate::auth::rbac::PermissionScope;
 use crate::errors::AppResult;
 use crate::rbac::permissions::{OT_CREATE, PM_EDIT, RAM_ANALYZE, RAM_MANAGE, RAM_VIEW};
 use crate::reliability::study::domain::{
-    ApproverOption, CreateDecisionInput, CreateStudyInput, DecideDecisionInput, FleetView, FleetViewFilter,
-    LifeAnalysis, LifeAnalysisRequest, ReliabilityStudy, ReviseDecisionInput, SaveStudyCostsInput, SetStudyRecordInput,
-    StudyDataset, StudyDecision, UpdateStudyInput, DECISION_PM_INTERVAL,
+    ApproverOption, AssetReliabilityFigures, CreateDecisionInput, CreateStudyInput, DecideDecisionInput, FleetView,
+    FleetViewFilter, LifeAnalysis, LifeAnalysisRequest, ReliabilityStudy, ReviseDecisionInput, SaveStudyCostsInput,
+    SetStudyRecordInput, StudyDataset, StudyDecision, UpdateStudyInput, DECISION_PM_INTERVAL,
 };
 use crate::reliability::study::{analysis, decisions, fleet_view, records, store};
 use crate::state::AppState;
@@ -19,6 +19,19 @@ pub async fn get_reliability_fleet_view(filter: FleetViewFilter, state: State<'_
     let user = require_session!(state);
     require_permission!(state, &user, RAM_VIEW, PermissionScope::Global);
     fleet_view::fleet_view(&state.db, filter).await
+}
+
+/// Failure figures of one equipment over a period (the RAMS calculation), for the asset record.
+#[tauri::command]
+pub async fn get_reliability_asset_figures(
+    equipment_id: i64,
+    period_start: String,
+    period_end: String,
+    state: State<'_, AppState>,
+) -> AppResult<AssetReliabilityFigures> {
+    let user = require_session!(state);
+    require_permission!(state, &user, RAM_VIEW, PermissionScope::Global);
+    fleet_view::asset_figures(&state.db, equipment_id, &period_start, &period_end).await
 }
 
 #[tauri::command]
