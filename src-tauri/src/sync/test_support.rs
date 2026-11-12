@@ -465,6 +465,20 @@ const VALUE_OVERRIDES: &[(&str, &str, &str)] = &[
     // A requirement asks for one certification or one skill, never both.
     ("qualification_requirements", "skill_reference_value_id", "NULL"),
     ("qualification_requirements", "min_proficiency_level", "NULL"),
+    // A requirement profile stores two JSON lists (migration 070 defaults them to '[]'); the generic
+    // `_json` value '{}' is no list, and an unreadable profile refuses every qualification check that
+    // reads it (`qualification::gate::permit_profile_requirements`, never read as "no requirement"),
+    // such as the one of a worker received on a permit (`permit::workers::received_workers_breach`).
+    (
+        "qualification_requirement_profiles",
+        "required_certification_type_ids_json",
+        "'[]'",
+    ),
+    (
+        "qualification_requirement_profiles",
+        "applies_to_permit_type_codes_json",
+        "'[]'",
+    ),
     // An override states its reason (at least 10 characters).
     (
         "qualification_overrides",
@@ -494,6 +508,10 @@ const VALUE_OVERRIDES: &[(&str, &str, &str)] = &[
     // active (its generic times are in order: fitted, verified, activated, lock removed, expiry),
     // so its generic isolations arrive with it as a valid group.
     ("work_permits", "status", "'active'"),
+    // An active permit of a type that needs a gas test is judged on its latest gas test at its
+    // activation (L4-04, `permit::sync_check::gas_verdict`); the generic permit is created alone,
+    // with no gas test, so its generic type needs none (a generic `requires_*` flag is otherwise 1).
+    ("permit_types", "requires_atmospheric_test", "0"),
     // An active permit names who approved it (four-eyes, `permit::sync_check::four_eyes_check`): its
     // author, submitter and approver are three generic accounts (one parent row per reference), so
     // a four-eyes approval, not flagged a self-approval, approved after it was submitted.
