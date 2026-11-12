@@ -1209,6 +1209,10 @@ pub const ROW_SPECS: &[RowSpec] = &[
                         ("inventory_transactions", NOT_A_ROW),
                         ("inventory_mutation_audit_links", NOT_A_ROW),
                         ("inventory_count_sessions", NOT_A_ROW),
+                        // Goods sent back to the supplier (`inventory::procurement`,
+                        // `inventory.supplier_return`): the target is the receipt line, sent as
+                        // its sync id (receipt lines sync and are never hard-deleted).
+                        ("goods_receipt_line", "goods_receipt_lines"),
                         // An equipment move (D19, `assets::lifecycle` `asset.moved`): the target is
                         // the equipment, sent as its sync id (equipment rows are never hard-deleted).
                         ("equipment", "equipment"),
