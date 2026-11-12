@@ -31,6 +31,8 @@
 //! waits. A change whose author is not here at all (its history row not received with it: rows
 //! recorded before the status history travelled, a page split; or a task result without its author)
 //! is applied and recorded in the audit trail (`WO_EXECUTION_AUTHOR_NOT_RECEIVED`), never silently.
+//! That audit stays on the PC that applied the change (`sync::row_spec`, audit row filter): only
+//! its chain stub travels, so it never waits on another PC for a work order deleted there.
 //! Snapshot history of a first join is not judged (`CloseoutEntry::judged`).
 //!
 //! Not judged on arrival (no author recorded on those rows): part, tool and downtime lines and the
