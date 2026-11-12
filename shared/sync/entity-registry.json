@@ -2431,7 +2431,8 @@
         "reference_values",
         "work_order_statuses",
         "org_nodes",
-        "schedule_class_versions"
+        "schedule_class_versions",
+        "external_companies"
       ],
       "sync_status": "synced"
     },

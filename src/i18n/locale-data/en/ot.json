@@ -876,6 +876,24 @@
       "partsNoneCleared": "No-parts confirmation cleared"
     }
   },
+  "subcontracting": {
+    "title": "Contractor",
+    "hint": "The external company doing this work, its order reference, the hours it declares and the cost it invoices. The cost is the work order's service cost.",
+    "manageContractors": "Manage contractors",
+    "company": "Contractor company",
+    "noContractor": "No contractor",
+    "orderRef": "Contractor order / contract reference",
+    "hours": "Contractor hours",
+    "cost": "Contractor cost ({{currency}})",
+    "contractEnd": "Contract ends {{date}}",
+    "contractState": {
+      "active": "Contract running",
+      "expiring": "Contract ending soon",
+      "expired": "Contract expired"
+    },
+    "save": "Save contractor details",
+    "loadError": "The contractor details of this work order could not be loaded."
+  },
   "closeout": {
     "progressTitle": "Closeout progress",
     "progressBadge": "{{done}}/{{total}} completed",

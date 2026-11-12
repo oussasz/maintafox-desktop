@@ -876,6 +876,24 @@
       "partsNoneCleared": "Confirmation « aucune pièce » annulée"
     }
   },
+  "subcontracting": {
+    "title": "Sous-traitant",
+    "hint": "L'entreprise extérieure qui réalise ce travail, sa référence de commande, les heures qu'elle déclare et le coût qu'elle facture. Le coût est le coût de service de l'OT.",
+    "manageContractors": "Gérer les sous-traitants",
+    "company": "Entreprise sous-traitante",
+    "noContractor": "Aucun sous-traitant",
+    "orderRef": "Référence de commande / contrat du sous-traitant",
+    "hours": "Heures du sous-traitant",
+    "cost": "Coût du sous-traitant ({{currency}})",
+    "contractEnd": "Fin du contrat le {{date}}",
+    "contractState": {
+      "active": "Contrat en cours",
+      "expiring": "Contrat bientôt échu",
+      "expired": "Contrat expiré"
+    },
+    "save": "Enregistrer le sous-traitant",
+    "loadError": "Les informations du sous-traitant de cet OT n'ont pas pu être chargées."
+  },
   "closeout": {
     "progressTitle": "Progression de clôture",
     "progressBadge": "{{done}}/{{total}} complétés",

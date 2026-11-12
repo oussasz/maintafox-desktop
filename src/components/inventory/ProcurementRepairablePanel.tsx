@@ -15,6 +15,7 @@ import { PermissionGate } from "@/components/PermissionGate";
 import { DataTable } from "@/components/data/DataTable";
 import { SmartFilterBar } from "@/components/filters/SmartFilterBar";
 import type { SmartFilterDef } from "@/components/filters/smart-filter-types";
+import { GoodsReturnDialog } from "@/components/inventory/GoodsReturnDialog";
 import { ProcurementAlertCards } from "@/components/inventory/ProcurementAlertCards";
 import {
   ApproverRolesLine,
@@ -395,6 +396,8 @@ export const ProcurementRepairablePanel = forwardRef<
   const [goodsReceipts, setGoodsReceipts] = useState<GoodsReceipt[]>([]);
   const [selectedGrId, setSelectedGrId] = useState<number | null>(null);
   const [grLines, setGrLines] = useState<GoodsReceiptLine[]>([]);
+  /** Reception line whose goods are being returned to the supplier (null: dialog closed). */
+  const [returnLine, setReturnLine] = useState<GoodsReceiptLine | null>(null);
   const [grLinesLoading, setGrLinesLoading] = useState(false);
   const [grLinesError, setGrLinesError] = useState<unknown>(null);
   const [stateEvents, setStateEvents] = useState<InventoryStateEvent[]>([]);
@@ -2495,6 +2498,14 @@ export const ProcurementRepairablePanel = forwardRef<
                               <TableHead>
                                 {t("procurement.goodsReceipts.lines.columns.reason")}
                               </TableHead>
+                              <TableHead className="text-right">
+                                {t("procurement.goodsReceipts.lines.columns.returned")}
+                              </TableHead>
+                              <TableHead>
+                                <span className="sr-only">
+                                  {t("procurement.goodsReceipts.lines.columns.actions")}
+                                </span>
+                              </TableHead>
                             </TableRow>
                           </TableHeader>
                           <TableBody>
@@ -2514,6 +2525,24 @@ export const ProcurementRepairablePanel = forwardRef<
                                   {qtyLabel(line.rejected_qty)}
                                 </TableCell>
                                 <TableCell>{formatOrDash(line.rejection_reason)}</TableCell>
+                                <TableCell
+                                  className="text-right tabular-nums"
+                                  title={line.return_reason ?? undefined}
+                                >
+                                  {qtyLabel(line.returned_qty)}
+                                </TableCell>
+                                <TableCell>
+                                  <PermissionGate permission={P.INV_RECEIVE}>
+                                    <Button
+                                      variant="outline"
+                                      className="h-11"
+                                      disabled={line.accepted_qty - line.returned_qty <= 0}
+                                      onClick={() => setReturnLine(line)}
+                                    >
+                                      {t("procurement.goodsReceipts.return.action")}
+                                    </Button>
+                                  </PermissionGate>
+                                </TableCell>
                               </TableRow>
                             ))}
                           </TableBody>
@@ -3378,6 +3407,16 @@ export const ProcurementRepairablePanel = forwardRef<
           setPoDetailOpen(false);
           openGoodsReceipt(receiptId);
         }}
+      />
+
+      <GoodsReturnDialog
+        line={returnLine}
+        onOpenChange={(open) => {
+          if (!open) setReturnLine(null);
+        }}
+        onReturned={(updated) =>
+          setGrLines((rows) => rows.map((row) => (row.id === updated.id ? updated : row)))
+        }
       />
 
       <RepairableDetailDialog

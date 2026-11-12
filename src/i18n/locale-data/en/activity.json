@@ -183,6 +183,7 @@
       "inventory__negative_stock__count_reversed": "Negative stock count reversed",
       "inventory__negative_stock__counted": "Negative stock counted",
       "inventory__opening_stock__imported": "Opening stock imported",
+      "inventory__supplier_return": "Goods returned to the supplier",
       "inventory__reconciliation_drift_break": "Stock reconciliation drift",
       "inventory__reservation__released_after_sync": "Reservation released after sync",
       "inventory__reservation__released_at_return_after_wo_end": "Reservation released at return after WO end",

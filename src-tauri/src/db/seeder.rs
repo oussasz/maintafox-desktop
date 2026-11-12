@@ -1400,6 +1400,18 @@ pub(crate) async fn seed_system_data_for(
             true,
         )
         .await?;
+        seed_value(
+            db,
+            d,
+            "RETOUR_FOURNISSEUR",
+            "Retour fournisseur",
+            "Retour fournisseur",
+            "Return to supplier",
+            None,
+            6,
+            true,
+        )
+        .await?;
     }
 
     // inventory.stocking_type

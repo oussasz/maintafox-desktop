@@ -391,6 +391,8 @@
     "COMPANY_NAME_REQUIRED": "The company name is required.",
     "COMPANY_STATUS_UNKNOWN": "Unknown onboarding or insurance status.",
     "COMPANY_CONTRACT_DATES": "The contract end is before its start.",
+    "COMPANY_CONTRACT_AMOUNT": "The contract amount cannot be negative.",
+    "COMPANY_ALERT_DAYS": "The alert delay must be between 0 and 365 days.",
     "TEAM_NO_SCHEDULE": "The team has no working hours on {{day}}: give its members a shift schedule or set a capacity rule.",
     "PLANNING_NOT_ESTIMATED": "This work is not estimated: enter its duration and crew size on the work order or the PM before committing it.",
     "PLANNING_CREW_SIZE_INVALID": "The crew size must be a whole number of people from {{min}} to {{max}}.",

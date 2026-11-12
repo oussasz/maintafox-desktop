@@ -2653,3 +2653,67 @@ pub async fn set_wo_requires_shutdown(
     .await;
     Ok(wo)
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// AI) contractor work on the work order — ot.view / ot.edit
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Contractor, order reference, hours and cost of one work order.
+#[tauri::command]
+pub async fn get_wo_subcontracting(
+    wo_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<crate::wo::subcontracting::WoSubcontracting> {
+    let user = require_session!(state);
+    require_on_wo_records(&state, user.user_id, crate::rbac::permissions::OT_VIEW, wo_id).await?;
+    crate::wo::subcontracting::get_wo_subcontracting(&state.db, wo_id).await
+}
+
+/// Active contractors the work order screen offers (name, contract number and state).
+#[tauri::command]
+pub async fn list_wo_contractor_options(
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::wo::subcontracting::WoContractorOption>> {
+    let user = require_session!(state);
+    require_permission!(state, &user, crate::rbac::permissions::OT_VIEW, PermissionScope::Global);
+    crate::wo::subcontracting::list_wo_contractor_options(&state.db).await
+}
+
+/// Saves the contractor, its order reference, hours and cost on the work order (an execution
+/// action: the edit right, then the actor rule).
+#[tauri::command]
+pub async fn set_wo_subcontracting(
+    input: crate::wo::subcontracting::SetWoSubcontractingInput,
+    state: State<'_, AppState>,
+) -> AppResult<crate::wo::subcontracting::WoSubcontracting> {
+    let user = require_session!(state);
+    require_execution_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
+    let before = queries::get_work_order(&state.db, input.wo_id).await.ok().flatten();
+    let wo_id = input.wo_id;
+    let expected = input.expected_row_version;
+    let summary = format!(
+        "Contractor updated (company {}, cost {})",
+        input
+            .external_company_id
+            .map_or_else(|| "none".to_string(), |id| id.to_string()),
+        input.service_cost.unwrap_or(0.0)
+    );
+    let saved = crate::wo::subcontracting::set_wo_subcontracting(&state.db, input).await?;
+    audit::record_wo_change_with_diff(
+        &state.db,
+        audit::WoAuditInput {
+            wo_id: Some(wo_id),
+            action: "service_cost_updated".into(),
+            actor_id: Some(i64::from(user.user_id)),
+            summary: Some(summary),
+            details_json: None,
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+        before.as_ref(),
+        None,
+        Some(expected),
+    )
+    .await;
+    Ok(saved)
+}

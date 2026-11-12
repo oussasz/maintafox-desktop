@@ -66,6 +66,7 @@ import { printWoFiche } from "@/components/wo/WoPrintFiche";
 import { WoResumeDialog } from "@/components/wo/WoResumeDialog";
 import { WoShutdownBadge } from "@/components/wo/WoShutdownRequirementField";
 import { WoNoSiteBadge, useWoAccess } from "@/components/wo/WoSiteScope";
+import { WoSubcontractingCard } from "@/components/wo/WoSubcontractingCard";
 import { useWoExecutionStanding } from "@/components/wo/use-wo-execution-standing";
 import { useWoTypeLabels } from "@/components/wo/use-wo-type-labels";
 import { formatWoShift } from "@/components/wo/wo-shift-label";
@@ -534,6 +535,9 @@ export function WoDetailDialog({
 
               <TabsContent value="plan" className="pt-3">
                 <WoPlanningPanel wo={wo} canEdit={canEditWo} />
+                <div className="mt-4">
+                  <WoSubcontractingCard wo={wo} canEdit={canEditWo} />
+                </div>
               </TabsContent>
 
               {showExecution && (

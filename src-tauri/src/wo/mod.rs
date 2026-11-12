@@ -27,6 +27,7 @@ pub mod retired_equipment_review;
 pub mod shifts;
 pub mod stats;
 pub mod statuses;
+pub mod subcontracting;
 pub mod tasks;
 pub mod time;
 pub mod tools;

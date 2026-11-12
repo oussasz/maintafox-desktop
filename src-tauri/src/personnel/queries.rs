@@ -1934,6 +1934,17 @@ pub async fn create_authorization(
 // O/P/Q) external companies
 // ═══════════════════════════════════════════════════════════════════════════════
 
+/// Contractor company projection: contract facts plus the cost of the work orders given to it
+/// (its consumed amount), cancelled work orders excluded.
+const COMPANY_SELECT: &str = "SELECT id, name, service_domain, contract_start, contract_end, contract_number, \
+        contract_amount, COALESCE(contract_alert_days, 30) AS contract_alert_days, \
+        (SELECT COALESCE(SUM(COALESCE(wo.service_cost_input, wo.service_cost, 0.0)), 0.0) \
+           FROM work_orders wo \
+           WHERE wo.external_company_id = external_companies.id \
+             AND wo.status_id NOT IN (SELECT id FROM work_order_statuses WHERE code = 'cancelled')) AS consumed_amount, \
+        onboarding_status, insurance_status, notes, is_active, created_at, updated_at \
+     FROM external_companies";
+
 pub async fn list_external_companies(
     db: &DatabaseConnection,
     filter: CompanyListFilter,
@@ -1956,9 +1967,7 @@ pub async fn list_external_companies(
     }
 
     let sql = format!(
-        "SELECT id, name, service_domain, contract_start, contract_end, onboarding_status, insurance_status, \
-                notes, is_active, created_at, updated_at \
-         FROM external_companies WHERE {} ORDER BY name ASC",
+        "{COMPANY_SELECT} WHERE {} ORDER BY name ASC",
         where_clauses.join(" AND ")
     );
 
@@ -1973,7 +1982,28 @@ pub async fn list_external_companies(
 }
 
 fn map_external_company_row(row: &sea_orm::QueryResult) -> AppResult<ExternalCompany> {
+    let contract_end: Option<String> = row
+        .try_get("", "contract_end")
+        .map_err(|e| map_err("contract_end", e))?;
+    let contract_alert_days: i64 = row
+        .try_get("", "contract_alert_days")
+        .map_err(|e| map_err("contract_alert_days", e))?;
+    let today = crate::clock::now().format("%Y-%m-%d").to_string();
+    let (contract_state, contract_days_left) =
+        crate::wo::subcontracting::contract_status(contract_end.as_deref(), contract_alert_days, &today);
     Ok(ExternalCompany {
+        contract_number: row
+            .try_get("", "contract_number")
+            .map_err(|e| map_err("contract_number", e))?,
+        contract_amount: row
+            .try_get("", "contract_amount")
+            .map_err(|e| map_err("contract_amount", e))?,
+        contract_alert_days,
+        consumed_amount: row
+            .try_get("", "consumed_amount")
+            .map_err(|e| map_err("consumed_amount", e))?,
+        contract_state,
+        contract_days_left,
         id: row.try_get("", "id").map_err(|e| map_err("id", e))?,
         name: row.try_get("", "name").map_err(|e| map_err("name", e))?,
         service_domain: row
@@ -2029,9 +2059,7 @@ pub async fn create_external_company(
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id, name, service_domain, contract_start, contract_end, onboarding_status, insurance_status, \
-                    notes, is_active, created_at, updated_at \
-             FROM external_companies WHERE id = ?",
+            format!("{COMPANY_SELECT} WHERE id = ?"),
             [company_id.into()],
         ))
         .await?
@@ -2049,6 +2077,9 @@ pub struct ExternalCompanyUpdateInput {
     pub service_domain: Option<String>,
     pub contract_start: Option<String>,
     pub contract_end: Option<String>,
+    pub contract_number: Option<String>,
+    pub contract_amount: Option<f64>,
+    pub contract_alert_days: Option<i64>,
     pub onboarding_status: String,
     pub insurance_status: String,
     pub notes: Option<String>,
@@ -2077,16 +2108,36 @@ pub async fn update_external_company(
             return Err(issue("COMPANY_CONTRACT_DATES", "The contract end is before its start."));
         }
     }
+    if input.contract_amount.is_some_and(|a| !a.is_finite() || a < 0.0) {
+        return Err(issue(
+            "COMPANY_CONTRACT_AMOUNT",
+            "The contract amount cannot be negative.",
+        ));
+    }
+    if input.contract_alert_days.is_some_and(|d| !(0..=365).contains(&d)) {
+        return Err(issue(
+            "COMPANY_ALERT_DAYS",
+            "The alert delay is between 0 and 365 days.",
+        ));
+    }
     let res = db
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "UPDATE external_companies SET name = ?, service_domain = ?, contract_start = ?, contract_end = ?, \
+             contract_number = ?, contract_amount = ?, contract_alert_days = COALESCE(?, contract_alert_days), \
              onboarding_status = ?, insurance_status = ?, notes = ?, is_active = ?, updated_at = ? WHERE id = ?",
             [
                 name.into(),
                 clean(input.service_domain).into(),
                 start.into(),
                 end.into(),
+                clean(input.contract_number).into(),
+                input
+                    .contract_amount
+                    .map_or(sea_orm::Value::Double(None), sea_orm::Value::from),
+                input
+                    .contract_alert_days
+                    .map_or(sea_orm::Value::BigInt(None), sea_orm::Value::from),
                 input.onboarding_status.into(),
                 input.insurance_status.into(),
                 clean(input.notes).into(),
@@ -2105,9 +2156,7 @@ pub async fn update_external_company(
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id, name, service_domain, contract_start, contract_end, onboarding_status, insurance_status, \
-                    notes, is_active, created_at, updated_at \
-             FROM external_companies WHERE id = ?",
+            format!("{COMPANY_SELECT} WHERE id = ?"),
             [input.id.into()],
         ))
         .await?

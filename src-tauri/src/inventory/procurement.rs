@@ -1479,7 +1479,8 @@ pub async fn transition_repairable_order(
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT article_id, quantity, source_location_id, return_location_id, status, row_version
+            "SELECT article_id, quantity, source_location_id, return_location_id, status, row_version,
+                    serial_number
              FROM repairable_orders
              WHERE id = ?",
             [input.order_id.into()],
@@ -1526,6 +1527,7 @@ pub async fn transition_repairable_order(
     let quantity: f64 = row.try_get("", "quantity")?;
     let source_location_id: i64 = row.try_get("", "source_location_id")?;
     let current_return_location_id: Option<i64> = row.try_get("", "return_location_id")?;
+    let stored_serial: Option<String> = row.try_get("", "serial_number")?;
 
     let tx = db.begin().await?;
     if input.next_status == "RELEASED" {
@@ -1536,6 +1538,10 @@ pub async fn transition_repairable_order(
                 "GATE_INV_INSUFFICIENT_STOCK: Insufficient available stock to release repairable.".to_string(),
             ]));
         }
+        // A lot- or serial-tracked part leaves with its lot, and keeps it through every later leg.
+        let serial = input.serial_number.clone().or_else(|| stored_serial.clone());
+        let release_lot =
+            repairable_release_lot(&tx, article_id, source_location_id, quantity, serial.as_deref()).await?;
         upsert_balance(
             &tx,
             article_id,
@@ -1545,7 +1551,7 @@ pub async fn transition_repairable_order(
             before.reserved,
         )
         .await?;
-        append_stock_event(
+        let movement_id = append_stock_event(
             &tx,
             article_id,
             warehouse_id,
@@ -1559,6 +1565,9 @@ pub async fn transition_repairable_order(
             input.actor_id,
         )
         .await?;
+        if let Some(lot_id) = release_lot {
+            crate::inventory::lots::set_movement_lot(&tx, movement_id, lot_id).await?;
+        }
     }
     if input.next_status == "RETURNED_FROM_REPAIR" {
         let target_location_id = input.return_location_id.or(current_return_location_id).ok_or_else(|| {
@@ -1577,7 +1586,7 @@ pub async fn transition_repairable_order(
             before.reserved,
         )
         .await?;
-        append_stock_event(
+        let movement_id = append_stock_event(
             &tx,
             article_id,
             warehouse_id,
@@ -1591,6 +1600,9 @@ pub async fn transition_repairable_order(
             input.actor_id,
         )
         .await?;
+        if let Some(lot_id) = repairable_lot_of_order(&tx, input.order_id).await? {
+            crate::inventory::lots::set_movement_lot(&tx, movement_id, lot_id).await?;
+        }
     }
 
     // Cancel / scrap stock legs branch on *current* status: the same next_status has
@@ -1611,7 +1623,7 @@ pub async fn transition_repairable_order(
             before.reserved,
         )
         .await?;
-        append_stock_event(
+        let movement_id = append_stock_event(
             &tx,
             article_id,
             warehouse_id,
@@ -1625,6 +1637,9 @@ pub async fn transition_repairable_order(
             input.actor_id,
         )
         .await?;
+        if let Some(lot_id) = repairable_lot_of_order(&tx, input.order_id).await? {
+            crate::inventory::lots::set_movement_lot(&tx, movement_id, lot_id).await?;
+        }
     }
     if input.next_status == "SCRAPPED" && current_status == "RETURNED_FROM_REPAIR" {
         let target_location_id = input.return_location_id.or(current_return_location_id).ok_or_else(|| {
@@ -1650,7 +1665,7 @@ pub async fn transition_repairable_order(
             before.reserved,
         )
         .await?;
-        append_stock_event(
+        let movement_id = append_stock_event(
             &tx,
             article_id,
             warehouse_id,
@@ -1664,6 +1679,9 @@ pub async fn transition_repairable_order(
             input.actor_id,
         )
         .await?;
+        if let Some(lot_id) = repairable_lot_of_order(&tx, input.order_id).await? {
+            crate::inventory::lots::set_movement_lot(&tx, movement_id, lot_id).await?;
+        }
     }
 
     // Dispatch/return timestamps are stamped once by the lifecycle so turnaround stays auditable
@@ -1885,7 +1903,7 @@ pub async fn list_goods_receipt_lines(
             "SELECT grl.id, grl.goods_receipt_id, grl.po_line_id, grl.article_id, a.article_code, a.article_name,
                     grl.location_id, sl.code AS location_code, grl.received_qty, grl.accepted_qty, grl.rejected_qty,
                     grl.rejection_reason, grl.ordered_qty, grl.actual_lead_time_days, grl.status, grl.created_at,
-                    grl.unit_price, grl.unit_cost_tenant
+                    grl.unit_price, grl.unit_cost_tenant, grl.returned_qty, grl.return_reason, grl.returned_at
              FROM goods_receipt_lines grl
              JOIN articles a ON a.id = grl.article_id
              JOIN stock_locations sl ON sl.id = grl.location_id
@@ -2349,6 +2367,9 @@ fn map_goods_receipt_line_row(row: sea_orm::QueryResult) -> AppResult<GoodsRecei
         actual_lead_time_days: row.try_get("", "actual_lead_time_days").ok().flatten(),
         status: row.try_get("", "status")?,
         created_at: row.try_get("", "created_at")?,
+        returned_qty: row.try_get("", "returned_qty").unwrap_or(0.0),
+        return_reason: row.try_get("", "return_reason").ok().flatten(),
+        returned_at: row.try_get("", "returned_at").ok().flatten(),
     })
 }
 
@@ -2787,4 +2808,176 @@ pub async fn set_purchase_order_line_price(
             entity: "purchase_order_lines".to_string(),
             id: po_line_id.to_string(),
         })
+}
+
+/// Return of accepted goods to the supplier (L3-05): a part found non-conforming after reception
+/// leaves the stock through an ordinary stock exit (reason `RETOUR_FOURNISSEUR`, source the
+/// receipt number), valued at the average cost, and the receipt line records the quantity and the
+/// reason. Both are saved in one transaction. At most the accepted quantity not yet returned can
+/// go back; a lot- or serial-tracked article names the lot sent back.
+pub async fn return_goods_to_supplier(
+    db: &DatabaseConnection,
+    input: crate::inventory::domain::ReturnGoodsToSupplierInput,
+) -> AppResult<GoodsReceiptLine> {
+    let reason = input.reason.trim().to_string();
+    if reason.chars().count() < 4 {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_GR_RETURN_REASON_REQUIRED: State why the part goes back to the supplier (at least 4 characters)."
+                .to_string(),
+        ]));
+    }
+    if !input.quantity.is_finite() || input.quantity <= 0.0 {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_GR_RETURN_QTY: The quantity returned must be greater than zero.".to_string(),
+        ]));
+    }
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT grl.goods_receipt_id, grl.article_id, grl.location_id, grl.accepted_qty,
+                    COALESCE(grl.returned_qty, 0.0) AS returned_qty, gr.gr_number
+             FROM goods_receipt_lines grl
+             JOIN goods_receipts gr ON gr.id = grl.goods_receipt_id
+             WHERE grl.id = ?",
+            [input.goods_receipt_line_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| {
+            AppError::ValidationFailed(vec![
+                "GATE_GR_RETURN_LINE_UNKNOWN: This reception line does not exist.".to_string()
+            ])
+        })?;
+    let goods_receipt_id: i64 = row.try_get("", "goods_receipt_id")?;
+    let article_id: i64 = row.try_get("", "article_id")?;
+    let location_id: i64 = row.try_get("", "location_id")?;
+    let accepted_qty: f64 = row.try_get("", "accepted_qty")?;
+    let returned_qty: f64 = row.try_get("", "returned_qty")?;
+    let gr_number: String = row.try_get("", "gr_number")?;
+    let returnable = crate::inventory::unit_conversions::round_stock_quantity(accepted_qty - returned_qty);
+    if input.quantity > returnable + 1e-9 {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "GATE_GR_RETURN_EXCEEDS:max={returnable}: Only {returnable} can still be returned for this line."
+        )]));
+    }
+    let tracking = crate::inventory::lots::article_tracking(db, article_id).await?;
+    if tracking.is_tracked() && input.lot_id.is_none() {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_GR_RETURN_LOT_REQUIRED: This article is lot/serial-tracked: choose the lot or serial number sent back."
+                .to_string(),
+        ]));
+    }
+    let now = now_iso();
+    crate::inventory::queries::adjust_stock_full(
+        db,
+        crate::inventory::domain::InventoryStockAdjustInput {
+            article_id,
+            location_id,
+            delta_qty: -input.quantity,
+            reason_code: Some("RETOUR_FOURNISSEUR".to_string()),
+            notes: Some(reason.clone()),
+            source_ref: Some(gr_number.clone()),
+        },
+        crate::inventory::queries::AdjustStockOptions {
+            lot_id: if tracking.is_tracked() { input.lot_id } else { None },
+            actor_id: input.actor_id,
+            audit: Some(crate::audit::writer::AuditEventInput {
+                action_code: "inventory.supplier_return".to_string(),
+                target_type: Some("goods_receipt_line".to_string()),
+                target_id: Some(input.goods_receipt_line_id.to_string()),
+                actor_id: input.actor_id,
+                auth_context: "session".to_string(),
+                result: "success".to_string(),
+                before_hash: None,
+                after_hash: None,
+                retention_class: "standard".to_string(),
+                details_json: Some(serde_json::json!({
+                    "summary": "Goods returned to the supplier",
+                    "goods_receipt": gr_number,
+                    "article_id": article_id,
+                    "quantity": input.quantity,
+                    "reason": reason,
+                })),
+            }),
+            extra_statements: vec![Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "UPDATE goods_receipt_lines
+                 SET returned_qty = COALESCE(returned_qty, 0.0) + ?, return_reason = ?, returned_at = ?
+                 WHERE id = ? AND COALESCE(returned_qty, 0.0) + ? <= accepted_qty + 0.000000001",
+                [
+                    input.quantity.into(),
+                    reason.clone().into(),
+                    now.into(),
+                    input.goods_receipt_line_id.into(),
+                    input.quantity.into(),
+                ],
+            )],
+            ..Default::default()
+        },
+    )
+    .await?;
+    list_goods_receipt_lines(db, goods_receipt_id)
+        .await?
+        .into_iter()
+        .find(|line| line.id == input.goods_receipt_line_id)
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("returned receipt line not found")))
+}
+
+/// Lot of the part a repair order releases (L3-08). An untracked article has none; a lot- or
+/// serial-tracked one must name its number (on the order or at release), which must exist for the
+/// article and hold the quantity at the source location. A serial-tracked part goes one unit at a time.
+async fn repairable_release_lot<C: ConnectionTrait>(
+    tx: &C,
+    article_id: i64,
+    location_id: i64,
+    quantity: f64,
+    serial: Option<&str>,
+) -> AppResult<Option<i64>> {
+    let tracking = crate::inventory::lots::article_tracking(tx, article_id).await?;
+    if !tracking.is_tracked() {
+        return Ok(None);
+    }
+    let Some(label) = serial.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_INV_REPAIR_LOT_REQUIRED: This article is lot/serial-tracked: enter the serial or lot number of the part on the repair order."
+                .to_string(),
+        ]));
+    };
+    if tracking.serial && (quantity - 1.0).abs() > 1e-9 {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_INV_REPAIR_SERIAL_ONE: A serial-tracked part is repaired one unit at a time.".to_string(),
+        ]));
+    }
+    let lot_id: Option<i64> = tx
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id FROM inventory_lots
+             WHERE article_id = ? AND (serial_number = ? OR lot_number = ?)
+             ORDER BY id LIMIT 1",
+            [article_id.into(), label.into(), label.into()],
+        ))
+        .await?
+        .map(|r| r.try_get::<i64>("", "id"))
+        .transpose()?;
+    let Some(lot_id) = lot_id else {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "GATE_INV_REPAIR_LOT_UNKNOWN:serial={label}: No lot or serial number {label} exists for this article."
+        )]));
+    };
+    crate::inventory::lots::ensure_lot_available(tx, lot_id, article_id, location_id, quantity).await?;
+    Ok(Some(lot_id))
+}
+
+/// Lot carried by the release movement of a repair order: the later legs (return, cancellation,
+/// scrap) move the same lot. `None` for an untracked article.
+async fn repairable_lot_of_order<C: ConnectionTrait>(tx: &C, order_id: i64) -> AppResult<Option<i64>> {
+    let row = tx
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT lot_id FROM inventory_transactions
+             WHERE source_type = 'REPAIRABLE_ORDER' AND source_id = ? AND movement_type = 'REPAIRABLE_RELEASE'
+             ORDER BY id LIMIT 1",
+            [order_id.into()],
+        ))
+        .await?;
+    Ok(row.and_then(|r| r.try_get::<Option<i64>>("", "lot_id").ok().flatten()))
 }

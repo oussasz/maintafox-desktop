@@ -391,6 +391,8 @@
     "COMPANY_NAME_REQUIRED": "Le nom de l'entreprise est obligatoire.",
     "COMPANY_STATUS_UNKNOWN": "État de référencement ou d'assurance inconnu.",
     "COMPANY_CONTRACT_DATES": "La fin du contrat précède son début.",
+    "COMPANY_CONTRACT_AMOUNT": "Le montant du contrat ne peut pas être négatif.",
+    "COMPANY_ALERT_DAYS": "Le délai d'alerte doit être compris entre 0 et 365 jours.",
     "TEAM_NO_SCHEDULE": "L'équipe n'a aucune heure de travail le {{day}} : donnez un horaire à ses membres ou définissez une règle de capacité.",
     "PLANNING_NOT_ESTIMATED": "Ce travail n'est pas estimé : saisissez sa durée et son effectif sur l'OT ou le PM avant de l'engager.",
     "PLANNING_CREW_SIZE_INVALID": "L'effectif doit être un nombre entier de personnes, de {{min}} à {{max}}.",

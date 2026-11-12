@@ -183,6 +183,7 @@
       "inventory__negative_stock__count_reversed": "Comptage de stock négatif annulé",
       "inventory__negative_stock__counted": "Stock négatif compté",
       "inventory__opening_stock__imported": "Stock d'ouverture importé",
+      "inventory__supplier_return": "Marchandises retournées au fournisseur",
       "inventory__reconciliation_drift_break": "Écart de rapprochement de stock",
       "inventory__reservation__released_after_sync": "Réservation libérée après synchronisation",
       "inventory__reservation__released_at_return_after_wo_end": "Réservation libérée au retour après la fin de l'OT",

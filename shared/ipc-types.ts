@@ -3462,6 +3462,9 @@ export interface GoodsReceiptLine {
   rejection_reason: string | null;
   status: string;
   created_at: string;
+  returned_qty: number;
+  return_reason: string | null;
+  returned_at: string | null;
 }
 
 export interface ReceivePurchaseOrderLineInput {
@@ -7495,6 +7498,12 @@ export interface ExternalCompany {
   service_domain: string | null;
   contract_start: string | null;
   contract_end: string | null;
+  contract_number: string | null;
+  contract_amount: number | null;
+  contract_alert_days: number;
+  consumed_amount: number;
+  contract_state: "none" | "active" | "expiring" | "expired";
+  contract_days_left: number | null;
   onboarding_status: string;
   insurance_status: string;
   notes: string | null;
