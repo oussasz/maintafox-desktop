@@ -80,7 +80,8 @@ jobs:
             if ($conf -notmatch '^(\d+\.\d+\.\d+)') { Write-Host "::error::tauri.conf.json version '$conf' does not start with MAJOR.MINOR.PATCH."; exit 1 }
             $version = $Matches[1]
             $identity = "MaintafoxPackagingCheck.NotForStore"
-            $publisher = "CN=Maintafox packaging check, not for the Store"
+            # A plain CN without commas: the Publisher must be a valid distinguished name.
+            $publisher = "CN=MaintafoxPackagingCheckNotForStore"
             $display = "Packaging check (not for the Store)"
             $artifact = "maintafox-store-$version-NOT-FOR-STORE"
             Write-Host "::warning title=Packaging check::This package uses a test identity. It checks the packaging only; do not upload it to Partner Center."
