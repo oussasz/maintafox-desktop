@@ -156,7 +156,8 @@ export function PmPage() {
 
   const [view, setView] = useState<PmViewMode>(() => {
     const raw = readStorage("pm-view-mode");
-    return isPmViewMode(raw) ? raw : "due";
+    // L1-27: opens on the plans (what the department maintains), not on every due date.
+    return isPmViewMode(raw) ? raw : "plans";
   });
   const [showFilters, setShowFilters] = useState(() => readStorage("pm-show-filters") !== "0");
   const [searchInput, setSearchInput] = useState("");

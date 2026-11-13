@@ -22,8 +22,8 @@
     "newVersion": "New version",
     "editVersion": "Edit",
     "publish": "Publish",
-    "transition": "Update status",
-    "transitionOccurrence": "Change status",
+    "transition": "Change the plan's state",
+    "transitionOccurrence": "Change the due date's state",
     "logExecution": "Log execution",
     "viewFindings": "View findings",
     "createFollowUpDi": "Create a follow-up request (DI)",
@@ -386,7 +386,8 @@
     "activationPath": "Lifecycle order: draft → proposed → approved → active. Publish a version while approved/active/suspended. Then use Refresh forecast to create due work.",
     "currentStatus": "Current status: {{status}}",
     "alreadyOperational": "This plan is already operational or retired.",
-    "woCloseOutcome": "When the linked work order is closed, the occurrence is completed with its outcome: failures and checklist steps marked not OK become findings."
+    "woCloseOutcome": "When the linked work order is closed, the occurrence is completed with its outcome: failures and checklist steps marked not OK become findings.",
+    "versionEffect": "Publishing a new version replaces the current version for the next due dates generated. Due dates and work orders already generated keep the content of their version; the plan stays active while the new version is prepared."
   },
   "empty": {
     "noPlans": "No PM plans yet. Create a plan to start.",
@@ -479,7 +480,8 @@
     "cronMorning": "Daily at 06:00",
     "cronCustom": "Custom schedule (cron)",
     "cronCustomHint": "Six fields: second minute hour day month weekday.",
-    "horizonDays": "Horizon (days)"
+    "horizonDays": "Horizon (days)",
+    "skippedHint": "Skipped: due date already there, covered by a wider plan over the same period, or equipment without a meter of the required type."
   },
   "errors": {
     "listLoad": "The list of choices could not be loaded.",
@@ -530,5 +532,13 @@
   "sourceDecision": {
     "toReview": "From a refused / waiting decision — to review",
     "toReviewHint": "The version in force comes from a reliability decision refused at synchronisation or not yet accepted on this PC. Review it; publishing another version clears this flag."
+  },
+  "lifecycleAction": {
+    "draft": "Back to draft",
+    "proposed": "Propose",
+    "approved": "Approve",
+    "active": "Reactivate the plan",
+    "suspended": "Suspend the plan",
+    "retired": "Retire the plan"
   }
 }
