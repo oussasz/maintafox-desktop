@@ -536,6 +536,9 @@
   },
   "cancel": {
     "title": "Cancel work order",
+    "keep": "Keep the work order",
+    "partsIssued_one": "{{count}} part line has already been issued from the store for this work order: cancelling does not put it back in stock. Make a store return for unused parts.",
+    "partsIssued_other": "{{count}} part lines have already been issued from the store for this work order: cancelling does not put them back in stock. Make a store return for unused parts.",
     "warning": "Cancelling stops the lifecycle. This cannot be undone from the same path.",
     "reason": "Cancellation reason",
     "reasonPlaceholder": "Explain why this work order is being cancelled…",

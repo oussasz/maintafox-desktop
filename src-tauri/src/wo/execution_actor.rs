@@ -17,7 +17,8 @@
 //! **own** labour ([`check_labor_for`]), as on mobile. A work order with no assignee and no team is
 //! carried out by its planner or an `ot.approve` holder only (fail safe: nobody is its actor by
 //! default). One exception: the creator of a work order not yet released (a draft,
-//! `WoStatus::is_released`) may cancel it ([`check_cancel`]).
+//! `WoStatus::is_released`) may cancel it ([`check_cancel`]) and edit it ([`require_draft_edit`],
+//! L1-35: editing a draft follows the cancel rule).
 //!
 //! Outside the rule: the technical verification (`save_verification`, by design not the
 //! responsible's, R6), the store's issue desk (`issue_wo_part_to_issue`, `inv.manage`), and
@@ -566,6 +567,19 @@ pub async fn require_cancel(
     let map = access_map(db, cache, user_id).await?;
     check_cancel(db, &map, i64::from(user_id), permission, wo_id).await?;
     enforce(db, user_id, permission).await
+}
+
+/// Editing a draft (L1-35, owner decision 2026-11-12): the cancel rule — an execution actor, or the
+/// creator while the work order is not released. A colleague with `ot.edit` at the site no longer
+/// edits someone else's draft. Checked after the command's own right check.
+pub async fn require_draft_edit(
+    db: &DatabaseConnection,
+    cache: &RwLock<PermissionCache>,
+    user_id: i32,
+    permission: &str,
+    wo_id: i64,
+) -> AppResult<()> {
+    require_cancel(db, cache, user_id, permission, wo_id).await
 }
 
 /// [`check_labor_for`] with the user's cached rights (after the command's own right check).

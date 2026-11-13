@@ -679,3 +679,26 @@ async fn the_requester_is_the_session_user_whatever_the_screen_sends() {
     );
     assert_ne!(stored.submitter_id, i64::from(f.plant));
 }
+
+/// L1-34 (owner decision 2026-11-12): whoever declared a request neither approves it nor converts
+/// it; anyone else with the rights does.
+#[tokio::test]
+async fn the_declarer_of_a_request_neither_approves_nor_converts_it() {
+    let f = fixture().await;
+    let di = create(&f.db, f.eq_a, f.t.site_a, f.site, "Declared by the site user").await;
+
+    for (step, code) in [
+        (access::DiDecision::Approve, "GATE_DI_SELF_APPROVAL"),
+        (access::DiDecision::Convert, "GATE_DI_SELF_CONVERSION"),
+    ] {
+        match access::check_not_declarer(&f.db, di, i64::from(f.site), step).await {
+            Err(AppError::ValidationFailed(msgs)) => {
+                assert!(msgs[0].starts_with(code), "{step:?}: {msgs:?}");
+            }
+            other => panic!("{step:?}: the declarer must be refused, got {other:?}"),
+        }
+        access::check_not_declarer(&f.db, di, i64::from(f.plant), step)
+            .await
+            .expect("another person decides");
+    }
+}

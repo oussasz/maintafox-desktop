@@ -240,10 +240,13 @@ export function WoCreateForm({
     if (!initial?.equipment_id) return;
     const key = `${initial.id}-${initial.equipment_id}`;
     if (editEquipmentHydrateKeyRef.current === key) return;
-    editEquipmentHydrateKeyRef.current = key;
     let cancelled = false;
     void getAssetByIdSilent(initial.equipment_id).then((asset) => {
-      if (!cancelled && asset) setSelectedAsset(assetToSearchResult(asset));
+      if (cancelled || !asset) return;
+      // L1-24: marked done only once the field is filled. Marked before the load, a cancelled
+      // first run (React's mount / unmount / mount in development) left the field empty for good.
+      editEquipmentHydrateKeyRef.current = key;
+      setSelectedAsset(assetToSearchResult(asset));
     });
     return () => {
       cancelled = true;

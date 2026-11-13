@@ -31,7 +31,8 @@ import { P } from "@shared/rbac/permissions.generated";
 const EDITABLE_STATES = new Set(["draft"]);
 const STARTABLE_STATES = new Set(["ready"]);
 const COMPLETABLE_STATES = new Set(["in_progress"]);
-const CANCELLABLE_DENY = new Set(["closed", "cancelled"]);
+// L1-33: a finished ("Terminé") work order goes to its close, not to a cancellation.
+const CANCELLABLE_DENY = new Set(["completed", "closed", "cancelled"]);
 
 // ── Props ───────────────────────────────────────────────────────────────────
 
@@ -89,10 +90,18 @@ function WoContextMenuItems({
       </DropdownMenuItem>
 
       {/* Edit */}
+      {/* L1-35: a draft is edited by its creator or its execution actors (the cancel rule). */}
       {canEdit && onEdit && (
-        <DropdownMenuItem onClick={() => onEdit(wo)} className="gap-2">
+        <DropdownMenuItem
+          onClick={() => {
+            if (execution.cancelBlocker === null) onEdit(wo);
+          }}
+          className="gap-2"
+          disabled={execution.cancelBlocker !== null}
+          title={execution.cancelBlocker ?? undefined}
+        >
           <Pencil className="h-3.5 w-3.5" />
-          {t("contextMenu.edit")}
+          <ExecutionItemLabel label={t("contextMenu.edit")} blocker={execution.cancelBlocker} />
         </DropdownMenuItem>
       )}
 
