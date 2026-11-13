@@ -11,6 +11,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { BudgetCockpitView, cockpitCsv } from "@/components/finance/BudgetCockpitView";
 import { BudgetPeriodsPanel, closeBlocker } from "@/components/finance/BudgetPeriodsPanel";
+import { groupBudgetLines } from "@/components/finance/BudgetPlanningPanel";
 import { SettlementWorklist } from "@/components/finance/SettlementWorklist";
 import { variancePct } from "@/components/finance/VarianceReviewsPanel";
 import { parseAmount } from "@/components/finance/WoCostEstimateDialog";
@@ -27,6 +28,7 @@ import type {
   WoCostView,
 } from "@/services/finance-cost-service";
 import { formatDecimalInput } from "@/utils/decimal";
+import type { BudgetLine } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
 const svc = vi.hoisted(() => ({
@@ -275,6 +277,30 @@ describe("finance helpers", () => {
     expect(isNegligibleVariance({ base: "estimated", amount: 1000 }, real)).toBe(false);
   });
 
+  it("groups budget lines by cost centre with subtotals, whole year then months (L7-24)", () => {
+    const line = (id: number, cc: number, name: string, month: number | null, amount: number) =>
+      ({
+        id,
+        cost_center_id: cc,
+        cost_center_code: `CC-${cc}`,
+        cost_center_name: name,
+        period_month: month,
+        budget_bucket: "labor",
+        planned_amount: amount,
+      }) as BudgetLine;
+    const groups = groupBudgetLines([
+      line(1, 2, "Utilités", 3, 100),
+      line(2, 1, "Atelier", 2, 50),
+      line(3, 2, "Utilités", null, 400),
+      line(4, 2, "Utilités", 1, 25),
+    ]);
+    expect(groups.map((g) => [g.name, g.lines.length, g.subtotal])).toEqual([
+      ["Atelier", 1, 50],
+      ["Utilités", 3, 525],
+    ]);
+    expect(groups[1]?.lines.map((l) => l.period_month)).toEqual([null, 1, 3]);
+  });
+
   it("parses typed amounts with comma or dot and refuses negatives", () => {
     expect(parseAmount("1 250,50")).toBe(1250.5);
     expect(parseAmount("")).toBe(0);
@@ -414,6 +440,20 @@ describe("SettlementWorklist", () => {
     fireEvent.click(screen.getByRole("button", { name: "Settle" }));
     await waitFor(() => expect(svc.retryWoSettlement).toHaveBeenCalledWith(5));
     await waitFor(() => expect(onChanged).toHaveBeenCalled());
+  });
+
+  it("keeps the intro to one sentence and folds the settlement rules (L7-24)", async () => {
+    svc.listWoSettlements.mockResolvedValue([]);
+    render(
+      <MemoryRouter>
+        <SettlementWorklist fiscalYear={2026} />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText(enBudget.settlements.intro)).toBeInTheDocument();
+    const how = screen.getByTestId("settlement-how");
+    expect(how).not.toHaveAttribute("open");
+    expect(how).toHaveTextContent(enBudget.settlements.howTitle);
+    expect(how.querySelectorAll("li")).toHaveLength(4);
   });
 
   it("offers no retry without the posting right", async () => {

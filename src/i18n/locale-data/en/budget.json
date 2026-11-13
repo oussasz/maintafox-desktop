@@ -326,7 +326,7 @@
     }
   },
   "settlements": {
-    "intro": "Each closed work order — or one cancelled after consuming labour, parts or services — is settled once to the cost centre and period of its close. If a settled work order's cost changes later (a receipt, issue, return or time entry arriving after the close, even one recorded offline before it), only the difference with what is already settled is added. A pending settlement says what to fix; reopening a work order reverses its settlement.",
+    "intro": "Each closed work order is settled once to the cost centre and month of its close.",
     "filter": "Show",
     "filters": {
       "pending": "Pending",
@@ -359,7 +359,14 @@
     "lateHint": "Settles the cost difference of already settled work orders (for instance after a sync).",
     "lateBooked_one": "Late costs settled on {{count}} work order.",
     "lateBooked_other": "Late costs settled on {{count}} work orders.",
-    "lateNone": "No late cost to settle."
+    "lateNone": "No late cost to settle.",
+    "howTitle": "How does settlement work?",
+    "how": {
+      "once": "A cancelled work order is also settled if it consumed labour, parts or services.",
+      "late": "If a settled work order's cost changes later (a receipt, issue, return or time entry after the close, even offline), only the difference is added.",
+      "pending": "A pending settlement says what to fix.",
+      "reopen": "Reopening a work order reverses its settlement."
+    }
   },
   "compare": {
     "title": "Compare two versions",
@@ -432,7 +439,9 @@
       "period": "Period",
       "amount": "Amount",
       "justification": "Justification"
-    }
+    },
+    "groupTotal_one": "{{count}} line · {{amount}}",
+    "groupTotal_other": "{{count}} lines · {{amount}}"
   },
   "reviews": {
     "intro": "A variance review records the cause of an overrun, the action decided and its acceptance.",

@@ -285,7 +285,20 @@ export function SettlementWorklist({
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="max-w-3xl text-sm text-text-secondary">{t("settlements.intro")}</p>
+        <div className="max-w-3xl space-y-1 text-sm text-text-secondary">
+          <p>{t("settlements.intro")}</p>
+          {/* The rules stay one click away instead of one dense paragraph (L7-24). */}
+          <details data-testid="settlement-how">
+            <summary className="cursor-pointer text-xs font-medium text-text-primary">
+              {t("settlements.howTitle")}
+            </summary>
+            <ul className="mt-1 list-disc space-y-0.5 ps-5 text-xs">
+              {(["once", "late", "pending", "reopen"] as const).map((k) => (
+                <li key={k}>{t(`settlements.how.${k}`)}</li>
+              ))}
+            </ul>
+          </details>
+        </div>
         <div className="flex items-center gap-2">
           {canPost ? (
             <Button
