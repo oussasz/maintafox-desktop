@@ -1423,7 +1423,7 @@ pub(crate) async fn add_labor_impl(state: &AppState, input: labor::AddLaborInput
     )
     .await?;
     let entry = labor::add_labor_entry(&state.db, input).await?;
-    record_labor_added(state, user.user_id, &entry).await;
+    record_labor_added(state, i64::from(user.user_id), &entry).await;
     Ok(entry)
 }
 
@@ -1485,7 +1485,7 @@ pub async fn add_personnel_labor(
         }
     }
     let entry = labor::add_personnel_labor_entry(&state.db, input).await?;
-    record_labor_added(&state, user.user_id, &entry).await;
+    record_labor_added(&state, i64::from(user.user_id), &entry).await;
     Ok(entry)
 }
 
