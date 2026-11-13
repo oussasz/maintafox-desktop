@@ -105,7 +105,12 @@ pub(crate) fn required_cosigners(
     for field in rule.author_fields {
         let key = author_payload_key(field);
         let value = payload.get(&key);
-        let changed = !same(value, before(&key)) || field.guards.iter().any(|g| !same(payload.get(*g), before(g)));
+        let changed = !same(value, before(&key))
+            || field
+                .guards
+                .iter()
+                .chain(field.vouches)
+                .any(|g| !same(payload.get(*g), before(g)));
         if !changed {
             continue;
         }

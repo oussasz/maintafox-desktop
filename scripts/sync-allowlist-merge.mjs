@@ -6,7 +6,7 @@
 // refuses deletes of those types and refuses to start when an entry lacks the flag).
 //
 // Per-user signing (sync-signing-design.md v9 §5): the signing contract of an entry —
-// `author_fields` ([{field, guards}]) and `authority` (the name of a plant-wide right) — is
+// `author_fields` ([{field, guards, vouches?}]) and `authority` (the name of a plant-wide right) — is
 // generated from the desktop row rules (src-tauri/src/sync/signing_rules.rs) and always copied from the
 // desktop registry, on new and existing entries alike, so the server never judges authors or
 // authority on a stale list. Types the server publishes but devices never push
@@ -25,6 +25,7 @@ function desktopSigning(entity) {
     out.author_fields = entity.author_fields.map((a) => ({
       field: a.field,
       guards: [...a.guards],
+      ...(Array.isArray(a.vouches) && a.vouches.length > 0 ? { vouches: [...a.vouches] } : {}),
     }));
   }
   return out;
@@ -54,6 +55,11 @@ function signingWeakenings(entry, signing) {
     for (const guard of author.guards ?? []) {
       if (!mine.guards.includes(guard)) {
         out.push(`${type}: guard ${guard} of ${author.field} is in the allowlist, not on the desktop`);
+      }
+    }
+    for (const vouched of author.vouches ?? []) {
+      if (!(mine.vouches ?? []).includes(vouched)) {
+        out.push(`${type}: vouched ${vouched} of ${author.field} is in the allowlist, not on the desktop`);
       }
     }
   }

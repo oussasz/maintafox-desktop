@@ -25,6 +25,10 @@ pub struct AuthorField {
     pub column: &'static str,
     /// Payload keys (wire names): changing one of them needs this author's signature.
     pub guards: &'static [&'static str],
+    /// Payload keys of content this person approved: changing one of them needs this author's
+    /// signature unless the same change clears the author (the approval is withdrawn). Unlike a
+    /// guard, it may keep its value when the author is cleared (server rule 4).
+    pub vouches: &'static [&'static str],
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -39,7 +43,23 @@ pub struct SigningRule {
 }
 
 const fn author(column: &'static str, guards: &'static [&'static str]) -> AuthorField {
-    AuthorField { column, guards }
+    AuthorField {
+        column,
+        guards,
+        vouches: &[],
+    }
+}
+
+const fn author_vouching(
+    column: &'static str,
+    guards: &'static [&'static str],
+    vouches: &'static [&'static str],
+) -> AuthorField {
+    AuthorField {
+        column,
+        guards,
+        vouches,
+    }
 }
 
 /// Entity types the server publishes to every PC but no device may push: the PCs never stage
@@ -986,9 +1006,17 @@ pub static SIGNING_RULES: &[SigningRule] = &[
             // approver: no other signer may set or clear them (review F6).
             author("approved_by_id", &["approved_at", "self_approved"]),
             author("cancelled_by_id", &["cancelled_at"]),
-            author(
+            // The HSE approver vouches for the permit content they approved: a change of it is
+            // signed by them or withdraws their approval (`permit::safety_content`).
+            author_vouching(
                 "hse_approved_by_id",
                 &["hse_approved_at", "hse_approval_note", "hse_self_approved"],
+                &[
+                    "work_description",
+                    "risk_assessment",
+                    "preventive_measures",
+                    "ppe_required",
+                ],
             ),
         ],
         not_attribution: &[],

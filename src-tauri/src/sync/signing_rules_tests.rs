@@ -101,7 +101,7 @@ async fn every_user_reference_is_classified() {
                     field.column
                 )),
             }
-            for guard in field.guards {
+            for guard in field.guards.iter().chain(field.vouches) {
                 if !payload_keys.contains(guard) {
                     problems.push(format!(
                         "{entity_type}.{}: guard {guard} is not a payload key of the row",

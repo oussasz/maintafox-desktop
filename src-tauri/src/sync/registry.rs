@@ -741,6 +741,8 @@ struct ExportedEntity {
 struct ExportedAuthorField {
     field: String,
     guards: Vec<&'static str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    vouches: Vec<&'static str>,
 }
 
 #[derive(Debug, Serialize)]
@@ -783,6 +785,7 @@ pub fn registry_export_json() -> AppResult<String> {
                         .map(|f| ExportedAuthorField {
                             field: author_payload_key(f),
                             guards: f.guards.to_vec(),
+                            vouches: f.vouches.to_vec(),
                         })
                         .collect()
                 })
