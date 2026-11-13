@@ -20,7 +20,7 @@
       "widgetsSection": "Blocs affichés",
       "reliabilityHint": "Calcul en direct sur les défaillances, {{period}} (limité à l’organisation choisie) : le même calcul que l’accueil RAMS. Les écarts comparent à la période précédente de même durée. Instantanés et taille d’échantillon : série issue des instantanés de fiabilité rafraîchis sur la période.",
       "vsPrior": "vs préc.",
-      "pmEmpty": "Aucune PM ouverte dans la file d’échéance pour ce périmètre.",
+      "pmEmpty": "Aucune MP ouverte dans la file d’échéance pour ce périmètre.",
       "sections": {
         "ops": "Opérations",
         "pm": "MP à échéance",
@@ -51,9 +51,9 @@
         "diStatus": "Répartition des statuts DI"
       },
       "kpi": {
-        "pmOverdue": "PM en retard",
-        "pmDueToday": "PM dues aujourd’hui",
-        "pmDueNext7d": "PM dues sous 7 jours",
+        "pmOverdue": "MP en retard",
+        "pmDueToday": "MP dues aujourd’hui",
+        "pmDueNext7d": "MP dues sous 7 jours",
         "sampleSize": "Taille d’échantillon",
         "snapshots": "Équipements avec instantané",
         "maintenanceCost": "Coût OT valorisé au budget"
@@ -78,7 +78,7 @@
         "horizon": "{{days}} derniers jours",
         "snapshots": "{{period}} · série issue des instantanés",
         "inService": "Enregistrés, non supprimés",
-        "overdue": "DI ouvertes > 7 jours + PM en retard + OT en retard",
+        "overdue": "DI ouvertes > 7 jours + MP en retard + OT en retard",
         "costSettled": "Comptabilisé au budget par la Finance, {{days}} derniers jours",
         "costPending_one": "{{days}} derniers jours · {{count}} OT clôturé pas encore valorisé",
         "costPending_other": "{{days}} derniers jours · {{count}} OT clôturés pas encore valorisés",
@@ -242,7 +242,7 @@
   },
   "smrp": {
     "title": "Indicateurs SMRP",
-    "subtitle": "Indicateurs de gestion de la maintenance conformes aux métriques SMRP Best Practice, calculés à partir de vos OT, planifications, PM et personnel. {{period}}.",
+    "subtitle": "Indicateurs de gestion de la maintenance conformes aux métriques SMRP Best Practice, calculés à partir de vos OT, planifications, MP et personnel. {{period}}.",
     "definitionAria": "Définition de {{title}}",
     "formula": "Formule",
     "period": "Période",
@@ -285,7 +285,7 @@
       "basisCountShort": "en nombre d’OT"
     },
     "pm": {
-      "title": "Respect des PM",
+      "title": "Respect des MP",
       "none": "Aucune MP due sur la période",
       "detail": "{{done}} sur {{total}} réalisées dans leur fenêtre",
       "formula": "Occurrences de MP réalisées dans leur fenêtre de tolérance — ni avant son ouverture, ni après sa fermeture (sans tolérance : le jour d’échéance) ÷ occurrences de MP dues sur la période, réalisées ou dont la fenêtre est close. Les occurrences annulées sont exclues ; celles encore dans leur fenêtre ne sont pas encore comptées. Même chiffre que la page MP et la tuile d’accueil.",
