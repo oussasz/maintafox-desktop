@@ -39,7 +39,8 @@ impl LockoutPolicy {
     /// (no per-account count: that would tell an attacker which identifiers exist).
     pub fn invalid_credentials_error(&self) -> crate::errors::AppError {
         crate::errors::AppError::Auth(format!(
-            "Identifiant ou mot de passe invalide. Après {} essais infructueux, le compte est              verrouillé {} min ; en cas d'oubli, utilisez « Mot de passe oublié ».",
+            "Identifiant ou mot de passe invalide. Après {} essais infructueux, le compte est \
+             verrouillé {} min ; en cas d’oubli, utilisez « Mot de passe oublié ».",
             self.max_attempts, self.lockout_minutes
         ))
     }
