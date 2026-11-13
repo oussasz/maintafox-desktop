@@ -27,7 +27,7 @@ export const FileInput = React.forwardRef<HTMLInputElement, FileInputProps>(
         <input
           ref={ref}
           type="file"
-          className="sr-only"
+          className="peer sr-only"
           disabled={disabled}
           multiple={multiple}
           onChange={(e) => {
@@ -38,7 +38,7 @@ export const FileInput = React.forwardRef<HTMLInputElement, FileInputProps>(
         />
         <span
           aria-hidden
-          className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-md border border-surface-border bg-surface-1 px-3 font-medium text-text-primary hover:bg-surface-2"
+          className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-md border border-surface-border bg-surface-1 px-3 font-medium text-text-primary hover:bg-surface-2 peer-focus-visible:ring-2 peer-focus-visible:ring-ring"
         >
           <Paperclip className="h-4 w-4" />
           {multiple ? t("fileInput.chooseMany") : t("fileInput.choose")}
