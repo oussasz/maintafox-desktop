@@ -528,11 +528,14 @@
   "commandPalette": {
     "title": "Palette de commandes",
     "open": "Aller à un module…",
-    "placeholder": "Module, numéro d'OT ou de demande, équipement…",
+    "placeholder": "Module, numéro d'OT ou de demande, équipement, personne, permis, article…",
     "kind": {
       "workOrder": "Ordre de travail",
       "request": "Demande",
-      "equipment": "Équipement"
+      "equipment": "Équipement",
+      "person": "Personne",
+      "permit": "Permis de travail",
+      "article": "Article"
     },
     "noResults": "Aucun résultat pour « {{query}} »"
   },
