@@ -25,6 +25,11 @@ pub struct WoSubcontracting {
     /// `none` (no company or no contract end), `active`, `expiring` or `expired`.
     pub contract_state: String,
     pub contract_days_left: Option<i64>,
+    /// The repair is covered by a warranty (UX L2-29) and what is charged back to the supplier.
+    pub under_warranty: bool,
+    pub warranty_claim_note: Option<String>,
+    /// Warranty end of the work order's equipment, shown as a hint when ticking the box.
+    pub asset_warranty_expiry: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -35,6 +40,11 @@ pub struct SetWoSubcontractingInput {
     pub service_order_ref: Option<String>,
     pub subcontractor_hours: Option<f64>,
     pub service_cost: Option<f64>,
+    /// `None` keeps the current warranty facts (callers that do not send them).
+    #[serde(default)]
+    pub under_warranty: Option<bool>,
+    #[serde(default)]
+    pub warranty_claim_note: Option<String>,
 }
 
 fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
@@ -71,9 +81,12 @@ pub async fn get_wo_subcontracting(db: &impl ConnectionTrait, wo_id: i64) -> App
             "SELECT wo.id, wo.row_version, wo.external_company_id, ec.name AS company_name,
                     wo.service_order_ref, wo.subcontractor_hours,
                     COALESCE(wo.service_cost_input, wo.service_cost, 0.0) AS service_cost,
-                    ec.contract_end, COALESCE(ec.contract_alert_days, 30) AS alert_days
+                    ec.contract_end, COALESCE(ec.contract_alert_days, 30) AS alert_days,
+                    COALESCE(wo.under_warranty, 0) AS under_warranty, wo.warranty_claim_note,
+                    eq.warranty_expiry_date AS asset_warranty_expiry
              FROM work_orders wo
              LEFT JOIN external_companies ec ON ec.id = wo.external_company_id
+             LEFT JOIN equipment eq ON eq.id = wo.equipment_id
              WHERE wo.id = ?",
             [wo_id.into()],
         ))
@@ -111,6 +124,16 @@ pub async fn get_wo_subcontracting(db: &impl ConnectionTrait, wo_id: i64) -> App
         contract_end,
         contract_state,
         contract_days_left,
+        under_warranty: row
+            .try_get::<i64>("", "under_warranty")
+            .map_err(|e| decode_err("under_warranty", e))?
+            != 0,
+        warranty_claim_note: row
+            .try_get("", "warranty_claim_note")
+            .map_err(|e| decode_err("warranty_claim_note", e))?,
+        asset_warranty_expiry: row
+            .try_get("", "asset_warranty_expiry")
+            .map_err(|e| decode_err("asset_warranty_expiry", e))?,
     })
 }
 
@@ -187,11 +210,26 @@ pub async fn set_wo_subcontracting(
         .map(str::trim)
         .filter(|v| !v.is_empty())
         .map(str::to_string);
+    // Warranty (UX L2-29): kept as is when the caller does not send it; the note only lives with
+    // the box ticked.
+    let under_warranty = input.under_warranty.unwrap_or(current.under_warranty);
+    let warranty_note = if input.under_warranty.is_some() {
+        input
+            .warranty_claim_note
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(str::to_string)
+    } else {
+        current.warranty_claim_note.clone()
+    }
+    .filter(|_| under_warranty);
     let result = db
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "UPDATE work_orders
              SET external_company_id = ?, service_order_ref = ?, subcontractor_hours = ?, service_cost_input = ?,
+                 under_warranty = ?, warranty_claim_note = ?,
                  row_version = row_version + 1, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
              WHERE id = ? AND row_version = ?",
             [
@@ -199,6 +237,8 @@ pub async fn set_wo_subcontracting(
                 order_ref.map_or(Value::String(None), Value::from),
                 input.subcontractor_hours.map_or(Value::Double(None), Value::from),
                 input.service_cost.map_or(Value::Double(None), Value::from),
+                i64::from(under_warranty).into(),
+                warranty_note.map_or(Value::String(None), Value::from),
                 input.wo_id.into(),
                 input.expected_row_version.into(),
             ],

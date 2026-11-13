@@ -901,7 +901,13 @@
       "expired": "Contrat expiré"
     },
     "save": "Enregistrer le sous-traitant",
-    "loadError": "Les informations du sous-traitant de cet OT n'ont pas pu être chargées."
+    "loadError": "Les informations du sous-traitant de cet OT n'ont pas pu être chargées.",
+    "warranty": {
+      "label": "Réparation sous garantie (à refacturer au fournisseur)",
+      "assetUntil": "Équipement sous garantie jusqu'au {{date}}.",
+      "note": "Note de refacturation",
+      "noteHint": "Référence de la réclamation, pièces ou heures à récupérer auprès du fournisseur ou du constructeur."
+    }
   },
   "closeout": {
     "progressTitle": "Progression de clôture",

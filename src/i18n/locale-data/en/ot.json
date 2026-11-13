@@ -901,7 +901,13 @@
       "expired": "Contract expired"
     },
     "save": "Save contractor details",
-    "loadError": "The contractor details of this work order could not be loaded."
+    "loadError": "The contractor details of this work order could not be loaded.",
+    "warranty": {
+      "label": "Repair under warranty (to charge back to the supplier)",
+      "assetUntil": "Equipment under warranty until {{date}}.",
+      "note": "Charge-back note",
+      "noteHint": "Claim reference, parts or hours to recover from the supplier or the maker."
+    }
   },
   "closeout": {
     "progressTitle": "Closeout progress",
