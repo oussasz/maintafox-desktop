@@ -14,7 +14,8 @@
 # Runs:
 # - on a release tag vX.Y.Z, once the three variables are set (before that it is skipped);
 # - on a pull request that changes the Store packaging (always a packaging check);
-# - by hand (Actions > Microsoft Store package > Run workflow) on a tag or a branch. "Packaging
+# - by hand (Actions > Microsoft Store package > Run workflow) on a release tag, or with "Packaging
+#   check" on any branch. "Packaging
 #   check" builds with a test identity so the packaging can be checked before the Partner Center
 #   account exists; its artifact is named NOT-FOR-STORE and the Store would refuse it.
 #
@@ -88,7 +89,11 @@ jobs:
               Write-Host "::error::tauri.conf.json has version '$conf', not a plain release version MAJOR.MINOR.PATCH. Store packages are made from release versions only (use 'Packaging check' to test)."; exit 1
             }
             $version = $conf
-            if ($env:REF_TYPE -eq "tag" -and $env:TAG -cne "v$version") {
+            # A package for the Store is made from a release tag only, never from a branch.
+            if ($env:REF_TYPE -ne "tag") {
+              Write-Host "::error::A Store package is built from a release tag vX.Y.Z (choose the tag in 'Use workflow from'), or tick 'Packaging check' to test a branch."; exit 1
+            }
+            if ($env:TAG -cne "v$version") {
               Write-Host "::error::The tag is $($env:TAG) but tauri.conf.json has version $version."; exit 1
             }
             $missing = @(@("IDENTITY_NAME", "PUBLISHER", "PUBLISHER_DISPLAY_NAME") | Where-Object { -not [Environment]::GetEnvironmentVariable($_) } | ForEach-Object { "MSSTORE_$_" })

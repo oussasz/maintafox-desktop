@@ -207,8 +207,9 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
     // Microsoft Store build: the Store installed this version, so the backup the in-app updater
     // takes before an update was not made. Back up before migrating; without it, nothing changes.
     if let Err(e) = crate::updater::store_pre_migration_backup(&app, &app_state.db).await {
-        let reason =
-            format!("The database could not be backed up before this version updates it, so it was not changed: {e}");
+        let reason = format!(
+            "The database could not be checked and backed up before this version updates it, so it was not changed: {e}"
+        );
         error!("{reason}");
         emit_event(&app, StartupEvent::Failed { reason });
         window.show().ok();

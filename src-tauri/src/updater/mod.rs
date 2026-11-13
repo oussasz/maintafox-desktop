@@ -1392,14 +1392,49 @@ pub async fn store_pre_migration_backup(
     {
         return Ok(None);
     }
-    let path = crate::commands::backup::app_backup_dir(app)?.join(format!(
-        "maintafox-pre-store-update-{}-{}.db",
-        running_version(),
-        chrono::Utc::now().format("%Y%m%dT%H%M%SZ")
-    ));
+    let backup_dir = crate::commands::backup::app_backup_dir(app)?;
+    let prefix = format!("maintafox-pre-store-update-{}-", running_version());
+    // One backup per version: after a failed migration every restart still has pending
+    // migrations, and the first backup is the one taken before this version changed anything.
+    if let Some(existing) = recorded_store_backup(db, &prefix).await? {
+        tracing::warn!(path = %existing.display(), "update: Store update, keeping the backup taken before this version's first migration");
+        return Ok(Some(existing));
+    }
+    let path = backup_dir.join(format!("{prefix}{}.db", chrono::Utc::now().format("%Y%m%dT%H%M%SZ")));
     crate::backup::run_manual_backup(db, &path.to_string_lossy(), crate::backup::TRIGGER_PRE_UPDATE, None).await?;
     tracing::info!(path = %path.display(), "update: Store update, database backed up before migrating");
     Ok(Some(path))
+}
+
+/// The Store pre-migration backup already taken for this version: a successful `pre_update` run
+/// whose file name starts with `prefix`, still on disk with the checksum recorded for it.
+async fn recorded_store_backup(db: &sea_orm::DatabaseConnection, prefix: &str) -> AppResult<Option<PathBuf>> {
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT output_path, sha256_checksum FROM backup_runs \
+             WHERE trigger = ? AND status = 'success' ORDER BY id DESC",
+            [crate::backup::TRIGGER_PRE_UPDATE.into()],
+        ))
+        .await?;
+    for row in rows {
+        let path = PathBuf::from(row.try_get::<String>("", "output_path")?);
+        let named_for_version = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.starts_with(prefix) && n.ends_with(".db"));
+        if !named_for_version || !path.is_file() {
+            continue;
+        }
+        let Some(expected) = row.try_get::<Option<String>>("", "sha256_checksum")? else {
+            continue;
+        };
+        if crate::backup::file_sha256(&path)? == expected {
+            return Ok(Some(path));
+        }
+    }
+    Ok(None)
 }
 
 /// The new version could not migrate the database: stage the pre-update backup and record that
