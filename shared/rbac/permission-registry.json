@@ -1139,9 +1139,8 @@
       "pm.view",
       "ram.view",
       "sync.view",
-
       "doc.view",
-
+      "plan.view",
       "log.view",
       "trn.view",
       "iot.view",
@@ -1149,7 +1148,6 @@
       "ptw.view",
       "ptw.issue",
       "ptw.lock_own",
-
       "ins.view",
       "ins.execute",
       "cfg.view"

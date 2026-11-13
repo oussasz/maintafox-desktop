@@ -114,6 +114,8 @@ export function CreateUserDialog({
 
   const [username, setUsername] = useState("");
   const [displayName, setDisplayName] = useState("");
+  /** The name last filled from the chosen person (replaced when the choice changes). */
+  const [autoDisplayName, setAutoDisplayName] = useState("");
   /** Existing logins (lower case) and personnel already linked to an account (L5-23). */
   const [takenUsernames, setTakenUsernames] = useState<Set<string>>(new Set());
   const [linkedPersonnelIds, setLinkedPersonnelIds] = useState<Set<number>>(new Set());
@@ -290,6 +292,7 @@ export function CreateUserDialog({
       onClose();
       setUsername("");
       setDisplayName("");
+      setAutoDisplayName("");
       setPassword("");
       setConfirmPassword("");
       setIdentityMode("local");
@@ -439,9 +442,14 @@ export function CreateUserDialog({
                   value={personnelId}
                   onChange={(id) => {
                     setPersonnelId(id);
-                    // The person's name becomes the account's name unless one was typed.
+                    // The person's name becomes the account's name unless one was typed: a name
+                    // filled from the previous choice follows the new choice (or is cleared).
                     const picked = personnelItems.find((p) => p.id === id);
-                    if (picked && !displayName.trim()) setDisplayName(picked.full_name);
+                    if (!displayName.trim() || displayName === autoDisplayName) {
+                      const next = picked?.full_name ?? "";
+                      setDisplayName(next);
+                      setAutoDisplayName(next);
+                    }
                   }}
                   disabled={submitting}
                   placeholder={t("users.create.personnelSearchPlaceholder")}

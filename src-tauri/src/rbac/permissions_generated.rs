@@ -1634,6 +1634,7 @@ pub const OPERATOR_PERMISSIONS: &[&str] = &[
     RAM_VIEW,
     SYNC_VIEW,
     DOC_VIEW,
+    PLAN_VIEW,
     LOG_VIEW,
     TRN_VIEW,
     IOT_VIEW,
