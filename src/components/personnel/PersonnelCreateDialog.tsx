@@ -28,7 +28,7 @@ import { mfInput } from "@/design-system/tokens";
 import { useFormatters } from "@/hooks/use-formatters";
 import { useModuleCapabilities } from "@/hooks/use-module-capabilities";
 import { usePermissions } from "@/hooks/use-permissions";
-import { useToast } from "@/hooks/use-toast";
+import { useAppToast } from "@/hooks/use-toast";
 import { appErrorReason } from "@/lib/app-error";
 import { usePermissionsLoading, useReadableLists } from "@/lib/list-access";
 import { isModuleCapabilityAllowed } from "@/lib/module-capability";
@@ -87,7 +87,7 @@ export function PersonnelCreateDialog() {
   const { t } = useTranslation("personnel");
   const { t: tTraining } = useTranslation("training");
   const { currencyCode } = useFormatters();
-  const { toast } = useToast();
+  const { toast } = useAppToast();
   const { can } = usePermissions();
   const showCreateForm = usePersonnelStore((s) => s.showCreateForm);
   const editingPersonnel = usePersonnelStore((s) => s.editingPersonnel);

@@ -245,6 +245,9 @@
     }
   },
   "form": {
+    "createdToast": "Work order {{code}} created",
+    "savedToast": "Work order {{code}} saved",
+    "openCreated": "Open the work order",
     "missingHint": "To complete before continuing: {{items}}",
     "title": {
       "label": "Title",

@@ -14,7 +14,7 @@ import { BudgetPeriodsPanel, closeBlocker } from "@/components/finance/BudgetPer
 import { SettlementWorklist } from "@/components/finance/SettlementWorklist";
 import { variancePct } from "@/components/finance/VarianceReviewsPanel";
 import { parseAmount } from "@/components/finance/WoCostEstimateDialog";
-import { WoCostPanel, costVariance } from "@/components/finance/WoCostPanel";
+import { WoCostPanel, costVariance, isNegligibleVariance } from "@/components/finance/WoCostPanel";
 import { forecastTone } from "@/components/finance/finance-tone";
 import { catalogLabel, periodCalendarMonth } from "@/components/finance/use-finance-catalogs";
 import { useFormatters } from "@/hooks/use-formatters";
@@ -264,6 +264,15 @@ describe("finance helpers", () => {
     expect(costVariance(figures(80, 100, 0, 100))).toEqual({ base: "estimated", amount: 20 });
     expect(costVariance(figures(null, 300, 0, 250))).toEqual({ base: "planned", amount: -50 });
     expect(costVariance(figures(null, null, 0, 50))).toBeNull();
+  });
+
+  it("shows no gap before any cost is booked and treats a tiny gap as none", () => {
+    expect(costVariance(figures(5000, null, 0, 0))).toBeNull();
+    const tiny = figures(5000, null, 0, 5001.12);
+    expect(costVariance(tiny)?.amount).toBeCloseTo(1.12);
+    expect(isNegligibleVariance({ base: "estimated", amount: 1.12 }, tiny)).toBe(true);
+    const real = figures(5000, null, 0, 6000);
+    expect(isNegligibleVariance({ base: "estimated", amount: 1000 }, real)).toBe(false);
   });
 
   it("parses typed amounts with comma or dot and refuses negatives", () => {

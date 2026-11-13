@@ -245,6 +245,9 @@
     }
   },
   "form": {
+    "createdToast": "Ordre de travail {{code}} créé",
+    "savedToast": "Ordre de travail {{code}} enregistré",
+    "openCreated": "Ouvrir l'OT",
     "missingHint": "À compléter pour continuer : {{items}}",
     "title": {
       "label": "Titre",
