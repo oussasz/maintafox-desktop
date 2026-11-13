@@ -538,7 +538,7 @@ function ConsumptionBar({
 /** Budget vs actual per month (bars) with the cumulative position. */
 function MonthlyBurn({ cockpit, money }: { cockpit: BudgetCockpit; money: (v: number) => string }) {
   const { t } = useTranslation("budget");
-  const { formatNumber, currencyLabel } = useFormatters();
+  const { formatNumber, currencyCode, currencyLabel } = useFormatters();
   const max = Math.max(1, ...cockpit.months.map((m) => Math.max(m.budget, m.actual)));
   const ticks = axisTicks(max, formatNumber);
   const toDate = budgetToDate(cockpit);
@@ -557,7 +557,12 @@ function MonthlyBurn({ cockpit, money }: { cockpit: BudgetCockpit; money: (v: nu
     >
       <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
         <h3 id="burn-title" className="text-sm font-semibold text-text-primary">
-          {t("burn.title", { currency: cockpit.currency_code ?? currencyLabel })}
+          {t("burn.title", {
+            currency:
+              cockpit.currency_code && cockpit.currency_code !== currencyCode
+                ? cockpit.currency_code
+                : currencyLabel,
+          })}
         </h3>
         <div className="flex items-center gap-3 text-xs text-text-muted">
           <span className="flex items-center gap-1">

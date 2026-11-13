@@ -326,7 +326,7 @@
     }
   },
   "settlements": {
-    "intro": "Chaque OT clôturé — ou annulé après avoir consommé de la main-d'œuvre, des pièces ou des prestations — est imputé une seule fois au centre de coût et à la période de sa clôture. Si le coût d'un OT imputé change ensuite (réception, sortie, retour ou temps arrivés après la clôture, même saisis hors ligne avant elle), seule la différence avec ce qui est déjà imputé est ajoutée. Une imputation en attente indique ce qu'il faut corriger ; une réouverture d'OT annule l'imputation.",
+    "intro": "Chaque OT clôturé est imputé une seule fois au centre de coût et au mois de sa clôture.",
     "filter": "Afficher",
     "filters": {
       "pending": "En attente",
@@ -359,7 +359,14 @@
     "lateHint": "Impute la différence de coût des OT déjà imputés (par exemple après une synchronisation).",
     "lateBooked_one": "Coûts tardifs imputés sur {{count}} OT.",
     "lateBooked_other": "Coûts tardifs imputés sur {{count}} OT.",
-    "lateNone": "Aucun coût tardif à imputer."
+    "lateNone": "Aucun coût tardif à imputer.",
+    "howTitle": "Comment fonctionne l'imputation ?",
+    "how": {
+      "once": "Un OT annulé est aussi imputé s'il a consommé de la main-d'œuvre, des pièces ou des prestations.",
+      "late": "Si le coût d'un OT imputé change ensuite (réception, sortie, retour ou temps saisi après la clôture, même hors ligne), seule la différence est ajoutée.",
+      "pending": "Une imputation en attente indique ce qu'il faut corriger.",
+      "reopen": "Rouvrir un OT annule son imputation."
+    }
   },
   "compare": {
     "title": "Comparer deux versions",
@@ -432,7 +439,9 @@
       "period": "Période",
       "amount": "Montant",
       "justification": "Justification"
-    }
+    },
+    "groupTotal_one": "{{count}} ligne · {{amount}}",
+    "groupTotal_other": "{{count}} lignes · {{amount}}"
   },
   "reviews": {
     "intro": "Une analyse d'écart documente la cause d'un dépassement, l'action décidée et son acceptation.",
