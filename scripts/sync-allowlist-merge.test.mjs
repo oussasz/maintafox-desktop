@@ -85,7 +85,7 @@ describe("appendStagedTypes", () => {
     const registry = {
       entities: [
         entity("permits", "last_write_wins", { author_fields: authorFields }),
-        entity("roles", "last_write_wins", { authority: "adm.roles" }),
+        entity("roles", "last_write_wins", { authority: "test.authority.roles" }),
         entity("notes", "last_write_wins"),
         entity("events", "append_only", { author_fields: authorFields }),
       ],
@@ -93,12 +93,17 @@ describe("appendStagedTypes", () => {
     const server = {
       entity_types: [
         { entity_type: "permits", scope: "tenant", append_only: false },
-        { entity_type: "roles", scope: "tenant", append_only: false, authority: "adm.roles" },
+        {
+          entity_type: "roles",
+          scope: "tenant",
+          append_only: false,
+          authority: "test.authority.roles",
+        },
         {
           entity_type: "notes",
           scope: "tenant",
           append_only: false,
-          authority: "adm.users",
+          authority: "test.authority.users",
           author_fields: authorFields,
         },
       ],
@@ -109,7 +114,12 @@ describe("appendStagedTypes", () => {
     expect(updated).toEqual(["permits (signing contract)", "notes (signing contract)"]);
     expect(server.entity_types).toEqual([
       { entity_type: "permits", scope: "tenant", append_only: false, author_fields: authorFields },
-      { entity_type: "roles", scope: "tenant", append_only: false, authority: "adm.roles" },
+      {
+        entity_type: "roles",
+        scope: "tenant",
+        append_only: false,
+        authority: "test.authority.roles",
+      },
       { entity_type: "notes", scope: "tenant", append_only: false },
       { entity_type: "events", scope: "tenant", append_only: true, author_fields: authorFields },
     ]);
@@ -136,7 +146,10 @@ describe("appendStagedTypes", () => {
 
   it("refuses a server-only type the desktop stages or an allowlist entry that is not server-only", () => {
     const registry = {
-      entities: [entity("user_signing_keys", "last_write_wins"), entity("keys2", "last_write_wins")],
+      entities: [
+        entity("user_signing_keys", "last_write_wins"),
+        entity("keys2", "last_write_wins"),
+      ],
       server_only_types: [
         { entity_type: "user_signing_keys", scope: "tenant" },
         { entity_type: "k3", scope: "tenant" },

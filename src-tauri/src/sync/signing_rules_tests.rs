@@ -2,6 +2,8 @@
 
 use std::collections::{BTreeSet, HashSet};
 
+use crate::rbac::permissions;
+
 use super::registry::{self, SYNC_ENTITIES};
 use super::row_layout::{self, Role, Target};
 use super::row_spec::ROW_SPECS;
@@ -10,7 +12,12 @@ use super::signing_rules::{author_payload_key, signing_rule, SERVER_ONLY_TYPES, 
 const USER: &str = "user_accounts";
 
 /// Rights the server can judge as an `authority` (plant-wide holder in its own state).
-const KNOWN_AUTHORITIES: &[&str] = &["adm.users", "adm.roles", "adm.settings", "org.admin"];
+const KNOWN_AUTHORITIES: &[&str] = &[
+    permissions::ADM_USERS,
+    permissions::ADM_ROLES,
+    permissions::ADM_SETTINGS,
+    permissions::ORG_ADMIN,
+];
 
 fn is_user_reference(role: &Role) -> bool {
     match role {
@@ -167,11 +174,11 @@ fn signing_rules_are_well_formed() {
     }
     // The authority types the server judges (design §5) keep their right.
     for (entity_type, right) in [
-        ("user_accounts", "adm.users"),
-        ("user_scope_assignments", "adm.users"),
-        ("delegated_admin_policies", "adm.users"),
-        ("roles", "adm.roles"),
-        ("role_permissions", "adm.roles"),
+        ("user_accounts", permissions::ADM_USERS),
+        ("user_scope_assignments", permissions::ADM_USERS),
+        ("delegated_admin_policies", permissions::ADM_USERS),
+        ("roles", permissions::ADM_ROLES),
+        ("role_permissions", permissions::ADM_ROLES),
     ] {
         assert_eq!(
             signing_rule(entity_type).and_then(|r| r.authority),
@@ -196,7 +203,7 @@ fn registry_export_carries_signing_contract() {
             .unwrap_or_else(|| panic!("{t} exported"))
     };
     let accounts = entity("user_accounts");
-    assert_eq!(accounts["authority"], "adm.users");
+    assert_eq!(accounts["authority"], permissions::ADM_USERS);
     let fields: Vec<&str> = accounts["author_fields"]
         .as_array()
         .expect("author_fields")

@@ -6,8 +6,8 @@
 // refuses deletes of those types and refuses to start when an entry lacks the flag).
 //
 // Per-user signing (sync-signing-design.md v9 §5): the signing contract of an entry —
-// `author_fields` ([{field, guards}]) and `authority` ("adm.users" | "adm.roles") — is generated
-// from the desktop row rules (src-tauri/src/sync/signing_rules.rs) and always copied from the
+// `author_fields` ([{field, guards}]) and `authority` (the name of a plant-wide right) — is
+// generated from the desktop row rules (src-tauri/src/sync/signing_rules.rs) and always copied from the
 // desktop registry, on new and existing entries alike, so the server never judges authors or
 // authority on a stale list. Types the server publishes but devices never push
 // (`server_only_types` of the desktop registry, e.g. `user_signing_keys`) are listed with
@@ -22,7 +22,10 @@ function desktopSigning(entity) {
   const out = {};
   if (entity.authority !== undefined && entity.authority !== null) out.authority = entity.authority;
   if (Array.isArray(entity.author_fields) && entity.author_fields.length > 0) {
-    out.author_fields = entity.author_fields.map((a) => ({ field: a.field, guards: [...a.guards] }));
+    out.author_fields = entity.author_fields.map((a) => ({
+      field: a.field,
+      guards: [...a.guards],
+    }));
   }
   return out;
 }
@@ -89,7 +92,9 @@ export function appendStagedTypes(registry, server) {
       problems.push(`${so.entity_type}: allowlist scope ${entry.scope}, desktop scope ${so.scope}`);
     }
     if (entry.server_only !== true) {
-      problems.push(`${so.entity_type}: allowlist entry is not server-only, desktop server-only type`);
+      problems.push(
+        `${so.entity_type}: allowlist entry is not server-only, desktop server-only type`,
+      );
     }
   }
   if (problems.length) return { added: [], updated: [], problems };

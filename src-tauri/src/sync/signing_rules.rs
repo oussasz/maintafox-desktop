@@ -16,6 +16,8 @@
 //! `authority` is the right a signer must hold plant-wide (judged by the server in its own state)
 //! to change a row of that type at all.
 
+use crate::rbac::permissions;
+
 /// One author field: the local column (a reference to `user_accounts`) and the payload keys of
 /// the columns of the same row this person vouches for.
 #[derive(Debug, Clone, Copy)]
@@ -216,7 +218,7 @@ pub static SIGNING_RULES: &[SigningRule] = &[
             ],
         )],
         not_attribution: &[],
-        authority: Some("adm.users"),
+        authority: Some(permissions::ADM_USERS),
     },
     SigningRule {
         entity_type: "di_attachments",
@@ -440,19 +442,19 @@ pub static SIGNING_RULES: &[SigningRule] = &[
         entity_type: "org_node_types",
         author_fields: &[],
         not_attribution: &[],
-        authority: Some("org.admin"),
+        authority: Some(permissions::ORG_ADMIN),
     },
     SigningRule {
         entity_type: "org_structure_models",
         author_fields: &[author("activated_by_id", &["activated_at"])],
         not_attribution: &[],
-        authority: Some("org.admin"),
+        authority: Some(permissions::ORG_ADMIN),
     },
     SigningRule {
         entity_type: "org_type_relationship_rules",
         author_fields: &[],
         not_attribution: &[],
-        authority: Some("org.admin"),
+        authority: Some(permissions::ORG_ADMIN),
     },
     SigningRule {
         entity_type: "permit_gas_tests",
@@ -625,7 +627,7 @@ pub static SIGNING_RULES: &[SigningRule] = &[
         entity_type: "rbac_settings",
         author_fields: &[],
         not_attribution: &[],
-        authority: Some("adm.settings"),
+        authority: Some(permissions::ADM_SETTINGS),
     },
     SigningRule {
         entity_type: "rbd_models",
@@ -701,19 +703,19 @@ pub static SIGNING_RULES: &[SigningRule] = &[
         entity_type: "role_permissions",
         author_fields: &[author("granted_by_id", &["granted_at"])],
         not_attribution: &[],
-        authority: Some("adm.roles"),
+        authority: Some(permissions::ADM_ROLES),
     },
     SigningRule {
         entity_type: "role_templates",
         author_fields: &[],
         not_attribution: &[],
-        authority: Some("adm.roles"),
+        authority: Some(permissions::ADM_ROLES),
     },
     SigningRule {
         entity_type: "roles",
         author_fields: &[],
         not_attribution: &[],
-        authority: Some("adm.roles"),
+        authority: Some(permissions::ADM_ROLES),
     },
     SigningRule {
         entity_type: "saved_activity_filters",
@@ -809,7 +811,7 @@ pub static SIGNING_RULES: &[SigningRule] = &[
             author("status_changed_by_id", &["is_active", "deleted_at"]),
         ],
         not_attribution: &[],
-        authority: Some("adm.users"),
+        authority: Some(permissions::ADM_USERS),
     },
     SigningRule {
         entity_type: "user_analytics_dashboard_layouts",
@@ -833,7 +835,7 @@ pub static SIGNING_RULES: &[SigningRule] = &[
         entity_type: "user_scope_assignments",
         author_fields: &[author("assigned_by_id", &[])],
         not_attribution: &["user_id"],
-        authority: Some("adm.users"),
+        authority: Some(permissions::ADM_USERS),
     },
     SigningRule {
         entity_type: "weekly_schedule_events",
