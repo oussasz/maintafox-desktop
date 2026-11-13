@@ -6,6 +6,7 @@ import { DocumentHeaderEditor } from "@/components/editor/DocumentHeaderEditor";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { mfAlert } from "@/design-system/tokens";
 import { i18n } from "@/i18n/config";
 import { appErrorReason } from "@/lib/app-error";
 import { HEADER_IMAGE_MAX_BYTES } from "@/lib/document-header-image";
@@ -183,6 +184,7 @@ export function DocumentHeaderSettingsPanel({
 
   const previewHtml = sanitizeDocumentHeaderHtml(draftHtml);
   const previewEmpty = isDocumentHeaderHtmlEmpty(previewHtml);
+  const savedEmpty = isDocumentHeaderHtmlEmpty(sanitizeDocumentHeaderHtml(value.html));
 
   return (
     <Card className="shadow-none">
@@ -209,6 +211,12 @@ export function DocumentHeaderSettingsPanel({
           </div>
         ) : (
           <>
+            {savedEmpty ? (
+              // Printed documents leave without logo or plant name until this is set (L5-29).
+              <p role="status" className={mfAlert.warning}>
+                {t("documentHeader.emptySetupPrompt")}
+              </p>
+            ) : null}
             <div className="space-y-2">
               <p className="text-sm font-medium text-text-primary">
                 {t("documentHeader.logoLabel")}

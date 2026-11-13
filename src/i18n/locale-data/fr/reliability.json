@@ -168,9 +168,9 @@
     "clearFilter": "Effacer le filtre",
     "loading": "Chargement…",
     "filterHint": "Cliquez une cellule pour filtrer",
-    "referenceWarningTitle": "Alerte de cohérence Référentiel/FMECA",
-    "referenceStats": "WORK.FAILURE_MODES publiés : {{published}} · Modes FMECA liés : {{linked}} · Liens orphelins : {{orphaned}}",
-    "tableTitle": "Modes de défaillance FMECA",
+    "referenceWarningTitle": "Alerte de cohérence Données de référence / AMDEC",
+    "referenceStats": "Modes de défaillance de référence publiés : {{published}} · Modes AMDEC liés : {{linked}} · Liens orphelins : {{orphaned}}",
+    "tableTitle": "Modes de défaillance AMDEC",
     "noRows": "Aucune ligne pour ce filtre.",
     "colAnalysis": "Analyse",
     "colFailure": "Défaillance fonctionnelle",
@@ -223,7 +223,7 @@
     "promoteBody": "Choisissez ce que devient la cause : un ordre de travail correctif ou une ligne d'AMDEC de l'étude. Le lien avec ce diagramme est conservé ; le diagramme est enregistré d'abord si nécessaire.",
     "promoteBodyWoOnly": "Crée un ordre de travail correctif lié à ce diagramme Ishikawa. Le diagramme est enregistré d'abord si nécessaire.",
     "promoteTargetWo": "Ordre de travail correctif",
-    "promoteTargetFmeca": "Ligne FMECA",
+    "promoteTargetFmeca": "Ligne AMDEC",
     "promoteNeedSave": "Enregistrez le diagramme avant de promouvoir une cause.",
     "promoteNeedUser": "Connexion requise pour créer un ordre de travail.",
     "promoteSubmit": "Créer",
@@ -403,12 +403,12 @@
       "runtimeNumeric": "Équipement et valeur numériques requis.",
       "kpiEquipRequired": "Équipement KPI requis.",
       "weibullEquipRequired": "Équipement Weibull requis.",
-      "fmecaRequired": "FMECA : équipement et titre requis.",
+      "fmecaRequired": "AMDEC : équipement et titre requis.",
       "sodIntegers": "S, O, D doivent être des entiers.",
       "sodRange": "S, O, D doivent être entre 1 et 10.",
       "failureModeIdInvalid": "Mode de défaillance (id) invalide.",
       "pmPlanInvalid": "Plan PM invalide.",
-      "revisedRpnInvalid": "RPN révisé invalide.",
+      "revisedRpnInvalid": "Criticité (IPR) révisée invalide.",
       "rcmRequired": "RCM : équipement et titre requis.",
       "ftaRequired": "FTA : équipement et titre requis.",
       "rbdRequired": "RBD : équipement et titre requis.",
@@ -490,7 +490,7 @@
     },
     "weibull": {
       "title": "Weibull — ajustement (inter-arrivées)",
-      "hint": "PRD 6.10.4 — MLE 2 paramètres ; intervalles asymptotiques si échantillon suffisant.",
+      "hint": "Ajustement de Weibull à 2 paramètres (maximum de vraisemblance) ; intervalles de confiance si l'échantillon est suffisant.",
       "periodStart": "période début (optionnel)",
       "periodEnd": "période fin (optionnel)",
       "run": "Lancer l'ajustement",
@@ -500,21 +500,21 @@
       "empty": "Aucun résultat — lancez un ajustement sur des événements de défaillance."
     },
     "fmeca": {
-      "title": "FMECA — analyses et matrice RPN",
-      "hint": "PRD 6.10.5 — CRUD analyses et lignes ; RPN = S×O×D (1–10). Écriture :",
+      "title": "AMDEC — analyses et matrice de criticité (IPR)",
+      "hint": "Analyses et lignes ; criticité IPR = gravité × occurrence × détection (chacune de 1 à 10). Modification :",
       "refreshAnalyses": "Actualiser analyses",
       "analysisTitle": "titre analyse",
       "boundary": "frontière / périmètre",
       "createAnalysis": "Créer analyse",
-      "itemsTitle": "Lignes FMECA (analyse #{{id}})",
+      "itemsTitle": "Lignes AMDEC (analyse n° {{id}})",
       "functionalFailure": "défaillance fonctionnelle",
       "effect": "effet",
       "isoModeId": "mode ISO (id)",
-      "rpnPreview": "RPN (aperçu S×O×D) :",
+      "rpnPreview": "IPR (gravité × occurrence × détection) :",
       "editingRow": " — édition ligne #{{id}}",
       "recommendedAction": "action recommandée",
       "currentControl": "contrôle courant",
-      "revisedRpn": "RPN révisé (optionnel)",
+      "revisedRpn": "IPR révisé (facultatif)",
       "saveRow": "Enregistrer ligne",
       "addRow": "Ajouter ligne",
       "newRow": "Nouvelle ligne",
@@ -524,7 +524,7 @@
     },
     "rcm": {
       "title": "RCM — décisions liées au PM",
-      "hintPrefix": "PRD 6.10.6 — tactique (liste blanche) et",
+      "hintPrefix": "Stratégie de maintenance (liste fermée) et",
       "hintSuffix": "optionnel.",
       "refreshStudies": "Actualiser études",
       "studyTitle": "titre étude RCM",
@@ -544,7 +544,7 @@
       "selectPrompt": "Sélectionnez une étude pour gérer les décisions RCM."
     },
     "graphModels": {
-      "title": "FTA / RBD / arbre d'événements (PRD 6.10)",
+      "title": "Arbre de défaillances / diagramme de fiabilité / arbre d'événements",
       "hint": "Modèles graphe locaux — FTA (ET/OU + prob. top), RBD (série/parallèle), ETA (séquence).",
       "evaluateLabel": "Évaluer :",
       "labTooltip": "Éditeur schématique FTA / RBD",
@@ -600,7 +600,7 @@
     },
     "shell": {
       "title": "Fiabilité (RAMS) — taxonomie défaillance",
-      "description": "PRD 6.10.1 — hiérarchies et codes ISO 14224 (aperçu local)."
+      "description": "Hiérarchies et codes ISO 14224 (aperçu local)."
     }
   },
   "foundationPage": {
@@ -689,8 +689,8 @@
       "line2": "MLE 2 paramètres ; IC asymptotiques — grands échantillons."
     },
     "fmeca": {
-      "title": "FMECA",
-      "line1": "S, O, D sur échelle 1–10 ; RPN = S×O×D ; pas de corrélation explicite entre facteurs."
+      "title": "AMDEC",
+      "line1": "Gravité, occurrence et détection notées de 1 à 10 ; IPR = gravité × occurrence × détection ; les facteurs sont supposés indépendants."
     },
     "fta": {
       "title": "FTA",

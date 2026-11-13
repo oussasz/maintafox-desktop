@@ -241,15 +241,19 @@ export function payloadLines(
   if (typeof payload !== "object" || Array.isArray(payload)) {
     return [{ key: "", value: formatValue(payload) }];
   }
-  return Object.entries(payload as Record<string, unknown>)
-    .filter(([, v]) => v !== null && v !== undefined && v !== "")
-    .filter(([k]) => !TECHNICAL_KEYS.has(k) && !k.endsWith("sync_id"))
-    .filter(([k]) => !(options.hideSummary && k === "summary"))
-    .filter(([k, v]) => !(k === "detail" && isOnlyChanges(v)))
-    .map(([k, v]) => ({
-      key: t ? translated(t, `labels.detailKey.${k}`, k) : humanizeCode(k),
-      value: formatValue(v),
-    }));
+  return (
+    Object.entries(payload as Record<string, unknown>)
+      .filter(([, v]) => v !== null && v !== undefined && v !== "")
+      .filter(([k]) => !TECHNICAL_KEYS.has(k) && !k.endsWith("sync_id"))
+      // An internal row number ("pm_occurrence_id: 421") means nothing to a reader (L5-27).
+      .filter(([k, v]) => !(k.endsWith("_id") && typeof v === "number"))
+      .filter(([k]) => !(options.hideSummary && k === "summary"))
+      .filter(([k, v]) => !(k === "detail" && isOnlyChanges(v)))
+      .map(([k, v]) => ({
+        key: t ? translated(t, `labels.detailKey.${k}`, k) : humanizeCode(k),
+        value: formatValue(v),
+      }))
+  );
 }
 
 function isOnlyChanges(v: unknown): boolean {

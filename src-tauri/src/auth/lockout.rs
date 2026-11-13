@@ -33,6 +33,16 @@ impl LockoutPolicy {
             progressive: prog == "1",
         }
     }
+
+    /// The refusal for a wrong identifier or password. It states the lockout rule so the user
+    /// knows how many tries they have, and is the same whether the account exists or not
+    /// (no per-account count: that would tell an attacker which identifiers exist).
+    pub fn invalid_credentials_error(&self) -> crate::errors::AppError {
+        crate::errors::AppError::Auth(format!(
+            "Identifiant ou mot de passe invalide. Après {} essais infructueux, le compte est              verrouillé {} min ; en cas d'oubli, utilisez « Mot de passe oublié ».",
+            self.max_attempts, self.lockout_minutes
+        ))
+    }
 }
 
 /// Read a single value from `rbac_settings`. Returns `default` on any error

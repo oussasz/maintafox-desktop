@@ -952,7 +952,7 @@
     "fmecaOverrideSignerIdPlaceholder": "Sélectionner un superviseur/admin",
     "fmecaOverrideSignerPassword": "Mot de passe du signataire de dérogation",
     "fmecaOverrideSignerPasswordPlaceholder": "Confirmation du mot de passe signataire",
-    "fmecaOverrideHint": "Requis uniquement si les pièces suggérées critiques FMECA n'ont pas été consommées. Le signataire doit être Superviseur/Admin, distinct du clôturant et ré-authentifié.",
+    "fmecaOverrideHint": "Requis uniquement si les pièces suggérées critiques de l'AMDEC n'ont pas été consommées. Le signataire doit être superviseur ou administrateur, autre que la personne qui clôture, et saisir à nouveau son mot de passe.",
     "closeWo": "Fermer l'OT",
     "blocked": {
       "closed": "L'OT est clôturé : ses détails ne se modifient plus.",

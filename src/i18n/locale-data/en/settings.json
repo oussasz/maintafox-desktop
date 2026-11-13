@@ -89,12 +89,15 @@
     "reliability.repeat_failure_window_days": "Repeat failures: period (days)"
   },
   "documentHeader": {
+    "emptyPrintWarning": "Document printed without a company header",
+    "emptyPrintWhere": "No logo or plant name is set. An administrator can set it in Settings › General › Documents and branding.",
+    "emptySetupPrompt": "The document header is empty: printed work orders, requests and purchase orders leave without a logo or plant name. Add at least the plant name and the logo below.",
     "removeLogoConfirmTitle": "Remove the logo?",
     "removeLogoConfirmBody": "The logo no longer appears in the header of printed documents (work orders, purchase orders…). You can upload another one.",
     "title": "Documents & Branding",
     "description": "Configure the default letterhead injected at the top of printed work orders, intervention requests, and purchase orders.",
     "logoLabel": "Company logo",
-    "logoHint": "PNG, JPEG, WebP, or GIF. Max 5 MB. Stored for document headers and future app chrome.",
+    "logoHint": "PNG, JPEG, WebP, or GIF. Max 5 MB. Used in the header of printed documents.",
     "uploadLogo": "Upload logo",
     "replaceLogo": "Replace logo",
     "removeLogo": "Remove logo",
