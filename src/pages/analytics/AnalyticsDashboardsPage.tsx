@@ -3,7 +3,10 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 
-import { AnalyticsCustomizeDialog } from "@/components/analytics/AnalyticsCustomizeDialog";
+import {
+  ANALYTICS_WIDGET_LABEL_KEYS,
+  AnalyticsCustomizeDialog,
+} from "@/components/analytics/AnalyticsCustomizeDialog";
 import { AnalyticsDiStatusChart } from "@/components/analytics/AnalyticsDiStatusChart";
 import { AnalyticsWorkloadChart } from "@/components/analytics/AnalyticsWorkloadChart";
 import { SmrpIndicatorsSection } from "@/components/analytics/SmrpIndicatorsSection";
@@ -107,6 +110,13 @@ interface KpiProps {
   trend?: KpiTrend | null;
   onOpen?: () => void;
 }
+
+/** Blocks made of tiles only (the others are cards with their own title). */
+const TILE_WIDGETS = new Set<string>([
+  ANALYTICS_DASHBOARD_WIDGET_IDS.OPS_KPIS,
+  ANALYTICS_DASHBOARD_WIDGET_IDS.PM_DUE,
+  ANALYTICS_DASHBOARD_WIDGET_IDS.MAINTENANCE_COST,
+]);
 
 export function AnalyticsDashboardsPage() {
   const { t } = useTranslation("reports");
@@ -234,13 +244,15 @@ export function AnalyticsDashboardsPage() {
     [effectiveLayout, canShowWidget],
   );
 
+  // The organisation as a tree (parents before their children, indented by depth), not a flat
+  // alphabetical list: a site and its workshops read together.
   const orgOptions = useMemo(() => {
-    return orgRows
+    return [...orgRows]
+      .sort((a, b) => a.node.ancestor_path.localeCompare(b.node.ancestor_path))
       .map((r) => ({
         id: r.node.id,
-        label: r.node.name || r.node.code,
-      }))
-      .sort((a, b) => a.label.localeCompare(b.label));
+        label: `${"  ".repeat(Math.max(0, r.node.depth))}${r.node.name || r.node.code}`,
+      }));
   }, [orgRows]);
 
   /**
@@ -382,7 +394,6 @@ export function AnalyticsDashboardsPage() {
               context: t("hub.dashboards.context.today"),
               value: count(data?.pm_due_today.value),
               available: data?.pm_due_today.available ?? false,
-              trend: hubTrend(HUB.PM_DUE_TODAY, data?.pm_due_today, "count"),
               onOpen: () => navigate(listLinks.pmDue("today")),
             })}
             {renderKpi({
@@ -390,7 +401,6 @@ export function AnalyticsDashboardsPage() {
               context: t("hub.dashboards.context.next7"),
               value: count(data?.pm_due_next_7d.value),
               available: data?.pm_due_next_7d.available ?? false,
-              trend: hubTrend(HUB.PM_DUE_NEXT_7D, data?.pm_due_next_7d, "count"),
               onOpen: () => navigate(listLinks.pmDue("next7")),
             })}
           </div>
@@ -613,7 +623,15 @@ export function AnalyticsDashboardsPage() {
         <div className="space-y-4">
           <SmrpIndicatorsSection smrp={data?.smrp ?? null} can={can} />
           {visibleWidgets.map((w) => (
-            <Fragment key={w.id}>{renderWidget(w.id)}</Fragment>
+            <Fragment key={w.id}>
+              {/* Tile blocks carry no card title of their own: name them as in Personnaliser. */}
+              {TILE_WIDGETS.has(w.id) && ANALYTICS_WIDGET_LABEL_KEYS[w.id] ? (
+                <h3 className="-mb-2 text-sm font-medium text-text-secondary">
+                  {t(ANALYTICS_WIDGET_LABEL_KEYS[w.id] ?? "")}
+                </h3>
+              ) : null}
+              {renderWidget(w.id)}
+            </Fragment>
           ))}
         </div>
       )}

@@ -90,6 +90,13 @@
       "myWork": "My work",
       "supervision": "Supervision",
       "planning": "Planning"
+    },
+    "presets": {
+      "heading": "Ready-made profiles",
+      "hint": "Pick a profile to show the blocks useful to that role, then adjust if needed and save. Only the blocks your rights allow are shown.",
+      "technician": "Technician",
+      "planner": "Planner",
+      "manager": "Maintenance manager"
     }
   },
   "overviewKpi": {
@@ -162,7 +169,8 @@
       "planning": "Planning",
       "inventory": "Inventory",
       "permits": "Permits",
-      "equipment": "Equipment"
+      "equipment": "Equipment",
+      "planningWeek": "Weekly schedule"
     },
     "myWork": {
       "title": "My work",
@@ -230,14 +238,15 @@
         "titleNoWeek": "Current week",
         "overtime": "Overtime possible",
         "reliesOnOvertime": "Above 100 %: this week's schedule relies on overtime.",
-        "awaitingApproval_one": "{{count}} current week frozen without approval.",
-        "awaitingApproval_other": "{{count}} current weeks frozen without approval.",
+        "awaitingApproval_one": "{{count}} current week is frozen but not yet approved.",
+        "awaitingApproval_other": "{{count}} current weeks are frozen but not yet approved.",
         "sitesNotFrozen_one": "{{count}} site has no frozen current week: it is not counted.",
         "sitesNotFrozen_other": "{{count}} sites have no frozen current week: they are not counted.",
         "unavailable": {
           "WEEK_NO_PLANNING_SITE": "No planning site has a crew: there is no week to load.",
           "WEEK_NOT_FROZEN": "The current week is frozen at no site: loading is measured on the frozen baseline."
-        }
+        },
+        "toApprove": "Approve in the weekly schedule"
       },
       "compliance": {
         "title": "Schedule compliance",
@@ -246,7 +255,7 @@
         "released_one": "{{count}} baseline job was later released or cancelled (counted as not done).",
         "released_other": "{{count}} baseline jobs were later released or cancelled (counted as not done).",
         "unavailable": {
-          "NO_FROZEN_BASELINE": "No frozen week ended in the period: schedule compliance is measured on the frozen baseline."
+          "NO_FROZEN_BASELINE": "No frozen week ended in the period"
         }
       }
     },
@@ -390,7 +399,7 @@
       "repeatFailures": "Equipment with at least {{min}} unplanned failures in the last {{days}} days (rule set in Settings > Reliability).",
       "repeatFailuresRule": "Equipment with at least N unplanned failures in the last D days (rule set in Settings > Reliability)."
     },
-    "more_one": "+{{count}} more — full list in the module",
-    "more_other": "+{{count}} more — full list in the module"
+    "more_one": "+{{count}} more — see the full list",
+    "more_other": "+{{count}} more — see the full list"
   }
 }

@@ -152,9 +152,13 @@ export function PlanningPage() {
 
   const [boardScope, setBoardScope] = useState<PlanningBoardScope>({ kind: "all" });
   const teamId = boardScope.kind === "crew" ? boardScope.teamId : null;
-  const [pageView, setPageView] = useState<PlanningPageView>(() =>
-    readStoredPageView(useSessionStore.getState().info?.user_id ?? null),
-  );
+  // `/planning?view=week` (home and Analytique links) opens the weekly schedule; otherwise the
+  // view the user last chose.
+  const [pageView, setPageView] = useState<PlanningPageView>(() => {
+    const asked = searchParams.get("view");
+    if (asked === "week" || asked === "gantt" || asked === "calendar") return asked;
+    return readStoredPageView(useSessionStore.getState().info?.user_id ?? null);
+  });
   const [calendarSessionKey, setCalendarSessionKey] = useState(0);
   const [searchInput, setSearchInput] = useState("");
   const [readinessFilter, setReadinessFilter] = useState<string | null>(null);

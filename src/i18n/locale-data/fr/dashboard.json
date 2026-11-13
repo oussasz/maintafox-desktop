@@ -90,6 +90,13 @@
       "myWork": "Mon travail",
       "supervision": "Supervision",
       "planning": "Planification"
+    },
+    "presets": {
+      "heading": "Profils prêts à l'emploi",
+      "hint": "Choisissez un profil pour afficher les blocs utiles à ce rôle, puis ajustez si besoin et enregistrez. Seuls les blocs permis par vos droits s'affichent.",
+      "technician": "Technicien",
+      "planner": "Planificateur",
+      "manager": "Responsable maintenance"
     }
   },
   "overviewKpi": {
@@ -162,7 +169,8 @@
       "planning": "Planification",
       "inventory": "Stock",
       "permits": "Permis",
-      "equipment": "Équipements"
+      "equipment": "Équipements",
+      "planningWeek": "Planning hebdomadaire"
     },
     "myWork": {
       "title": "Mon travail",
@@ -230,14 +238,15 @@
         "titleNoWeek": "Semaine en cours",
         "overtime": "Heures sup. possibles",
         "reliesOnOvertime": "Au-delà de 100 % : le planning de la semaine compte sur des heures supplémentaires.",
-        "awaitingApproval_one": "{{count}} semaine en cours gelée sans approbation.",
-        "awaitingApproval_other": "{{count}} semaines en cours gelées sans approbation.",
+        "awaitingApproval_one": "{{count}} semaine en cours est gelée mais pas encore approuvée.",
+        "awaitingApproval_other": "{{count}} semaines en cours sont gelées mais pas encore approuvées.",
         "sitesNotFrozen_one": "{{count}} site n'a pas de semaine en cours gelée : il n'est pas compté.",
         "sitesNotFrozen_other": "{{count}} sites n'ont pas de semaine en cours gelée : ils ne sont pas comptés.",
         "unavailable": {
           "WEEK_NO_PLANNING_SITE": "Aucun site de planification n'a d'équipe : il n'y a pas de semaine à charger.",
           "WEEK_NOT_FROZEN": "La semaine en cours n'est gelée sur aucun site : le chargement se mesure sur la référence gelée."
-        }
+        },
+        "toApprove": "Approuver dans le planning hebdomadaire"
       },
       "compliance": {
         "title": "Respect du planning",
@@ -246,7 +255,7 @@
         "released_one": "{{count}} travail de la référence a ensuite été libéré ou annulé (compté non réalisé).",
         "released_other": "{{count}} travaux de la référence ont ensuite été libérés ou annulés (comptés non réalisés).",
         "unavailable": {
-          "NO_FROZEN_BASELINE": "Aucune semaine gelée ne s'est terminée sur la période : le respect du planning se mesure sur la référence gelée."
+          "NO_FROZEN_BASELINE": "Aucune semaine gelée terminée sur la période"
         }
       }
     },
@@ -390,7 +399,7 @@
       "repeatFailures": "Équipements ayant au moins {{min}} défaillances non planifiées dans les {{days}} derniers jours (règle réglée dans Paramètres > Fiabilité).",
       "repeatFailuresRule": "Équipements ayant au moins N défaillances non planifiées dans les D derniers jours (règle réglée dans Paramètres > Fiabilité)."
     },
-    "more_one": "+{{count}} autre — liste complète dans le module",
-    "more_other": "+{{count}} autres — liste complète dans le module"
+    "more_one": "+{{count}} autre — voir la liste complète",
+    "more_other": "+{{count}} autres — voir la liste complète"
   }
 }

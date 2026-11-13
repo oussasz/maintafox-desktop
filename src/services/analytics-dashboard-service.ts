@@ -25,6 +25,15 @@ const SmrpRatioSchema = z.object({
 });
 const SmrpMetricSchema = z.object({ current: SmrpRatioSchema, previous: SmrpRatioSchema });
 
+const PmComplianceGroupSchema = z.object({
+  id: z.number().nullable(),
+  label: z.string().nullable(),
+  due_count: z.number(),
+  on_time_count: z.number(),
+  compliance_pct: z.number().nullable(),
+});
+export type PmComplianceGroup = z.infer<typeof PmComplianceGroupSchema>;
+
 /** SMRP indicators computed in Rust (`analytics::smrp`); see that module for the formulas. */
 export const SmrpKpisSchema = z.object({
   from: z.string(),
@@ -41,6 +50,14 @@ export const SmrpKpisSchema = z.object({
     })
     .nullable(),
   pm_compliance: SmrpMetricSchema.nullable(),
+  /** PM compliance split by site and by trade (team), same rule as `pm_compliance`. */
+  pm_breakdown: z
+    .object({
+      by_site: z.array(PmComplianceGroupSchema),
+      by_team: z.array(PmComplianceGroupSchema),
+    })
+    .nullable()
+    .default(null),
   backlog: z
     .object({
       backlog_hours: z.number(),
