@@ -287,6 +287,10 @@
       "title": "Demande {{code}} clôturée",
       "body": "{{title}}"
     },
+    "di_work_done": {
+      "title": "Travaux terminés pour votre demande {{code}}",
+      "body": "{{title}} : l'OT {{wo_code}} est clôturé."
+    },
     "di_converted": {
       "title": "Demande {{code}} convertie en OT {{wo_code}}",
       "body": "{{title}}"

@@ -224,6 +224,7 @@
     "show": "Show card",
     "recordPrint": "Record print",
     "print": "Print LOTO tag",
+    "printSheet": "Print the permit's LOTO sheet",
     "doNotOperate": "DANGER — DO NOT OPERATE. Equipment locked out.",
     "signature": "Worker signature",
     "forcedRemoval": "Forced removal",

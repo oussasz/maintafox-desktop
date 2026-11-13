@@ -287,6 +287,10 @@
       "title": "Request {{code}} closed",
       "body": "{{title}}"
     },
+    "di_work_done": {
+      "title": "Work done for your request {{code}}",
+      "body": "{{title}}: work order {{wo_code}} is closed."
+    },
     "di_converted": {
       "title": "Request {{code}} converted to work order {{wo_code}}",
       "body": "{{title}}"

@@ -4141,7 +4141,7 @@ pub async fn get_loto_card_view(
              pi.verified_by_id, pi.verified_at, pi.zero_energy_note, pi.cancelled_at, \
              COALESCE(pi.forced_removal, 0) AS forced_removal, pi.removed_at, pi.forced_reason, \
              COALESCE(uf.display_name, uf.username) AS forced_authorized_by, \
-             e.asset_id_code, e.name AS equipment_name, ua.username AS verifier_username \
+             e.asset_id_code, e.name AS equipment_name, COALESCE(ua.display_name, ua.username) AS verifier_username \
              FROM permit_isolations pi \
              JOIN work_permits wp ON wp.id = pi.permit_id \
              LEFT JOIN reference_values et ON et.id = pi.energy_type_id \
@@ -4186,6 +4186,7 @@ pub async fn get_loto_card_view(
     let expires_at: Option<String> = row.try_get("", "permit_expires").ok();
     let verified_at: Option<String> = row.try_get("", "verified_at").ok().flatten();
     let verifier_username: Option<String> = row.try_get("", "verifier_username").ok().flatten();
+    // L4-17: the verifier's name as people know them (display name), the login only without one.
     let verifier_signature = if verified_at.is_some() { verifier_username } else { None };
     let zero_energy_note: Option<String> = if verified_at.is_some() {
         row.try_get("", "zero_energy_note").ok().flatten()

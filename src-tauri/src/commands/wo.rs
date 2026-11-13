@@ -2281,6 +2281,10 @@ async fn close_wo_audited(
                 Some(expected),
             )
             .await;
+            // L1-31: the requester of the request it came from is told the work is done.
+            if let Some(di_id) = wo.source_di_id {
+                crate::di::notifications::notify_work_done(&state.db, di_id, wo.id, &wo.code).await;
+            }
             Ok(wo)
         }
         Err(AppError::ValidationFailed(ref errs)) => {

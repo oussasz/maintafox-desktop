@@ -74,6 +74,7 @@ export const InterventionRequestSchema = z.object({
   updated_at: z.string(),
   asset_code: z.string().nullable().optional(),
   asset_label: z.string().nullable().optional(),
+  asset_criticality_code: z.string().nullable().optional(),
   org_node_code: z.string().nullable().optional(),
   org_node_label: z.string().nullable().optional(),
   submitter_display_name: z.string().nullable().optional(),
