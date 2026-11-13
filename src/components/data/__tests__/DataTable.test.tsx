@@ -112,6 +112,18 @@ describe("DataTable — V2 Supervisor Verification", () => {
     expect(within(firstSortedRow).getByText("Item 005")).toBeInTheDocument();
   });
 
+  it("hides the page-size choice and pager when every row fits on one page (L7-24, L7-29)", () => {
+    render(<DataTable columns={columns} data={generateRows(8)} pageSize={50} />);
+    expect(screen.queryByText("Results per page")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Page 1 of/)).not.toBeInTheDocument();
+  });
+
+  it("shows the table's own page size in the selector (never an empty choice)", () => {
+    render(<DataTable columns={columns} data={generateRows(60)} pageSize={25} />);
+    expect(screen.getByText("Results per page")).toBeInTheDocument();
+    expect(screen.getByRole("combobox")).toHaveTextContent("25");
+  });
+
   it("displays empty state message when data is empty", () => {
     render(<DataTable columns={columns} data={[]} />);
     expect(screen.getByText("No results found")).toBeInTheDocument();

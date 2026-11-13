@@ -294,6 +294,24 @@ describe("DocumentationCategoryPage", () => {
     expect(screen.getAllByRole("button", { name: "versions.downloadNamed" })).toHaveLength(2);
   });
 
+  it("searches the whole library from an empty category (L7-29)", async () => {
+    mockList.mockResolvedValue([]);
+    renderPage();
+    const box = await screen.findByRole("searchbox", { name: "list.searchPlaceholder" });
+    expect(mockList).toHaveBeenLastCalledWith("sops", null);
+    mockList.mockResolvedValue([
+      doc,
+      { ...doc, id: 9, category: "technical_manuals", title: "Pump manual" },
+    ]);
+    fireEvent.click(screen.getByTestId("doc-search-all"));
+    await waitFor(() => expect(mockList).toHaveBeenLastCalledWith(null, null));
+    fireEvent.change(box, { target: { value: "pump" } });
+    expect(await screen.findByText("Pump manual")).toBeInTheDocument();
+    expect(screen.queryByText("Lubrication SOP")).not.toBeInTheDocument();
+    // The category column names where each result is filed (the side menu has the same link).
+    expect(screen.getAllByRole("link", { name: "Manuels techniques" })).toHaveLength(2);
+  });
+
   it("asks before deleting a document", async () => {
     mockList.mockResolvedValue([doc]);
     mockDelete.mockResolvedValueOnce(undefined);

@@ -39,6 +39,7 @@ import {
 } from "@/components/sync/MediaFileStatus";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import { DateField } from "@/components/ui/date-field";
@@ -315,7 +316,7 @@ function DocumentUploadDialog({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !uploading && onOpenChange(o)}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle>{t("upload.title")}</DialogTitle>
           <DialogDescription>{t("upload.maxSize", { mb: MAX_MB })}</DialogDescription>
@@ -488,7 +489,7 @@ function DocumentEditDialog({ doc, categories, onOpenChange, onSaved }: EditDial
 
   return (
     <Dialog open={doc != null} onOpenChange={(o) => !saving && onOpenChange(o)}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle>{t("edit.title")}</DialogTitle>
           <DialogDescription>{doc?.fileName ?? ""}</DialogDescription>
@@ -584,6 +585,9 @@ export function DocumentationCategoryPage() {
   const [historyOf, setHistoryOf] = useState<LibraryDocument | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<LibraryDocument | null>(null);
   const [downloadingId, setDownloadingId] = useState<number | null>(null);
+  // One search box, always shown; "toute la bibliothèque" searches every category at once.
+  const [search, setSearch] = useState("");
+  const [searchAll, setSearchAll] = useState(false);
 
   const { states: fileStates, refresh: refreshFileStates } = useMediaFileStates(
     docs.map((d) => d.relativePath),
@@ -594,13 +598,13 @@ export function DocumentationCategoryPage() {
     setLoading(true);
     setLoadError(null);
     try {
-      setDocs(await listLibraryDocuments(category, null));
+      setDocs(await listLibraryDocuments(searchAll ? null : category, null));
     } catch (e) {
       setLoadError(e);
     } finally {
       setLoading(false);
     }
-  }, [category]);
+  }, [category, searchAll]);
 
   useEffect(() => {
     setDocs([]);
@@ -649,20 +653,60 @@ export function DocumentationCategoryPage() {
     await load();
   }, [deleteTarget, load]);
 
+  /** The documents matching the search (title, reference, file, equipment, notes). */
+  const shown = useMemo(() => {
+    const words = search.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+    if (words.length === 0) return docs;
+    return docs.filter((d) => {
+      const text = [
+        d.title,
+        d.documentNumber,
+        d.revision,
+        d.fileName,
+        d.equipmentCode,
+        d.equipmentName,
+        d.notes,
+        searchAll ? categories.text(d.category) : null,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLocaleLowerCase();
+      return words.every((w) => text.includes(w));
+    });
+  }, [docs, search, searchAll, categories]);
+
   // Expiry alert: how many documents of this category have expired or expire soon.
   const expiry = useMemo(() => {
     let expired = 0;
     let soon = 0;
+    if (searchAll) return { expired, soon };
     for (const d of docs) {
       const v = documentValidity(d.validUntil);
       if (v === "expired") expired += 1;
       else if (v === "soon") soon += 1;
     }
     return { expired, soon };
-  }, [docs]);
+  }, [docs, searchAll]);
 
   const columns = useMemo<ColumnDef<LibraryDocument>[]>(
     () => [
+      ...(searchAll
+        ? [
+            {
+              id: "category",
+              accessorFn: (d: LibraryDocument) => categories.text(d.category),
+              header: t("list.columns.category"),
+              cell: ({ row }: { row: { original: LibraryDocument } }) => (
+                <Link
+                  to={documentCategoryPath(row.original.category)}
+                  className="text-sm text-text-secondary underline-offset-2 hover:underline"
+                >
+                  {categories.text(row.original.category)}
+                </Link>
+              ),
+            } satisfies ColumnDef<LibraryDocument>,
+          ]
+        : []),
       {
         id: "title",
         accessorFn: (d) =>
@@ -842,6 +886,8 @@ export function DocumentationCategoryPage() {
     ],
     [
       t,
+      searchAll,
+      categories,
       formatSize,
       formatDate,
       formatDateTime,
@@ -873,7 +919,7 @@ export function DocumentationCategoryPage() {
             {categoryOption?.review_required ? <ReviewMark /> : null}
             {!loading && loadError == null ? (
               <Badge variant="secondary" className={mfLayout.moduleCount}>
-                {formatNumber(docs.length)}
+                {formatNumber(shown.length)}
               </Badge>
             ) : null}
           </div>
@@ -908,11 +954,30 @@ export function DocumentationCategoryPage() {
         </div>
       ) : null}
 
+      <div className="flex flex-wrap items-center gap-3">
+        <Input
+          type="search"
+          className="max-w-sm"
+          placeholder={t("list.searchPlaceholder")}
+          aria-label={t("list.searchPlaceholder")}
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+        <label className="flex items-center gap-2 text-sm text-text-secondary">
+          <Checkbox
+            checked={searchAll}
+            onCheckedChange={(c) => setSearchAll(Boolean(c))}
+            data-testid="doc-search-all"
+          />
+          {t("list.searchAll")}
+        </label>
+      </div>
+
       {loading && docs.length === 0 ? (
         <LoadingState label={t("list.loading")} />
       ) : loadError != null ? (
         <ErrorState error={loadError} title={t("list.loadError")} onRetry={() => void load()} />
-      ) : docs.length === 0 ? (
+      ) : docs.length === 0 && search.trim() === "" ? (
         <EmptyState
           title={t("list.empty")}
           {...(canManage
@@ -924,13 +989,7 @@ export function DocumentationCategoryPage() {
             : {})}
         />
       ) : (
-        <DataTable
-          columns={columns}
-          data={docs}
-          searchable
-          searchPlaceholder={t("list.searchPlaceholder")}
-          pageSize={25}
-        />
+        <DataTable columns={columns} data={shown} pageSize={25} emptyMessage={t("list.noMatch")} />
       )}
 
       <DocumentUploadDialog
