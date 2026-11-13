@@ -38,7 +38,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ListAccessNote } from "@/components/ui/list-access-note";
 import { useUnsavedFormGuard } from "@/components/ui/unsaved-changes-guard";
-import { useToast } from "@/hooks/use-toast";
+import { useAppToast } from "@/hooks/use-toast";
 import { appErrorReason } from "@/lib/app-error";
 import { useZodForm } from "@/lib/form-helpers";
 import { useCanReadList } from "@/lib/list-access";
@@ -62,7 +62,7 @@ function translateFieldError(
 export function AssetCreateForm() {
   const { t } = useTranslation("equipment");
   const canReadOrg = useCanReadList("orgNodes");
-  const { toast } = useToast();
+  const { toast } = useAppToast();
   const open = useAssetStore((s) => s.showCreateForm);
   const closeForm = useAssetStore((s) => s.closeCreateForm);
   const submitCreate = useAssetStore((s) => s.createAsset);
@@ -87,6 +87,14 @@ export function AssetCreateForm() {
   const [referenceCatalogError, setReferenceCatalogError] = useState<string | null>(null);
   const [pendingPhotos, setPendingPhotos] = useState<EntityFormImageItem[]>([]);
   const [uploadingPhotos, setUploadingPhotos] = useState(false);
+  // Purchase and warranty typed at creation (UX L2-28), saved with the asset (`commercial`).
+  const [purchaseDate, setPurchaseDate] = useState("");
+  const [warrantyEnd, setWarrantyEnd] = useState("");
+  const [replacementValue, setReplacementValue] = useState<number | null>(null);
+  const warrantyError =
+    purchaseDate && warrantyEnd && warrantyEnd < purchaseDate
+      ? t("commercial.errors.warrantyBeforePurchase")
+      : undefined;
 
   const form = useZodForm(assetCreateSchema, {
     asset_code: "",
@@ -178,6 +186,9 @@ export function AssetCreateForm() {
       rams_schedule_reference_value_id: null,
       rams_utilization_factor: 1.0,
     });
+    setPurchaseDate("");
+    setWarrantyEnd("");
+    setReplacementValue(null);
   }, [open, parentPreFill, reset]);
 
   const orgOptions: EquipmentSearchOption[] = useMemo(
@@ -235,6 +246,12 @@ export function AssetCreateForm() {
       revealFirstFormError(FORM_ID);
       return;
     }
+    if (warrantyError) {
+      setSubmitError(warrantyError);
+      revealFirstFormError(FORM_ID);
+      return;
+    }
+    const hasCommercial = purchaseDate !== "" || warrantyEnd !== "" || replacementValue != null;
 
     const payload: CreateAssetPayload = {
       asset_code: values.asset_code.trim(),
@@ -254,6 +271,17 @@ export function AssetCreateForm() {
         ? { rams_schedule_reference_value_id: values.rams_schedule_reference_value_id }
         : {}),
       rams_utilization_factor: values.rams_utilization_factor ?? 1.0,
+      ...(hasCommercial
+        ? {
+            commercial: {
+              purchase_date: purchaseDate || null,
+              warranty_expiry_date: warrantyEnd || null,
+              replacement_value: replacementValue,
+              cost_center_code: null,
+              notes: null,
+            },
+          }
+        : {}),
     };
 
     try {
@@ -537,6 +565,36 @@ export function AssetCreateForm() {
               onChange={(v) =>
                 setValue("commissioned_at", v || null, { shouldDirty: true, shouldValidate: true })
               }
+            />
+          </FormField>
+          <FormField name="purchase_date" label={t("commercial.purchaseDate")}>
+            <DateField
+              id="purchase_date"
+              value={purchaseDate}
+              onChange={(v) => setPurchaseDate(v)}
+            />
+          </FormField>
+          <FormField
+            name="warranty_expiry_date"
+            label={t("commercial.warrantyExpiry")}
+            error={warrantyError}
+          >
+            <DateField
+              id="warranty_expiry_date"
+              value={warrantyEnd}
+              onChange={(v) => setWarrantyEnd(v)}
+            />
+          </FormField>
+          <FormField
+            name="replacement_value"
+            label={t("commercial.replacementValue")}
+            description={t("commercial.replacementValueHint")}
+          >
+            <DecimalField
+              id="replacement_value"
+              min={0}
+              value={replacementValue}
+              onValueChange={setReplacementValue}
             />
           </FormField>
         </EntityFormSection>

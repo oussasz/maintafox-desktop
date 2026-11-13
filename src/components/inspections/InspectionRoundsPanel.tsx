@@ -49,7 +49,7 @@ import type {
 } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
-import { ROUND_OPEN_STATUSES, ROUND_STATUS_TONE } from "./inspection-rules";
+import { ROUND_OPEN_STATUSES, ROUND_STATUS_TONE, teamText } from "./inspection-rules";
 
 /** Rounds loaded per page (backend maximum: `runner::MAX_ROUND_PAGE`). */
 const PAGE_SIZE = 200;
@@ -197,7 +197,7 @@ export function InspectionRoundsPanel({
               {s.assigned_to_name ? <p>{s.assigned_to_name}</p> : null}
               {s.assigned_team_name ? (
                 <p className="text-text-muted">
-                  {t("rounds.team", { name: s.assigned_team_name })}
+                  {teamText(s.assigned_team_name, (name) => t("rounds.team", { name }))}
                 </p>
               ) : null}
             </div>

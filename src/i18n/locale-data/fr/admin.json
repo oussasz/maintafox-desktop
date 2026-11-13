@@ -419,12 +419,12 @@
       "name": "Nom",
       "description": "Description",
       "dangerous": "Dangereux",
-      "stepUp": "Step-up",
+      "stepUp": "Mot de passe redemandé",
       "type": "Type"
     },
     "badges": {
       "dangerous": "Dangereux",
-      "stepUp": "Step-up",
+      "stepUp": "Mot de passe redemandé",
       "system": "Système",
       "custom": "Personnalisé"
     },
@@ -939,7 +939,7 @@
       "adminRole": "Rôle admin",
       "scope": "Périmètre",
       "domains": "Domaines autorisés",
-      "stepUp": "Step-up requis",
+      "stepUp": "Mot de passe redemandé",
       "actions": "Actions"
     },
     "create": "Nouvelle politique",
@@ -960,10 +960,10 @@
       "scopeReference": "Référence du périmètre",
       "allowedDomains": "Domaines autorisés",
       "selectDomains": "Sélectionner les domaines",
-      "requiresStepUp": "Exiger le step-up pour la publication"
+      "requiresStepUp": "Redemander le mot de passe à la publication"
     },
     "scopeTypes": {
-      "tenant": "Global (tenant)",
+      "tenant": "Toute l'entreprise",
       "site": "Site",
       "department": "Département"
     },
@@ -1071,11 +1071,12 @@
     "department": "Département"
   },
   "audit": {
+    "scopeWholeCompany": "Toute l'entreprise",
     "title": "Chronologie d'audit de l'administration",
     "applied": "Appliqué",
     "blocked": "Bloqué",
     "partial": "Partiel",
-    "stepUp": "Step-up",
+    "stepUp": "Mot de passe redemandé",
     "scopeValue": "Périmètre : {{scope}}",
     "user": "Utilisateur n° {{id}}",
     "system": "Système",

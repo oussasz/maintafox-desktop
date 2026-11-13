@@ -176,8 +176,11 @@ export async function printPoFiche(
   currency: string,
 ): Promise<void> {
   const letterheadHtml = await loadDocumentHeaderHtml();
-  const html = buildHtml(detail, t, locale, letterheadHtml, currency);
+  printHtmlDocument(buildHtml(detail, t, locale, letterheadHtml, currency));
+}
 
+/** Prints a complete HTML document through a hidden iframe (shared by the stock print sheets). */
+export function printHtmlDocument(html: string): void {
   const iframe = document.createElement("iframe");
   iframe.style.position = "fixed";
   iframe.style.right = "0";

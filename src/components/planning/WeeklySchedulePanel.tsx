@@ -41,7 +41,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { mfAlert } from "@/design-system/tokens";
 import { mfTone } from "@/design-system/tone";
 import { useFormatters } from "@/hooks/use-formatters";
-import { useToast } from "@/hooks/use-toast";
+import { useAppToast } from "@/hooks/use-toast";
 import { useCanReadList } from "@/lib/list-access";
 import { cn } from "@/lib/utils";
 import { listOrgTree } from "@/services/org-node-service";
@@ -71,7 +71,7 @@ export function WeeklySchedulePanel() {
   const [error, setError] = useState<string | null>(null);
   const [unfreezeOpen, setUnfreezeOpen] = useState(false);
   const [unfreezeReason, setUnfreezeReason] = useState("");
-  const { toast } = useToast();
+  const { toast } = useAppToast();
   const currentUserId = useSessionStore((st) => st.info?.user_id ?? null);
 
   useEffect(() => {

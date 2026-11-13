@@ -40,7 +40,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useFormatters } from "@/hooks/use-formatters";
-import { useToast } from "@/hooks/use-toast";
+import { useAppToast } from "@/hooks/use-toast";
 import { appErrorReason } from "@/lib/app-error";
 import { useZodForm } from "@/lib/form-helpers";
 import { assetEditSchema } from "@/schemas/asset-edit.schema";
@@ -71,7 +71,7 @@ function photoDataUrl(preview: { mime_type: string; data_base64: string }): stri
 
 export function AssetEditForm() {
   const { t } = useTranslation("equipment");
-  const { toast } = useToast();
+  const { toast } = useAppToast();
   const open = useAssetStore((s) => s.showEditForm);
   const asset = useAssetStore((s) => s.editingAsset);
   const closeForm = useAssetStore((s) => s.closeEditForm);

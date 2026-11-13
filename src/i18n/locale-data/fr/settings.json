@@ -89,12 +89,15 @@
     "reliability.repeat_failure_window_days": "Pannes répétitives : période (jours)"
   },
   "documentHeader": {
+    "emptyPrintWarning": "Document imprimé sans en-tête d'entreprise",
+    "emptyPrintWhere": "Aucun logo ni nom d'usine n'est configuré. Un administrateur peut le définir dans Paramètres › Général › Documents et identité visuelle.",
+    "emptySetupPrompt": "L'en-tête des documents est vide : les OT, demandes et bons de commande imprimés sortent sans logo ni nom d'usine. Ajoutez au moins le nom de l'usine et le logo ci-dessous.",
     "removeLogoConfirmTitle": "Retirer le logo ?",
     "removeLogoConfirmBody": "Le logo ne figurera plus dans l'en-tête des documents imprimés (OT, bons de commande…). Vous pourrez en téléverser un autre.",
     "title": "Documents et identité visuelle",
     "description": "Configurez l'en-tête par défaut injecté en haut des ordres de travail, demandes d'intervention et bons de commande imprimés.",
     "logoLabel": "Logo de l'entreprise",
-    "logoHint": "PNG, JPEG, WebP ou GIF. Max 5 Mo. Conservé pour les en-têtes de documents et le chrome applicatif futur.",
+    "logoHint": "PNG, JPEG, WebP ou GIF. Max 5 Mo. Utilisé dans l’en-tête des documents imprimés.",
     "uploadLogo": "Téléverser le logo",
     "replaceLogo": "Remplacer le logo",
     "removeLogo": "Supprimer le logo",
@@ -158,7 +161,7 @@
       "no": "non"
     },
     "governedTitle": "Paramètre réglementé",
-    "governedDescription": "Ce paramètre utilise le workflow Brouillon → Test → Activation.",
+    "governedDescription": "Paramètre sensible, modifié en trois étapes : vous préparez un brouillon, vous le testez, puis vous l'activez. La version active reste en service tant que le brouillon n'est pas activé.",
     "active": "Actif",
     "activeConfig": "Configuration active",
     "draftConfig": "Configuration brouillon",
@@ -168,7 +171,7 @@
     "activatedAt": "Activé le {{date}}",
     "currentValues": "Valeurs actuelles",
     "draftPending": "Brouillon en attente",
-    "requiresStepUp": "Élévation requise",
+    "requiresStepUp": "Mot de passe redemandé à l'activation",
     "editDraft": "Modifier le brouillon",
     "testDraft": "Tester le brouillon",
     "activate": "Activer",
@@ -383,7 +386,7 @@
     },
     "help": {
       "locale.primary_language": "Langue de l'interface par défaut pour tous les utilisateurs.",
-      "locale.fallback_language": "Langue utilisée quand un texte manque dans la langue principale.",
+      "locale.fallback_language": "Langue affichée seulement si un texte n'existe pas encore dans la langue principale. Tous les écrans existent en français et en anglais : ce réglage concerne les textes ajoutés par une mise à jour future.",
       "locale.currency_code": "Devise de valorisation du stock, des achats et des coûts (code ISO 4217).",
       "locale.fiscal_year_start_month": "Mois de début de l'exercice : périodes budgétaires, imputations, clôtures.",
       "wo.reopen_window_days": "Nombre de jours après clôture pendant lesquels un OT clôturé peut être rouvert (0 = jamais).",

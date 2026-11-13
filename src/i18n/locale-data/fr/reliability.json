@@ -168,9 +168,9 @@
     "clearFilter": "Effacer le filtre",
     "loading": "Chargement…",
     "filterHint": "Cliquez une cellule pour filtrer",
-    "referenceWarningTitle": "Alerte de cohérence Référentiel/FMECA",
-    "referenceStats": "WORK.FAILURE_MODES publiés : {{published}} · Modes FMECA liés : {{linked}} · Liens orphelins : {{orphaned}}",
-    "tableTitle": "Modes de défaillance FMECA",
+    "referenceWarningTitle": "Alerte de cohérence Données de référence / AMDEC",
+    "referenceStats": "Modes de défaillance de référence publiés : {{published}} · Modes AMDEC liés : {{linked}} · Liens orphelins : {{orphaned}}",
+    "tableTitle": "Modes de défaillance AMDEC",
     "noRows": "Aucune ligne pour ce filtre.",
     "colAnalysis": "Analyse",
     "colFailure": "Défaillance fonctionnelle",
@@ -223,7 +223,7 @@
     "promoteBody": "Choisissez ce que devient la cause : un ordre de travail correctif ou une ligne d'AMDEC de l'étude. Le lien avec ce diagramme est conservé ; le diagramme est enregistré d'abord si nécessaire.",
     "promoteBodyWoOnly": "Crée un ordre de travail correctif lié à ce diagramme Ishikawa. Le diagramme est enregistré d'abord si nécessaire.",
     "promoteTargetWo": "Ordre de travail correctif",
-    "promoteTargetFmeca": "Ligne FMECA",
+    "promoteTargetFmeca": "Ligne AMDEC",
     "promoteNeedSave": "Enregistrez le diagramme avant de promouvoir une cause.",
     "promoteNeedUser": "Connexion requise pour créer un ordre de travail.",
     "promoteSubmit": "Créer",
@@ -403,12 +403,12 @@
       "runtimeNumeric": "Équipement et valeur numériques requis.",
       "kpiEquipRequired": "Équipement KPI requis.",
       "weibullEquipRequired": "Équipement Weibull requis.",
-      "fmecaRequired": "FMECA : équipement et titre requis.",
+      "fmecaRequired": "AMDEC : équipement et titre requis.",
       "sodIntegers": "S, O, D doivent être des entiers.",
       "sodRange": "S, O, D doivent être entre 1 et 10.",
       "failureModeIdInvalid": "Mode de défaillance (id) invalide.",
       "pmPlanInvalid": "Plan MP invalide.",
-      "revisedRpnInvalid": "RPN révisé invalide.",
+      "revisedRpnInvalid": "Criticité (IPR) révisée invalide.",
       "rcmRequired": "RCM : équipement et titre requis.",
       "ftaRequired": "FTA : équipement et titre requis.",
       "rbdRequired": "RBD : équipement et titre requis.",
@@ -490,7 +490,7 @@
     },
     "weibull": {
       "title": "Weibull — ajustement (inter-arrivées)",
-      "hint": "PRD 6.10.4 — MLE 2 paramètres ; intervalles asymptotiques si échantillon suffisant.",
+      "hint": "Ajustement de Weibull à 2 paramètres (maximum de vraisemblance) ; intervalles de confiance si l'échantillon est suffisant.",
       "periodStart": "période début (optionnel)",
       "periodEnd": "période fin (optionnel)",
       "run": "Lancer l'ajustement",
@@ -500,21 +500,21 @@
       "empty": "Aucun résultat — lancez un ajustement sur des événements de défaillance."
     },
     "fmeca": {
-      "title": "FMECA — analyses et matrice RPN",
-      "hint": "PRD 6.10.5 — CRUD analyses et lignes ; RPN = S×O×D (1–10). Écriture :",
+      "title": "AMDEC — analyses et matrice de criticité (IPR)",
+      "hint": "Analyses et lignes ; criticité IPR = gravité × occurrence × détection (chacune de 1 à 10). Modification :",
       "refreshAnalyses": "Actualiser analyses",
       "analysisTitle": "titre analyse",
       "boundary": "frontière / périmètre",
       "createAnalysis": "Créer analyse",
-      "itemsTitle": "Lignes FMECA (analyse #{{id}})",
+      "itemsTitle": "Lignes AMDEC (analyse n° {{id}})",
       "functionalFailure": "défaillance fonctionnelle",
       "effect": "effet",
       "isoModeId": "mode ISO (id)",
-      "rpnPreview": "RPN (aperçu S×O×D) :",
+      "rpnPreview": "IPR (gravité × occurrence × détection) :",
       "editingRow": " — édition ligne #{{id}}",
       "recommendedAction": "action recommandée",
       "currentControl": "contrôle courant",
-      "revisedRpn": "RPN révisé (optionnel)",
+      "revisedRpn": "IPR révisé (facultatif)",
       "saveRow": "Enregistrer ligne",
       "addRow": "Ajouter ligne",
       "newRow": "Nouvelle ligne",
@@ -523,8 +523,8 @@
       "selectPrompt": "Sélectionnez une analyse dans le tableau pour éditer les lignes."
     },
     "rcm": {
-      "title": "RCM — décisions liées au MP",
-      "hintPrefix": "PRD 6.10.6 — tactique (liste blanche) et",
+      "title": "RCM — décisions liées à la MP",
+      "hintPrefix": "Stratégie de maintenance (liste fermée) et",
       "hintSuffix": "optionnel.",
       "refreshStudies": "Actualiser études",
       "studyTitle": "titre étude RCM",
@@ -544,7 +544,7 @@
       "selectPrompt": "Sélectionnez une étude pour gérer les décisions RCM."
     },
     "graphModels": {
-      "title": "FTA / RBD / arbre d'événements (PRD 6.10)",
+      "title": "Arbre de défaillances / diagramme de fiabilité / arbre d'événements",
       "hint": "Modèles graphe locaux — FTA (ET/OU + prob. top), RBD (série/parallèle), ETA (séquence).",
       "evaluateLabel": "Évaluer :",
       "labTooltip": "Éditeur schématique FTA / RBD",
@@ -600,7 +600,7 @@
     },
     "shell": {
       "title": "Fiabilité (RAMS) — taxonomie défaillance",
-      "description": "PRD 6.10.1 — hiérarchies et codes ISO 14224 (aperçu local)."
+      "description": "Hiérarchies et codes ISO 14224 (aperçu local)."
     }
   },
   "foundationPage": {
@@ -689,8 +689,8 @@
       "line2": "MLE 2 paramètres ; IC asymptotiques — grands échantillons."
     },
     "fmeca": {
-      "title": "FMECA",
-      "line1": "S, O, D sur échelle 1–10 ; RPN = S×O×D ; pas de corrélation explicite entre facteurs."
+      "title": "AMDEC",
+      "line1": "Gravité, occurrence et détection notées de 1 à 10 ; IPR = gravité × occurrence × détection ; les facteurs sont supposés indépendants."
     },
     "fta": {
       "title": "FTA",
@@ -768,6 +768,14 @@
         "restoredAt": "{{count}} exclus : heure de remise en service manquante",
         "inconsistent": "{{count}} exclus : remise en service avant la panne",
         "repairHours": "{{count}} exclus : temps de réparation manquant"
+      },
+      "formula": {
+        "availability": "Disponibilité opérationnelle Aₒ = temps de marche ÷ (temps de marche + temps d'arrêt dû aux défaillances), sur la période et le périmètre choisis.",
+        "mtbf": "MTBF (temps moyen entre défaillances) = temps observé (sur la base indiquée sous la valeur) ÷ nombre de défaillances non planifiées.",
+        "mttr": "MTTR (temps moyen de réparation) = somme des durées de réparation ÷ nombre de réparations, en heures d'horloge.",
+        "repair": "Heures-homme de réparation moyennes = heures pointées par les intervenants sur les OT de défaillance ÷ nombre de défaillances.",
+        "failures": "Nombre d'OT correctifs non planifiés sur la période ; cliquez pour ouvrir la liste des OT.",
+        "dataQuality": "Qualité des données = part des défaillances dont le codage est complet (mode, cause, dates). Le détail point par point est sur la page « Qualité des données »."
       }
     },
     "fleet": {
@@ -819,7 +827,10 @@
       "shareLabel": "{{share}} de l'arrêt du parc",
       "openAsset": "Ouvrir la fiche de {{code}}",
       "handedError": "L'équipement transmis n'a pas pu être chargé",
-      "handedSelected": "{{code}} est sélectionné pour une étude."
+      "handedSelected": "{{code}} est sélectionné pour une étude.",
+      "resetFilters": "Réinitialiser les filtres",
+      "countLabel_one": "équipement",
+      "countLabel_other": "équipements"
     },
     "dataQuality": {
       "complete": "Complètes",
@@ -969,7 +980,15 @@
       "excludeTitle": "Exclure cet enregistrement",
       "excludeBody": "{{record}} ne sera plus utilisé dans les analyses de cette étude. Le motif est gardé dans l'historique.",
       "excludeReason": "Motif (obligatoire)",
-      "excludeAction": "Exclure l'enregistrement"
+      "excludeAction": "Exclure l'enregistrement",
+      "readOnlyReason": "Lecture seule : l'étude est archivée ou vous n'avez pas le droit d'analyse fiabilité, nécessaire pour inclure ou exclure une ligne.",
+      "historyEmpty": "Aucune inclusion ou exclusion n'a encore été enregistrée.",
+      "flag": {
+        "di_earlier": "Demande d'intervention antérieure à la date de panne",
+        "cause_missing": "Cause non codée",
+        "mechanism_missing": "Mécanisme non codé",
+        "mode_missing": "Mode de défaillance non codé"
+      }
     },
     "checks": {
       "useDi": "Utiliser l'heure de la DI",
@@ -1067,7 +1086,7 @@
       "median": "La moitié de ces pièces lâchent avant {{median}} {{unit}}.",
       "pmAfterMedian": "Le plan {{plan}} les remplace à {{interval}} h, après la moitié des défaillances.",
       "pmBeforeMedian": "Le plan {{plan}} les remplace à {{interval}} h, avant la médiane.",
-      "noPm": "Aucun plan de MP à intervalle ne cible ces équipements.",
+      "noPm": "Aucun plan de PM à intervalle ne cible ces équipements.",
       "methodTitle": "Méthode et hypothèses",
       "method": {
         "mle": "Weibull à 2 paramètres, maximum de vraisemblance avec suspensions (données censurées à droite).",
@@ -1088,14 +1107,15 @@
       "proposedLegend": "Intervalle proposé",
       "currentLegend": "Pratique actuelle",
       "recomputeError": "L'analyse n'a pas pu être recalculée : les chiffres affichés sont ceux du dernier calcul réussi",
-      "recomputeRetry": "Recalculer"
+      "recomputeRetry": "Recalculer",
+      "goToData": "Aller à l'étape 1 (données)"
     },
     "cost": {
       "title": "Intervalle de remplacement optimal",
       "hint": "Modèle de remplacement à âge fixe : coût moyen par heure selon l'âge de remplacement préventif.",
       "planned": "Remplacement planifié ({{currency}})",
       "failure": "Panne, perte de production incluse ({{currency}})",
-      "pmPlan": "Plan de MP comparé (pratique actuelle)",
+      "pmPlan": "Plan de PM comparé (pratique actuelle)",
       "noPlan": "Aucun",
       "planOption": "{{code}} · {{title}} ({{asset}}) — {{hours}} h",
       "planOptionNoInterval": "{{code}} · {{title}} — {{reason}}",
@@ -1121,7 +1141,8 @@
       "costRateLegend": "Coût par heure",
       "rtfLegend": "Jusqu'à la panne",
       "currentLegend": "Pratique actuelle ({{hours}} h)",
-      "proposedLegend": "Optimum"
+      "proposedLegend": "Optimum",
+      "unsaved": "Coûts non enregistrés : ils servent au calcul ci-dessus mais seront perdus si vous quittez l'étude sans « Enregistrer les coûts »."
     },
     "memo": {
       "title": "Note de décision pour la direction",
@@ -1174,12 +1195,12 @@
       "title": "Décision",
       "kind": "Appliquer sous forme de",
       "kinds": {
-        "pm_interval": "Nouvelle version d'un plan de MP (changer l'intervalle)",
+        "pm_interval": "Nouvelle version d'un plan de PM (changer l'intervalle)",
         "one_off_wo": "OT ponctuel",
         "modification_wo": "OT de modification"
       },
-      "noPlans": "Aucun plan de MP à intervalle ne cible ces équipements : choisissez un OT.",
-      "plan": "Plan de MP",
+      "noPlans": "Aucun plan de PM à intervalle ne cible ces équipements : choisissez un OT.",
+      "plan": "Plan de PM",
       "planOption": "{{code}} · {{title}} ({{hours}} h)",
       "interval": "Nouvel intervalle ({{unit}}, base de l'étude)",
       "equipment": "Équipement",
@@ -1243,7 +1264,7 @@
       "awaitingApprover": "En attente de {{name}}",
       "apply": "Appliquer",
       "applyTitle": "Appliquer la décision",
-      "applyPm": "Une nouvelle version brouillon du plan {{plan}} est créée avec le nouvel intervalle. Elle sera publiée par la revue normale du module MP.",
+      "applyPm": "Une nouvelle version brouillon du plan {{plan}} est créée avec le nouvel intervalle. Elle sera publiée par la revue normale du module PM.",
       "applyWo": "Un ordre de travail est créé sur {{asset}}, lié à cette décision.",
       "applyPmAction": "Créer la version du plan",
       "applyWoAction": "Créer l'OT",
@@ -1314,7 +1335,7 @@
         "monitor": "À surveiller",
         "acceptable": "Acceptable"
       },
-      "rpnThreshold": "Seuil IPR critique de l'usine : {{threshold}}.",
+      "rpnThreshold": "Seuil IPR critique de l'usine : {{threshold}}. L'IPR (indice de priorité de risque) = gravité × occurrence × détection, chacune notée de 1 à 10. À partir de ce seuil, le mode est critique et doit recevoir une action. L'administrateur règle ce seuil dans Paramètres.",
       "proposalsTitle": "Modes observés",
       "proposalsHint": "Relevés dans les OT de ces équipements (période) et de leur classe (historique).",
       "noProposals": "Tous les modes observés sont déjà dans l'AMDEC.",
@@ -1536,7 +1557,7 @@
       "newEvent": "Nouvel événement",
       "newGate": "Nouvelle porte",
       "rbdTitle": "Diagramme de fiabilité",
-      "rbdHint": "Sélectionnez un bloc ou une branche pour modifier sa structure et la source de sa fiabilité ; les résultats se mettent à jour.",
+      "rbdHint": "Série : le système s'arrête dès qu'un de ses blocs s'arrête (cas d'une ligne). Parallèle : un seul bloc qui marche suffit (machines de secours). Sélectionnez un bloc ou une branche pour modifier sa structure et la source de sa fiabilité ; les résultats se mettent à jour.",
       "kOfN": "{{k}} sur {{n}}",
       "selectBlock": "Modifier {{label}}, fiabilité {{r}}",
       "selectEvent": "Modifier {{label}}, probabilité {{p}}",
@@ -1636,7 +1657,7 @@
       "perYear": "/an",
       "markov": {
         "title": "Chaîne de Markov",
-        "hint": "Disponibilité d'un système réparable avec états dégradés : états et taux (λ, μ par heure) dans un tableau.",
+        "hint": "À utiliser pour un équipement qui peut tourner en mode dégradé (par exemple une pompe sur deux) : décrivez ses états (marche, dégradé, arrêt) et les taux de panne λ et de réparation μ par heure ; l'outil donne la part du temps passée dans chaque état.",
         "fromEquipment": "Partir d'un équipement de l'étude",
         "equipmentOption": "{{code}} — MTBF {{mtbf}} h, MTTR {{mttr}} h",
         "running": "{{code}} en marche",
@@ -1662,7 +1683,7 @@
       },
       "simulation": {
         "title": "Simulation de Monte-Carlo",
-        "hint": "Disponibilité et coût sur la mission avec incertitude, simulés sur le diagramme de fiabilité de l'étude.",
+        "hint": "À utiliser quand les durées sont incertaines : l'outil rejoue la mission des milliers de fois sur le diagramme de fiabilité de l'étude (méthode de Monte-Carlo) et donne la disponibilité et le coût moyens avec leur fourchette.",
         "needRbd": "Construisez d'abord le diagramme de fiabilité et indiquez la durée de mission.",
         "trials": "Nombre de tirages",
         "seed": "Graine (facultatif)",
@@ -1751,7 +1772,8 @@
       "dismiss": "Ignorer ce point",
       "dismissTitle": "Écarter cet écart de données ?",
       "dismissBody": "« {{issue}} » sur {{asset}} ne sera plus listé. Écartez-le seulement si les données sont justes telles quelles.",
-      "truncated": "Seuls les premiers sont listés : corrigez-les puis actualisez pour voir les suivants."
+      "truncated": "Seuls les premiers sont listés : corrigez-les puis actualisez pour voir les suivants.",
+      "dismissHint": "Retire ce point de la liste quand les données sont justes telles quelles (par exemple une défaillance réellement sans cause connue). Le point écarté n'est plus compté."
     },
     "studyName": {
       "createTitle": "Nouvelle étude",
@@ -1796,6 +1818,15 @@
       "labelled": "{{label}} : {{value}}",
       "plannedCost": "Coût d'un remplacement planifié",
       "failureCost": "Coût d'une panne (perte de production incluse)"
+    },
+    "summary": {
+      "title": "En bref :",
+      "failures_one": "{{count}} défaillance retenue, {{hours}} h d'arrêt.",
+      "failures_other": "{{count}} défaillances retenues, {{hours}} h d'arrêt.",
+      "topAsset_one": "Équipement le plus touché : {{code}} ({{count}} fois).",
+      "topAsset_other": "Équipement le plus touché : {{code}} ({{count}} fois).",
+      "topMode_one": "Panne la plus fréquente : {{mode}} ({{count}} fois).",
+      "topMode_other": "Panne la plus fréquente : {{mode}} ({{count}} fois)."
     }
   },
   "errors": {

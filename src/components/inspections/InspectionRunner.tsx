@@ -31,6 +31,7 @@ import { useTranslation } from "react-i18next";
 
 import { PersonnelLinkNotice } from "@/components/common/PersonnelLinkNotice";
 import { Button, Input, Label, Textarea } from "@/components/ui";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import { StatusChip } from "@/components/ui/status-chip";
 import { toneOf } from "@/design-system/tone";
@@ -44,6 +45,7 @@ import {
   getInspectionRoundRunner,
   recordInspectionResult,
 } from "@/services/inspection-service";
+import { useSyncOrchestratorStore } from "@/stores/sync-orchestrator-store";
 import type {
   InspectionCheckpointHistoryPoint,
   InspectionRoundRunner,
@@ -76,6 +78,7 @@ import {
   readingNeedsComment,
   sparklinePoints,
   violatedLimit,
+  teamText,
 } from "./inspection-rules";
 
 interface InspectionRunnerProps {
@@ -147,6 +150,8 @@ export function InspectionRunner({
   // refuses every answer, so say so before anything is entered.
   const { linked: personnelLinked } = useMyPersonnelLink();
   const [runner, setRunner] = useState<InspectionRoundRunner | null>(null);
+  // L1-32: finishing a round is final: asked for confirmation first.
+  const [confirmComplete, setConfirmComplete] = useState(false);
   const [loadError, setLoadError] = useState<unknown>(null);
   const [index, setIndex] = useState(0);
   const [draft, setDraft] = useState<Draft>(draftFrom(undefined));
@@ -188,6 +193,15 @@ export function InspectionRunner({
   }, [currentKey]);
 
   const sync = useMemo(() => pendingSyncCount(runner?.checkpoints ?? []), [runner]);
+  // L1-32: "arrived at the server" only when synchronisation runs here and no photo is still
+  // queued; with synchronisation off (or not set up) the results are only on this computer.
+  const syncWorker = useSyncOrchestratorStore((s) => s.worker);
+  const syncHeld: "localOnly" | "photosWaiting" | null =
+    syncWorker == null || syncWorker.blocker != null
+      ? "localOnly"
+      : syncWorker.media_pending_count > 0
+        ? "photosWaiting"
+        : null;
 
   if (!runner) {
     return loadError != null ? (
@@ -393,7 +407,9 @@ export function InspectionRunner({
               <span>{t("rounds.assignedTo", { name: runner.summary.assigned_to_name })}</span>
             ) : null}
             {runner.summary.assigned_team_name ? (
-              <span>{t("rounds.team", { name: runner.summary.assigned_team_name })}</span>
+              <span>
+                {teamText(runner.summary.assigned_team_name, (name) => t("rounds.team", { name }))}
+              </span>
             ) : null}
           </div>
         </div>
@@ -425,14 +441,14 @@ export function InspectionRunner({
           "flex items-center gap-2 rounded-md border px-3 py-2 text-sm",
           sync.errors > 0
             ? "border-tone-danger-border bg-tone-danger-bg"
-            : sync.waiting > 0
+            : sync.waiting > 0 || syncHeld !== null
               ? "border-tone-warning-border bg-tone-warning-bg"
               : "border-tone-success-border bg-tone-success-bg",
         )}
       >
         {sync.errors > 0 ? (
           <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden />
-        ) : sync.waiting > 0 ? (
+        ) : sync.waiting > 0 || syncHeld !== null ? (
           <CloudOff className="h-4 w-4 shrink-0" aria-hidden />
         ) : (
           <CloudUpload className="h-4 w-4 shrink-0" aria-hidden />
@@ -443,7 +459,11 @@ export function InspectionRunner({
             ? t("sync.errors", { count: sync.errors })
             : sync.waiting > 0
               ? t("sync.waiting", { count: sync.waiting })
-              : t("sync.allSynced")}
+              : syncHeld === "localOnly"
+                ? t("sync.localOnly")
+                : syncHeld === "photosWaiting"
+                  ? t("sync.photosWaiting", { count: syncWorker?.media_pending_count ?? 0 })
+                  : t("sync.allSynced")}
         </span>
       </div>
 
@@ -786,7 +806,7 @@ export function InspectionRunner({
           <Button
             className="h-14"
             disabled={!editable || busy || !completable}
-            onClick={() => void complete()}
+            onClick={() => setConfirmComplete(true)}
           >
             <CheckCircle2 className="mr-2 h-5 w-5" aria-hidden />
             {t("runner.complete")}
@@ -794,6 +814,17 @@ export function InspectionRunner({
           {!completable ? (
             <span className="text-sm text-text-muted">{t("runner.completeHint")}</span>
           ) : null}
+          <ConfirmDialog
+            open={confirmComplete}
+            onOpenChange={setConfirmComplete}
+            title={t("runner.completeConfirmTitle")}
+            description={t("runner.completeConfirmBody")}
+            confirmLabel={t("runner.complete")}
+            onConfirm={async () => {
+              await complete();
+              setConfirmComplete(false);
+            }}
+          />
         </div>
       ) : null}
 

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { buildLotoCardHtml } from "../loto-card-print";
+import { buildLotoCardHtml, buildPermitLotoSheetHtml } from "../loto-card-print";
 
 vi.mock("@/components/wo/WoPrintFiche", () => ({ printHtmlDocument: vi.fn() }));
 vi.mock("@/export/templates/document-header", () => ({
@@ -78,5 +78,39 @@ describe("buildLotoCardHtml", () => {
     expect(html).toContain("Chef &lt;Site&gt;");
     expect(html).toContain("Fin de poste, travailleur parti");
     expect(html).toContain("[card.forcedAt]");
+  });
+});
+
+describe("buildPermitLotoSheetHtml (L4-17)", () => {
+  const card = (id: number, point: string, verifier: string | null) => ({
+    permit_code: "PTW-2026-000041",
+    equipment_label: "PMP-101 — Feed pump",
+    energy_type: "electrical",
+    isolation_id: id,
+    isolation_point: point,
+    lock_number: `L-${id}`,
+    verifier_signature: verifier,
+    zero_energy_note: null,
+    expires_at: null,
+    forced_removal: false,
+    forced_authorized_by: null,
+    forced_removed_at: null,
+    forced_reason: null,
+  });
+
+  it("puts every point of the permit on one sheet, with the verifier's name", () => {
+    const html = buildPermitLotoSheetHtml(
+      [card(1, "MCC-1 breaker", "Sara Belkacem"), card(2, "Valve <V-12>", null)],
+      t,
+      "fr",
+      "",
+    );
+    expect(html.match(/PTW-2026-000041/g)?.length).toBe(2); // title and header row, once each
+    expect(html).toContain("MCC-1 breaker");
+    expect(html).toContain("Valve &lt;V-12&gt;");
+    expect(html).toContain("Sara Belkacem");
+    expect(html).toContain("L-1");
+    expect(html).toContain("L-2");
+    expect(html).toContain("[card.signature]");
   });
 });

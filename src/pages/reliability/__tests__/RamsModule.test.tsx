@@ -803,6 +803,7 @@ describe("StudyLifeStep", () => {
         datasetVersion="v1"
         onStudyChanged={vi.fn()}
         onDecide={decide}
+        onGoData={vi.fn()}
       />,
     );
     expect(await screen.findByText("3.04")).toBeInTheDocument();
@@ -834,6 +835,7 @@ describe("StudyLifeStep", () => {
           datasetVersion="v1"
           onStudyChanged={vi.fn()}
           onDecide={vi.fn()}
+          onGoData={vi.fn()}
         />,
       );
       expect(await screen.findByText("3.04")).toBeInTheDocument();
@@ -868,6 +870,7 @@ describe("StudyLifeStep", () => {
         datasetVersion="v1"
         onStudyChanged={vi.fn()}
         onDecide={vi.fn()}
+        onGoData={vi.fn()}
       />,
     );
     expect(
@@ -896,6 +899,7 @@ describe("StudyLifeStep", () => {
         datasetVersion="v1"
         onStudyChanged={vi.fn()}
         onDecide={vi.fn()}
+        onGoData={vi.fn()}
       />,
     );
     expect(await screen.findByText("Not enough failures")).toBeInTheDocument();

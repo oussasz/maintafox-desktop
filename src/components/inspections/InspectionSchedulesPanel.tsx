@@ -52,6 +52,7 @@ import {
   isoToLocalInput,
   parseReading,
   scheduleFormIssues,
+  teamText,
 } from "./inspection-rules";
 
 interface InspectionSchedulesPanelProps {
@@ -175,7 +176,7 @@ export function InspectionSchedulesPanel({
             {row.original.assigned_to_name ? <p>{row.original.assigned_to_name}</p> : null}
             {row.original.assigned_team_name ? (
               <p className="text-text-muted">
-                {t("rounds.team", { name: row.original.assigned_team_name })}
+                {teamText(row.original.assigned_team_name, (name) => t("rounds.team", { name }))}
               </p>
             ) : null}
           </div>

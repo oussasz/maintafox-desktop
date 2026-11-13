@@ -27,6 +27,7 @@
       "number": "No.",
       "subject": "Subject",
       "equipment": "Equipment",
+      "criticality": "Criticality",
       "status": "Status",
       "priority": "Priority",
       "reportedBy": "Reported by",
@@ -105,6 +106,9 @@
     "possibleDuplicates_other": "{{count}} other open requests on this asset with the same symptom"
   },
   "form": {
+    "createdToast": "Request {{code}} created",
+    "savedToast": "Request {{code}} saved",
+    "openCreated": "Open the request",
     "section": {
       "requester": "Requester",
       "equipment": "Equipment",
@@ -293,11 +297,15 @@
     "title": "SLA Rules",
     "description": "Configure response and resolution targets for each urgency level.",
     "scaleHint": "The target times of a level for every request are set in the urgency scale (Reference data). The rules below are the exceptions by origin or asset criticality.",
+    "scopeAllOrigins": "All origins",
+    "scopeCriticality": "criticality {{code}}",
+    "inactiveHint": "Inactive: the urgency scale's targets apply.",
+    "escalationHint": "Escalation: at the escalation threshold, the request turns \"At risk\" and appears in the \"SLA at risk or breached\" queue. When a target is missed, an \"SLA breach\" notification is sent according to its notification rule (by default: the entity manager, acknowledgement required).",
     "invalidHours": "Enter whole hours (0 or more) in all three fields.",
     "loading": "Loading rules…",
     "empty": "No SLA rules configured.",
     "columns": {
-      "name": "Rule",
+      "name": "Scope",
       "urgency": "Urgency",
       "response": "Response (h)",
       "resolution": "Resolution (h)",
@@ -588,7 +596,7 @@
     "periodMonths": "Last {{months}}",
     "now": "Now",
     "openBacklog": "Open requests",
-    "slaAtRisk": "SLA at risk",
+    "slaAtRisk": "SLA at risk or breached",
     "overdueHint": "Open, past a target",
     "slaComplianceHint": "{{met}} met · {{breached}} breached",
     "conversionRate": "Converted to work order",
@@ -731,7 +739,7 @@
     "to_approve": "To approve",
     "approved_not_converted": "Approved, no work order",
     "deferred_due": "Deferral due",
-    "sla_at_risk": "SLA at risk",
+    "sla_at_risk": "SLA at risk or breached",
     "hint": {
       "all": "Every request, newest first",
       "mine": "The requests you raised, with their status and next step",

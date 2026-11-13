@@ -13,6 +13,7 @@ import {
   ArticleEditorFields,
   type ExtendedArticleInput,
 } from "@/components/inventory/ArticleEditorFields";
+import { DormantStockPanel } from "@/components/inventory/DormantStockPanel";
 import { InventoryControlsPanel } from "@/components/inventory/InventoryControlsPanel";
 import { InventoryIssueDesk } from "@/components/inventory/InventoryIssueDesk";
 import { InventoryValuationPanel } from "@/components/inventory/InventoryValuationPanel";
@@ -1015,7 +1016,13 @@ export function InventoryPage() {
         </TabsContent>
         <TabsContent value="valuation" className="mt-4 space-y-4">
           {invTab === "valuation" ? (
-            <InventoryValuationPanel reloadToken={controlsReloadToken} />
+            <>
+              <InventoryValuationPanel reloadToken={controlsReloadToken} />
+              <DormantStockPanel
+                reloadToken={controlsReloadToken}
+                onOpenArticle={handleOpenArticleFromProcurement}
+              />
+            </>
           ) : null}
         </TabsContent>
         <TabsContent value="rules" className="mt-4 space-y-4">

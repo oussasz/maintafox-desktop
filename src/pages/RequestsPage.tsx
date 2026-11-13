@@ -23,6 +23,7 @@ import { useTranslation } from "react-i18next";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { PermissionGate } from "@/components/PermissionGate";
+import { CriticalityBadge } from "@/components/assets/CriticalityBadge";
 import { LinkedEntityBadge } from "@/components/common/LinkedEntityBadge";
 import { UrgencyBadge } from "@/components/common/urgency/UrgencyBadge";
 import { useUrgencyScale } from "@/components/common/urgency/use-urgency-scale";
@@ -647,6 +648,18 @@ export function RequestsPage() {
             {row.original.asset_label ?? row.original.asset_code ?? "—"}
           </span>
         ),
+      },
+      {
+        // L1-29: the equipment's criticality, the queues' second sort key after the urgency.
+        id: "criticality",
+        accessorFn: (di) => di.asset_criticality_code ?? "",
+        header: t("list.columns.criticality"),
+        cell: ({ row }) =>
+          row.original.asset_criticality_code ? (
+            <CriticalityBadge criticality={row.original.asset_criticality_code} compact />
+          ) : (
+            <span className="text-xs text-text-muted">—</span>
+          ),
       },
       {
         accessorKey: "status",

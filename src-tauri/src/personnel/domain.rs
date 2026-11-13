@@ -776,6 +776,11 @@ pub struct ExternalCompany {
     /// `none`, `active`, `expiring` or `expired` (from the contract end and the alert delay).
     pub contract_state: String,
     pub contract_days_left: Option<i64>,
+    /// Performance indicators (UX L3-19): work orders given to the company (cancelled excluded),
+    /// those closed that had a planned end, and those among them closed by the planned end.
+    pub wo_count: i64,
+    pub wo_closed_with_deadline: i64,
+    pub wo_on_time: i64,
     pub onboarding_status: String,
     pub insurance_status: String,
     pub notes: Option<String>,

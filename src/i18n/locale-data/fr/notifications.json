@@ -34,6 +34,9 @@
     "summaryBody_other": "{{first}} et {{rest}} autre(s)"
   },
   "preferences": {
+    "digestHelpToggle": "Comment fonctionnent « Immédiat », « Résumé quotidien » et « Silence jusqu’au » ?",
+    "groupAllOff": "Tout couper",
+    "groupAllOn": "Tout activer",
     "loadError": "Impossible de charger vos préférences de notification",
     "title": "Préférences de notification",
     "intro": "Choisissez ce que vous recevez et comment. Vos notifications sont dans la",
@@ -194,6 +197,7 @@
     "integration_failure": "Échec d'intégration",
     "personnel_critical_block": "Indisponibilité critique",
     "planning": {
+      "week_unapproved": "Semaine de planning figée sans approbation",
       "schedule": "Programme de planification"
     },
     "pm_deferred": "MP différée",
@@ -286,6 +290,10 @@
     "di_closed": {
       "title": "Demande {{code}} clôturée",
       "body": "{{title}}"
+    },
+    "di_work_done": {
+      "title": "Travaux terminés pour votre demande {{code}}",
+      "body": "{{title}} : l'OT {{wo_code}} est clôturé."
     },
     "di_converted": {
       "title": "Demande {{code}} convertie en OT {{wo_code}}",

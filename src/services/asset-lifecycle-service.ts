@@ -170,8 +170,10 @@ export async function createAssetMeter(payload: CreateAssetMeterPayload): Promis
 export async function recordMeterReading(
   payload: RecordMeterReadingPayload,
   confirmJump = false,
+  /** `replacement`: a new physical meter was fitted and this is its first value. */
+  readingKind: "replacement" | null = null,
 ): Promise<MeterReading> {
-  const raw = await invoke<unknown>("record_meter_reading", { payload, confirmJump });
+  const raw = await invoke<unknown>("record_meter_reading", { payload, confirmJump, readingKind });
   return MeterReadingSchema.parse(raw) as MeterReading;
 }
 

@@ -34,6 +34,9 @@
     "summaryBody_other": "{{first}} and {{rest}} more"
   },
   "preferences": {
+    "digestHelpToggle": "How do \"Instant\", \"Daily digest\" and \"Mute until\" work?",
+    "groupAllOff": "Turn all off",
+    "groupAllOn": "Turn all on",
     "loadError": "Your notification preferences could not be loaded",
     "title": "Notification preferences",
     "intro": "Choose what you receive and how. Your notifications are in the",
@@ -194,6 +197,7 @@
     "integration_failure": "Integration failure",
     "personnel_critical_block": "Critical staffing gap",
     "planning": {
+      "week_unapproved": "Planning week frozen without approval",
       "schedule": "Planning schedule"
     },
     "pm_deferred": "PM deferred",
@@ -286,6 +290,10 @@
     "di_closed": {
       "title": "Request {{code}} closed",
       "body": "{{title}}"
+    },
+    "di_work_done": {
+      "title": "Work done for your request {{code}}",
+      "body": "{{title}}: work order {{wo_code}} is closed."
     },
     "di_converted": {
       "title": "Request {{code}} converted to work order {{wo_code}}",

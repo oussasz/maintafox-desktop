@@ -47,12 +47,15 @@ export function StudyLifeStep({
   datasetVersion,
   onStudyChanged,
   onDecide,
+  onGoData,
 }: {
   study: ReliabilityStudy;
   editable: boolean;
   datasetVersion: string;
   onStudyChanged: () => void;
   onDecide: (p: DecisionPrefill) => void;
+  /** Back to step 1 (failure data) when the fit cannot be made (UX L2-31). */
+  onGoData: () => void;
 }) {
   const { t } = useTranslation("reliability");
   const { formatDecimal, formatNumber, formatCurrency, currencyCode } = useFormatters();
@@ -63,6 +66,11 @@ export function StudyLifeStep({
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
   const [planned, setPlanned] = useState<number | null>(null);
+  /** Costs as last loaded or saved: typed costs that differ are not kept when leaving (UX L2-35). */
+  const [savedCosts, setSavedCosts] = useState<{ planned: number | null; failure: number | null }>({
+    planned: null,
+    failure: null,
+  });
   const [failure, setFailure] = useState<number | null>(null);
   const [planId, setPlanId] = useState<number | null>(null);
   const [asDefault, setAsDefault] = useState(false);
@@ -89,6 +97,7 @@ export function StudyLifeStep({
         if (costs == null && a.cost) {
           setPlanned(a.cost.planned_cost);
           setFailure(a.cost.failure_cost);
+          setSavedCosts({ planned: a.cost.planned_cost, failure: a.cost.failure_cost });
         }
         setPlanId(a.selected_pm_plan_id);
       } catch (e) {
@@ -139,6 +148,11 @@ export function StudyLifeStep({
   const currency = analysis.cost_currency_code ?? currencyCode;
   const money = (v: number | null | undefined) => (v == null ? "—" : formatCurrency(v, currency));
   const shareClass = analysis.cost_class_id;
+  const costsUnsaved =
+    editable &&
+    plannedN != null &&
+    failureN != null &&
+    (plannedN !== savedCosts.planned || failureN !== savedCosts.failure);
 
   const saveCosts = async () => {
     if (plannedN == null || failureN == null) return;
@@ -152,6 +166,7 @@ export function StudyLifeStep({
         currency_code: currencyCode,
         save_as_class_default_for: asDefault ? shareClass : null,
       });
+      setSavedCosts({ planned: plannedN, failure: failureN });
       onStudyChanged();
     } catch {
       // global IPC toast
@@ -178,8 +193,13 @@ export function StudyLifeStep({
       ) : null}
       {fit == null ? (
         <RamsCallout
-          tone="danger"
+          tone="attention"
           title={t(`rams.life.issue.${analysis.fit_issue ?? "not_enough_failures"}.title`)}
+          action={
+            <Button variant="outline" className="h-10" onClick={onGoData}>
+              {t("rams.life.goToData")}
+            </Button>
+          }
         >
           {t(`rams.life.issue.${analysis.fit_issue ?? "not_enough_failures"}.body`, {
             min: analysis.min_failures,
@@ -327,6 +347,11 @@ export function StudyLifeStep({
                   disabled={!editable}
                   onValueChange={setPlanned}
                 />
+                {plannedN != null ? (
+                  <span className="font-normal tabular-nums text-text-muted">
+                    {formatCurrency(plannedN)}
+                  </span>
+                ) : null}
               </label>
               <label className="grid gap-1 text-xs font-medium text-text-secondary">
                 {t("rams.cost.failure", { currency })}
@@ -337,6 +362,11 @@ export function StudyLifeStep({
                   disabled={!editable}
                   onValueChange={setFailure}
                 />
+                {failureN != null ? (
+                  <span className="font-normal tabular-nums text-text-muted">
+                    {formatCurrency(failureN)}
+                  </span>
+                ) : null}
               </label>
               <label className="grid gap-1 text-xs font-medium text-text-secondary sm:col-span-2">
                 {t("rams.cost.pmPlan")}
@@ -402,6 +432,11 @@ export function StudyLifeStep({
                     />
                     {t("rams.cost.asDefault", { className: analysis.cost_class_name ?? "" })}
                   </label>
+                ) : null}
+                {costsUnsaved ? (
+                  <p role="status" className="text-xs font-medium text-tone-attention-fg">
+                    {t("rams.cost.unsaved")}
+                  </p>
                 ) : null}
                 <Button
                   variant="outline"

@@ -76,7 +76,7 @@ import {
 } from "@/components/ui/select";
 import { mfLayout } from "@/design-system/tokens";
 import { usePermissions } from "@/hooks/use-permissions";
-import { useToast } from "@/hooks/use-toast";
+import { useAppToast } from "@/hooks/use-toast";
 import { usePermissionsLoading, useReadableLists } from "@/lib/list-access";
 import { cn } from "@/lib/utils";
 import { listActiveTeams, listPersonnel } from "@/services/personnel-service";
@@ -115,7 +115,7 @@ export function PlanningPage() {
   // break-in dialogs themselves (plan.confirm at the crew's site).
   const readable = useReadableLists(["teams", "people"] as const);
   const rightsLoading = usePermissionsLoading();
-  const { toast } = useToast();
+  const { toast } = useAppToast();
   /** Confirms a planning action that went through (failures already have their toast). */
   const done = (key: string) => toast({ title: t(`feedback.${key}`), variant: "success" });
 

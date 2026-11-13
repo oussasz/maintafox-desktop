@@ -300,7 +300,7 @@ describe("StudyFmecaStep", () => {
       expect.stringContaining("2.41 failure(s) per equipment-year from the life analysis"),
     );
     expect(screen.getByTestId("ishikawa")).toHaveTextContent("10");
-    expect(screen.getByText("Plant critical RPN threshold: 125.")).toBeInTheDocument();
+    expect(screen.getByText(/^Plant critical RPN threshold: 125\./)).toBeInTheDocument();
 
     expect(screen.getByText(/2 in the period · 5 on the class/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Add" }));

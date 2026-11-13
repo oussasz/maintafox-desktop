@@ -383,6 +383,8 @@ pub async fn create_asset_meter(
 pub async fn record_meter_reading(
     payload: RecordMeterReadingPayload,
     confirm_jump: Option<bool>,
+    // `replacement` when a new physical meter was fitted (UX L2-25); `None` = normal reading.
+    reading_kind: Option<meters::MeterReadingKind>,
     state: State<'_, AppState>,
 ) -> AppResult<meters::MeterReading> {
     let user = require_session!(state);
@@ -392,7 +394,14 @@ pub async fn record_meter_reading(
         crate::rbac::permissions::EQ_MANAGE,
         PermissionScope::Global
     );
-    meters::record_meter_reading_checked(&state.db, payload, confirm_jump.unwrap_or(false), user.user_id).await
+    meters::record_meter_reading_of_kind_checked(
+        &state.db,
+        payload,
+        reading_kind,
+        confirm_jump.unwrap_or(false),
+        user.user_id,
+    )
+    .await
 }
 
 /// Set or clear the alarm thresholds of a meter (L2-08): a reading that crosses one raises an

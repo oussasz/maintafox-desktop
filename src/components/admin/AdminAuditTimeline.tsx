@@ -260,9 +260,15 @@ export function AdminAuditTimeline({ fixedFilter, compact = false }: AdminAuditT
         if (evt.scope_type) {
           subtitleParts.push(
             t("audit.scopeValue", {
-              scope: `${evt.scope_type}${
-                evt.scope_reference && !evt.from_other_device ? ` / ${evt.scope_reference}` : ""
-              }`,
+              // "Toute l'entreprise", never "tenant / <identifier>" (L5-27).
+              scope:
+                evt.scope_type === "tenant"
+                  ? t("audit.scopeWholeCompany")
+                  : `${t(`scope.${evt.scope_type}`, evt.scope_type)}${
+                      evt.scope_reference && !evt.from_other_device
+                        ? ` / ${evt.scope_reference}`
+                        : ""
+                    }`,
             }),
           );
         }

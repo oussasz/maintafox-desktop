@@ -4583,6 +4583,8 @@ export interface InterventionRequest {
   /** Display enrichment from JOINs — prefer these over FKs in UI. */
   asset_code?: string | null;
   asset_label?: string | null;
+  /** Criticality code of the equipment (A–D), for the list column and the queue order. */
+  asset_criticality_code?: string | null;
   org_node_code?: string | null;
   org_node_label?: string | null;
   submitter_display_name?: string | null;
@@ -7504,6 +7506,11 @@ export interface ExternalCompany {
   consumed_amount: number;
   contract_state: "none" | "active" | "expiring" | "expired";
   contract_days_left: number | null;
+  /** Work orders given to the company (cancelled excluded). */
+  wo_count: number;
+  /** Closed work orders that had a planned end, and those closed by it (UX L3-19). */
+  wo_closed_with_deadline: number;
+  wo_on_time: number;
   onboarding_status: string;
   insurance_status: string;
   notes: string | null;

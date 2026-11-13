@@ -728,6 +728,7 @@ pub fn run() {
         // ── Article equivalents ──────────────────────────────────────────────────────
         commands::inventory::list_inventory_article_equivalents,
         commands::inventory::list_inventory_article_usage,
+        commands::inventory::list_inventory_dormant_stock,
         commands::inventory::upsert_inventory_article_equivalent,
         commands::inventory::delete_inventory_article_equivalent,
         commands::inventory::list_inventory_article_purchase_history,

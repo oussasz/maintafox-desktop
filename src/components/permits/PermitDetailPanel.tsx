@@ -71,7 +71,7 @@ import { PermitSafetyContentPanel } from "./PermitSafetyContentPanel";
 import { PermitNoSiteBadge, usePermitAccess } from "./PermitSiteScope";
 import { PermitWorkersPanel } from "./PermitWorkersPanel";
 import { WorkerInformedDialog } from "./WorkerInformedDialog";
-import { printLotoCard } from "./loto-card-print";
+import { printLotoCard, printPermitLotoSheet } from "./loto-card-print";
 import {
   APPROVED_ON_STATUSES,
   ISOLATION_REMOVAL_STATUSES,
@@ -415,6 +415,12 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
     if (ok) setEditingExpiry(null);
   };
 
+  // L4-17: the points on the permit's LOTO sheet: verified, or taken off / removed since.
+  const sheetPoints = isolations.filter((iso) => {
+    const state = isolationState(iso);
+    return state === "verified" || state === "takenOff" || state === "removed";
+  });
+
   const showCard = async (iso: PermitIsolationRecord) => {
     try {
       setCardView(await getLotoCardView(permit.id, iso.id));
@@ -696,7 +702,38 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
       />
 
       <section className="space-y-2">
-        <h3 className="text-sm font-medium text-text-primary">{t("isolation.title")}</h3>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-sm font-medium text-text-primary">{t("isolation.title")}</h3>
+          {/* L4-17: one printable LOTO sheet for the permit, every verified point on it. */}
+          {canIssue && sheetPoints.length > 0 ? (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-9 gap-1.5"
+              disabled={busy}
+              data-testid="permit-loto-sheet-print"
+              onClick={() =>
+                void run(async () => {
+                  const cards = await Promise.all(
+                    sheetPoints.map((iso) => getLotoCardView(permit.id, iso.id)),
+                  );
+                  // Print first; the audit records a print that actually happened (each point).
+                  await printPermitLotoSheet(
+                    cards,
+                    (key) => t(key),
+                    i18n.resolvedLanguage || i18n.language,
+                  );
+                  for (const iso of sheetPoints) {
+                    await recordLotoCardPrint({ permit_id: permit.id, isolation_id: iso.id });
+                  }
+                })
+              }
+            >
+              <Printer className="h-4 w-4" aria-hidden />
+              {t("card.printSheet")}
+            </Button>
+          ) : null}
+        </div>
         <p className="text-xs text-text-muted">{t("isolation.twoPersonHint")}</p>
         {childrenError != null ? (
           <ErrorState
@@ -991,7 +1028,7 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
         )}
 
         {cardView ? (
-          <div className="rounded border border-surface-border bg-surface-0 p-3 font-mono text-xs leading-relaxed text-text-primary">
+          <div className="rounded border border-surface-border bg-surface-0 p-3 text-xs leading-relaxed text-text-primary">
             <div className="mb-1 font-sans text-sm font-medium">{t("card.title")}</div>
             <div>
               {t("card.permit")}: {cardView.permit_code}

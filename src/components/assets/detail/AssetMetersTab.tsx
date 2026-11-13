@@ -7,7 +7,7 @@
  */
 
 import type { TFunction } from "i18next";
-import { Ban, BellRing, Gauge, History, Plus } from "lucide-react";
+import { Ban, BellRing, Gauge, History, Plus, RefreshCw } from "lucide-react";
 import { useId, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -15,7 +15,11 @@ import { PermissionGate } from "@/components/PermissionGate";
 import { useLoad } from "@/components/assets/detail/use-load";
 import { DetailSectionCard } from "@/components/detail";
 import { EntityFormDialog, EntityFormFooter } from "@/components/entity-form";
-import { MeasureUnitSelect, useMeasureUnits } from "@/components/lookups/MeasureUnitPicker";
+import {
+  MeasureUnitSelect,
+  unitSymbol,
+  useMeasureUnits,
+} from "@/components/lookups/MeasureUnitPicker";
 import { FormField } from "@/components/ui/FormField";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -65,6 +69,9 @@ function optionLabel(v: LookupValueOption, language: string): string {
   return localized?.trim() || v.label;
 }
 
+/** Unit symbol proposed for a meter type of the system list `equipment.meter_type`. */
+const METER_TYPE_DEFAULT_UNIT: Record<string, string> = { HOURS: "h", DISTANCE: "km" };
+
 /** `datetime-local` value for now, in local time. */
 function nowLocalInput(): string {
   const d = new Date();
@@ -102,6 +109,7 @@ export function AssetMetersTab({ asset }: { asset: Asset }) {
   );
   const { data, error, loading, reload } = useLoad(load, String(asset.id));
   const [readingFor, setReadingFor] = useState<AssetMeter | null>(null);
+  const [replaceFor, setReplaceFor] = useState<AssetMeter | null>(null);
   // Meter whose correct reading is entered right after cancelling a wrong one.
   const [reopenFor, setReopenFor] = useState<number | null>(null);
   const [historyFor, setHistoryFor] = useState<number | null>(null);
@@ -210,6 +218,17 @@ export function AssetMetersTab({ asset }: { asset: Asset }) {
                   {t("meters.thresholds.edit")}
                 </Button>
               </PermissionGate>
+              <PermissionGate permission={P.EQ_MANAGE}>
+                <Button
+                  variant="outline"
+                  className="h-9 gap-1.5"
+                  disabled={!m.is_active}
+                  onClick={() => setReplaceFor(m)}
+                >
+                  <RefreshCw className="h-4 w-4" aria-hidden />
+                  {t("meters.replace.action")}
+                </Button>
+              </PermissionGate>
             </div>
             {historyFor === m.id ? (
               <MeterHistory
@@ -232,6 +251,18 @@ export function AssetMetersTab({ asset }: { asset: Asset }) {
           onClose={() => setReadingFor(null)}
           onSaved={() => {
             setReadingFor(null);
+            void reload();
+          }}
+        />
+      ) : null}
+      {replaceFor ? (
+        <RecordReadingDialog
+          meter={replaceFor}
+          sources={data.sources}
+          replacement
+          onClose={() => setReplaceFor(null)}
+          onSaved={() => {
+            setReplaceFor(null);
             void reload();
           }}
         />
@@ -472,17 +503,23 @@ function RecordReadingDialog({
   sources,
   onClose,
   onSaved,
+  replacement = false,
 }: {
   meter: AssetMeter;
   sources: LookupValueOption[];
   onClose: () => void;
   onSaved: () => void;
+  /** A new physical meter was fitted: its first value may be lower than the old one (L2-25). */
+  replacement?: boolean;
 }) {
   const { t, i18n } = useTranslation("equipment");
   const { formatDecimal } = useFormatters();
   const formId = useId();
   const [value, setValue] = useState("");
   const [readingAt, setReadingAt] = useState(nowLocalInput);
+  // Until the person changes the time, the reading is dated when it is saved, not when the
+  // window was opened (UX L2-25).
+  const [timeTouched, setTimeTouched] = useState(false);
   const [source, setSource] = useState(
     () => sources.find((s) => s.code === "MANUAL")?.code ?? sources[0]?.code ?? "",
   );
@@ -497,7 +534,7 @@ function RecordReadingDialog({
       ? undefined
       : parsed === null || Number.isNaN(parsed)
         ? t("meters.errors.number")
-        : parsed < meter.current_reading && meter.rollover_value == null
+        : !replacement && parsed < meter.current_reading && meter.rollover_value == null
           ? t("meters.errors.belowCurrent", { current: formatDecimal(meter.current_reading, 1) })
           : undefined;
   const future = readingAt > nowLocalInput();
@@ -507,7 +544,7 @@ function RecordReadingDialog({
     if (invalid || parsed === null) return;
     setSaving(true);
     try {
-      const at = new Date(readingAt).toISOString();
+      const at = timeTouched ? new Date(readingAt).toISOString() : new Date().toISOString();
       if (!confirmJump) {
         const found = await assessMeterReading(meter.id, parsed, at);
         if (found) {
@@ -524,6 +561,7 @@ function RecordReadingDialog({
           source_reference: reference.trim() || null,
         },
         confirmJump,
+        replacement ? "replacement" : null,
       );
       announceThreshold(saved, t);
       onSaved();
@@ -544,7 +582,11 @@ function RecordReadingDialog({
       onOpenChange={(next) => {
         if (!next) onClose();
       }}
-      title={t("meters.recordTitle", { name: meter.name })}
+      title={
+        replacement
+          ? t("meters.replace.title", { name: meter.name })
+          : t("meters.recordTitle", { name: meter.name })
+      }
       description={t("meters.currentValue", {
         value: formatDecimal(meter.current_reading, 1),
         unit: meter.unit ?? "",
@@ -561,6 +603,9 @@ function RecordReadingDialog({
       }
     >
       <form id={formId} onSubmit={submit} className="grid gap-4 sm:grid-cols-2">
+        {replacement ? (
+          <p className="text-sm text-text-secondary sm:col-span-2">{t("meters.replace.body")}</p>
+        ) : null}
         {warning ? (
           <div
             role="alert"
@@ -607,7 +652,10 @@ function RecordReadingDialog({
             id={`${formId}-at`}
             value={readingAt}
             max={nowLocalInput()}
-            onChange={(v) => setReadingAt(v)}
+            onChange={(v) => {
+              setReadingAt(v);
+              setTimeTouched(true);
+            }}
           />
         </FormField>
         <FormField name={`${formId}-source`} label={t("meters.source")} required>
@@ -745,7 +793,19 @@ function AddMeterDialog({
           <Input id={`${formId}-code`} value={code} onChange={(e) => setCode(e.target.value)} />
         </FormField>
         <FormField name={`${formId}-type`} label={t("meters.type")} required>
-          <Select value={type} onValueChange={setType}>
+          <Select
+            value={type}
+            onValueChange={(next) => {
+              setType(next);
+              // The unit follows the type while none was chosen: an hours meter is in hours, a
+              // distance meter in km (standard units of DonnÃ©es de rÃ©fÃ©rence, UX L2-25).
+              const symbol = METER_TYPE_DEFAULT_UNIT[next];
+              if (unitId == null && symbol) {
+                const unit = units.find((u) => unitSymbol(u) === symbol);
+                if (unit) setUnitId(unit.id);
+              }
+            }}
+          >
             <SelectTrigger id={`${formId}-type`} className="h-10">
               <SelectValue placeholder={t("meters.typePlaceholder")} />
             </SelectTrigger>
