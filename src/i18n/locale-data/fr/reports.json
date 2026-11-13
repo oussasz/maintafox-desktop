@@ -293,7 +293,7 @@
     },
     "pm": {
       "title": "Respect des MP",
-      "none": "Aucune MP due sur la période",
+      "none": "Aucune maintenance préventive n’était due sur la période.",
       "detail": "{{done}} sur {{total}} réalisées dans leur fenêtre",
       "formula": "Occurrences de MP réalisées dans leur fenêtre de tolérance — ni avant son ouverture, ni après sa fermeture (sans tolérance : le jour d’échéance) ÷ occurrences de MP dues sur la période, réalisées ou dont la fenêtre est close. Les occurrences annulées sont exclues ; celles encore dans leur fenêtre ne sont pas encore comptées. Même chiffre que la page MP et la tuile d’accueil."
     },
