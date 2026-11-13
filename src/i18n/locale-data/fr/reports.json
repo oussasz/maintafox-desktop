@@ -23,7 +23,7 @@
       "pmEmpty": "Aucune MP ouverte dans la file d’échéance pour ce périmètre.",
       "sections": {
         "ops": "Opérations",
-        "pm": "MP à échéance",
+        "pm": "Pipeline MP",
         "rams": "RAMS flotte",
         "cost": "Coût",
         "health": "Santé flotte"
@@ -44,7 +44,7 @@
       },
       "widgets": {
         "opsKpis": "KPIs opérationnels",
-        "pmDue": "MP à échéance",
+        "pmDue": "File MP à échéance",
         "reliability": "Fiabilité RAMS",
         "maintenanceCost": "Coût de maintenance",
         "workload": "Charge de travail",
