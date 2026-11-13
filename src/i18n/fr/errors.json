@@ -1133,6 +1133,7 @@
     "GATE_WO_DOWNTIME_STATUS": "Arrêt refusé : un temps d'arrêt ne s'ouvre que sur un OT en cours ou en attente, et cet OT est « $t(ot:status.{{status}}) ».",
     "GATE_WO_DOWNTIME_ALREADY_CLOSED": "Ce temps d'arrêt est déjà fermé : il n'y a rien à clôturer.",
     "GATE_WO_LABOR_FUTURE": "Heures refusées : le début et la fin ne peuvent pas être dans le futur. Saisissez les heures réellement travaillées.",
+    "GATE_WO_LABOR_END_BEFORE_START": "Heures refusées : la fin doit être après le début.",
     "GATE_WO_LABOR_ALREADY_CLOSED": "Cette entrée de main-d'œuvre est déjà clôturée : il n'y a rien à clôturer.",
     "GATE_WO_LABOR_DELETE_STATUS": "Suppression refusée : une entrée de main-d'œuvre ne se supprime qu'avant le début des travaux (brouillon, planification ou prêt), et cet OT est « $t(ot:status.{{status}}) ».",
     "GATE_WO_PART_WO_LOCKED": "Pièce refusée : l'OT est « $t(ot:status.{{status}}) », on ne peut plus y ajouter de pièce.",

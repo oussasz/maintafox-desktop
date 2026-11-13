@@ -1134,6 +1134,7 @@
     "GATE_WO_DOWNTIME_STATUS": "Downtime refused: a downtime segment can only be opened on a work order that is in progress or on hold, and this one is \"$t(ot:status.{{status}})\".",
     "GATE_WO_DOWNTIME_ALREADY_CLOSED": "This downtime segment is already closed: there is nothing to close.",
     "GATE_WO_LABOR_FUTURE": "Hours refused: the start and the end cannot be in the future. Enter the hours actually worked.",
+    "GATE_WO_LABOR_END_BEFORE_START": "Hours refused: the end must be after the start.",
     "GATE_WO_LABOR_ALREADY_CLOSED": "This labour entry is already closed: there is nothing to close.",
     "GATE_WO_LABOR_DELETE_STATUS": "Deletion refused: a labour entry can only be deleted before work starts (draft, planning or ready), and this work order is \"$t(ot:status.{{status}})\".",
     "GATE_WO_PART_WO_LOCKED": "Part refused: the work order is \"$t(ot:status.{{status}})\", so no more parts can be added.",

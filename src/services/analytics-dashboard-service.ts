@@ -50,6 +50,19 @@ export const SmrpKpisSchema = z.object({
       /** Which "open OT" rule `open_work_orders` counts (`WoOpenRule`). */
       open_work_orders_rule: z.string(),
       work_orders_without_estimate: z.number(),
+      without_estimate_list: z
+        .array(z.object({ id: z.number(), code: z.string(), title: z.string() }))
+        .default([]),
+      by_team: z
+        .array(
+          z.object({
+            team_name: z.string().nullable(),
+            backlog_hours: z.number(),
+            work_orders: z.number(),
+            without_estimate: z.number(),
+          }),
+        )
+        .default([]),
       weekly_capacity_hours: z.number(),
       people_counted: z.number(),
       people_without_schedule: z.number(),

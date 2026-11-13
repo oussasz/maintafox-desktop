@@ -1431,7 +1431,37 @@ pub(crate) async fn add_labor_impl(state: &AppState, input: labor::AddLaborInput
         None,
     )
     .await?;
-    labor::add_labor_entry(&state.db, input).await
+    let entry = labor::add_labor_entry(&state.db, input).await?;
+    record_labor_added(state, i64::from(user.user_id), &entry).await;
+    Ok(entry)
+}
+
+/// L1-36: a labour entry, retroactive included, appears in the WO history.
+async fn record_labor_added(state: &AppState, actor_id: i64, entry: &labor::WoIntervener) {
+    audit::record_wo_change_event(
+        &state.db,
+        audit::WoAuditInput {
+            wo_id: Some(entry.work_order_id),
+            action: "labor_added".into(),
+            actor_id: Some(actor_id),
+            summary: Some(match entry.hours_worked {
+                Some(h) => format!("{h:.2} h de main-d'œuvre saisies"),
+                None => "Main-d'œuvre démarrée".to_string(),
+            }),
+            details_json: Some(
+                serde_json::json!({
+                    "labor_id": entry.id,
+                    "started_at": entry.started_at,
+                    "ended_at": entry.ended_at,
+                    "hours_worked": entry.hours_worked,
+                })
+                .to_string(),
+            ),
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+    )
+    .await;
 }
 
 /// Labour for a person of the register, login or not (contractor technicians). Refused with
@@ -1463,7 +1493,9 @@ pub async fn add_personnel_labor(
             ));
         }
     }
-    labor::add_personnel_labor_entry(&state.db, input).await
+    let entry = labor::add_personnel_labor_entry(&state.db, input).await?;
+    record_labor_added(&state, i64::from(user.user_id), &entry).await;
+    Ok(entry)
 }
 
 /// Whether the user may see people other than himself (training or personnel view right).

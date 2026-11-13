@@ -1213,7 +1213,8 @@ pub(crate) async fn close_preflight(
             DbBackend::Sqlite,
             "SELECT \
                 COALESCE(wo.active_labor_hours, 0.0) AS alh, \
-                (SELECT COUNT(*) FROM work_order_interveners WHERE work_order_id = wo.id) AS labor_cnt \
+                (SELECT COUNT(*) FROM work_order_interveners \
+                  WHERE work_order_id = wo.id AND COALESCE(hours_worked, 0) > 0) AS labor_cnt \
              FROM work_orders wo WHERE wo.id = ?",
             [wo_id.into()],
         ))
