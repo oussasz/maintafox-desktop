@@ -49,7 +49,7 @@
     "badge": "Arrêt nécessaire",
     "required": "Nécessaire",
     "notRequired": "Non nécessaire",
-    "help": "Si coché, la planification vérifie l'OT contre les fenêtres d'arrêt comme un plan de MP : avertissement sans fenêtre d'arrêt, et l'engagement demande une fenêtre d'arrêt ouverte.",
+    "help": "Si coché, la planification vérifie l'OT contre les fenêtres d'arrêt comme un plan de PM : avertissement sans fenêtre d'arrêt, et l'engagement demande une fenêtre d'arrêt ouverte.",
     "frozen": "Ne se modifie que pendant la préparation de l'OT (brouillon, planification ou prêt).",
     "noPermission": "Vous n'avez pas le droit de modifier cet OT.",
     "confirmOnTitle": "Marquer l'OT comme nécessitant un arrêt ?",

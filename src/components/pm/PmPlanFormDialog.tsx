@@ -337,39 +337,41 @@ export function PmPlanFormDialog({
                     : ""}
                   {t("fields.currentAssetHint")}
                 </p>
-              ) : (
-                <div className="grid gap-1">
-                  <Label htmlFor="pm-plan-scope">{t(`scope.${scopeType}`)}</Label>
-                  <Select value={scopeId} onValueChange={setScopeId}>
-                    <SelectTrigger id="pm-plan-scope">
-                      <SelectValue placeholder={t("errors.scopeRequired")} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {scopeOptions.map((o) => (
-                        <SelectItem key={o.id} value={String(o.id)}>
-                          {o.label && o.label !== o.code ? `${o.code} — ${o.label}` : o.code}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  {scopeFailed ? <ListLoadFailed onRetry={retryLists} /> : null}
-                  {scopeAssets ? (
-                    <p className="text-xs text-text-muted">
-                      {scopeAssets.length === 0
-                        ? t("hints.scopeNoAssets")
-                        : t("hints.scopeAssets", {
-                            count: scopeAssets.length,
-                            list: `${scopeAssets
-                              .slice(0, 5)
-                              .map((a) => a.asset_code)
-                              .join(", ")}${scopeAssets.length > 5 ? "…" : ""}`,
-                          })}
-                    </p>
-                  ) : null}
-                </div>
-              )}
+              ) : null}
             </div>
-          ) : null}
+          ) : (
+            // L1-26: the scope's value (family, location, criticality group) only for those scopes;
+            // it sat inside the equipment branch and showed a second "Équipement" field there.
+            <div className="grid gap-1">
+              <Label htmlFor="pm-plan-scope">{t(`scope.${scopeType}`)}</Label>
+              <Select value={scopeId} onValueChange={setScopeId}>
+                <SelectTrigger id="pm-plan-scope">
+                  <SelectValue placeholder={t("errors.scopeRequired")} />
+                </SelectTrigger>
+                <SelectContent>
+                  {scopeOptions.map((o) => (
+                    <SelectItem key={o.id} value={String(o.id)}>
+                      {o.label && o.label !== o.code ? `${o.code} — ${o.label}` : o.code}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {scopeFailed ? <ListLoadFailed onRetry={retryLists} /> : null}
+              {scopeAssets ? (
+                <p className="text-xs text-text-muted">
+                  {scopeAssets.length === 0
+                    ? t("hints.scopeNoAssets")
+                    : t("hints.scopeAssets", {
+                        count: scopeAssets.length,
+                        list: `${scopeAssets
+                          .slice(0, 5)
+                          .map((a) => a.asset_code)
+                          .join(", ")}${scopeAssets.length > 5 ? "…" : ""}`,
+                      })}
+                </p>
+              ) : null}
+            </div>
+          )}
           <div className="grid gap-1">
             <Label>{t("fields.crew")}</Label>
             <Select

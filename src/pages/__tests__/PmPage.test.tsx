@@ -179,6 +179,8 @@ beforeEach(() => {
   usePmStore.setState(initial, true);
   try {
     localStorage.clear();
+    // These tests work on the due queue; the page itself opens on the plans (L1-27).
+    localStorage.setItem("pm-view-mode", "due");
   } catch {
     /* ignore */
   }

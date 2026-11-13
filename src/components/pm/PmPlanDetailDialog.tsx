@@ -509,18 +509,21 @@ export function PmPlanDetailDialog({
                 <dd className="whitespace-pre-line">{plan.description || t("labels.none")}</dd>
               </dl>
               <PmPlanCoveragePanel plan={plan} canEdit={!editAction.disabled && editAction.show} />
-              <div className="space-y-2 rounded-lg border border-dashed p-4">
-                <h3 className="font-medium">{t("guidance.activationTitle")}</h3>
-                <p className="text-sm text-text-muted">{t("guidance.activationPath")}</p>
-                <p className="text-sm text-text-muted">{t("guidance.woCloseOutcome")}</p>
-                <p className="text-sm">
-                  {t("guidance.currentStatus", {
-                    status: t(`lifecycle.${plan.lifecycle_status}`, {
-                      defaultValue: plan.lifecycle_status,
-                    }),
-                  })}
-                </p>
-              </div>
+              {/* L1-27: the activation path only while the plan is not yet active. */}
+              {["draft", "proposed", "approved"].includes(plan.lifecycle_status) ? (
+                <div className="space-y-2 rounded-lg border border-dashed p-4">
+                  <h3 className="font-medium">{t("guidance.activationTitle")}</h3>
+                  <p className="text-sm text-text-muted">{t("guidance.activationPath")}</p>
+                  <p className="text-sm text-text-muted">{t("guidance.woCloseOutcome")}</p>
+                  <p className="text-sm">
+                    {t("guidance.currentStatus", {
+                      status: t(`lifecycle.${plan.lifecycle_status}`, {
+                        defaultValue: plan.lifecycle_status,
+                      }),
+                    })}
+                  </p>
+                </div>
+              ) : null}
               <div className="flex flex-wrap gap-2">
                 {editAction.show ? (
                   <Button
@@ -570,7 +573,8 @@ export function PmPlanDetailDialog({
                           title={editAction.reason ?? undefined}
                           onClick={() => onLifecycle(s)}
                         >
-                          {t(`lifecycle.${s}`)}
+                          {/* L1-27: an action ("Suspendre le plan"), not the state's name. */}
+                          {t(`lifecycleAction.${s}`, { defaultValue: t(`lifecycle.${s}`) })}
                         </Button>
                       ))
                   : null}
@@ -585,6 +589,12 @@ export function PmPlanDetailDialog({
                   </Button>
                 ) : null}
               </div>
+              {/* L1-27: why "Modifier" is greyed, said in the window, not only in a tooltip. */}
+              {editAction.show && editAction.disabled && editAction.reason ? (
+                <p className="text-xs text-text-muted" data-testid="pm-plan-edit-reason">
+                  {editAction.reason}
+                </p>
+              ) : null}
               {siteReason ? (
                 <p className="text-xs text-text-muted" data-testid="pm-plan-site-reason">
                   {siteReason}
@@ -603,6 +613,10 @@ export function PmPlanDetailDialog({
                   {t("actions.newVersion")}
                 </Button>
               ) : null}
+              {/* L1-27: what a new version does to the work orders already generated. */}
+              <p className="text-xs text-text-muted" data-testid="pm-version-effect">
+                {t("guidance.versionEffect")}
+              </p>
               {siteReason ? <p className="text-xs text-text-muted">{siteReason}</p> : null}
               <DataTable columns={versionColumns} data={versions} />
               {versions.length === 0 && !detailLoading ? (

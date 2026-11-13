@@ -22,8 +22,8 @@
     "newVersion": "Nouvelle version",
     "editVersion": "Modifier",
     "publish": "Publier",
-    "transition": "Mettre à jour le statut",
-    "transitionOccurrence": "Changer le statut",
+    "transition": "Changer l'état du plan",
+    "transitionOccurrence": "Changer l'état de l'échéance",
     "logExecution": "Saisir l'exécution",
     "viewFindings": "Voir les constats",
     "createFollowUpDi": "Créer une demande d'intervention (DI) de suivi",
@@ -386,7 +386,8 @@
     "activationPath": "Ordre du cycle de vie : brouillon → proposé → approuvé → actif. Publiez une version quand le plan est approuvé, actif ou suspendu, puis rafraîchissez la prévision pour créer les échéances.",
     "currentStatus": "Statut actuel : {{status}}",
     "alreadyOperational": "Ce plan est déjà opérationnel ou retiré.",
-    "woCloseOutcome": "À la clôture de l'OT lié, l'occurrence est terminée avec son résultat : les défaillances et les étapes de gamme non conformes deviennent des constats."
+    "woCloseOutcome": "À la clôture de l'OT lié, l'occurrence est terminée avec son résultat : les défaillances et les étapes de gamme non conformes deviennent des constats.",
+    "versionEffect": "Publier une nouvelle version remplace la version en cours pour les prochaines échéances générées. Les échéances et OT déjà générés gardent le contenu de leur version ; le plan reste actif pendant la préparation de la nouvelle version."
   },
   "empty": {
     "noPlans": "Aucun plan PM. Créez un plan pour commencer.",
@@ -479,7 +480,8 @@
     "cronMorning": "Tous les jours à 06:00",
     "cronCustom": "Planification personnalisée (cron)",
     "cronCustomHint": "Six champs : seconde minute heure jour mois jour-de-semaine.",
-    "horizonDays": "Horizon (jours)"
+    "horizonDays": "Horizon (jours)",
+    "skippedHint": "Ignorée : échéance déjà existante, couverte par un plan englobant sur la même période, ou équipement sans compteur du type demandé."
   },
   "errors": {
     "listLoad": "La liste de choix n'a pas pu être chargée.",
@@ -530,5 +532,13 @@
   "sourceDecision": {
     "toReview": "Issue d'une décision refusée / en attente — à revoir",
     "toReviewHint": "La version en vigueur provient d'une décision de fiabilité refusée à la synchronisation ou pas encore acceptée sur ce poste. Revoyez-la ; publier une autre version retire ce signal."
+  },
+  "lifecycleAction": {
+    "draft": "Repasser en brouillon",
+    "proposed": "Proposer",
+    "approved": "Approuver",
+    "active": "Réactiver le plan",
+    "suspended": "Suspendre le plan",
+    "retired": "Retirer le plan"
   }
 }
