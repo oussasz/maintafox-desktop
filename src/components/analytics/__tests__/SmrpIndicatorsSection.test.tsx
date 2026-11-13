@@ -196,7 +196,7 @@ describe("SmrpIndicatorsSection", () => {
     renderSection();
     const bySite = screen.getByTestId("smrp-pm-by-site");
     expect(within(bySite).getByText("Sétif")).toBeInTheDocument();
-    expect(within(bySite).getByText("smrp.pm.by.no_site")).toBeInTheDocument();
+    expect(within(bySite).getByText("smrp.pmBy.no_site")).toBeInTheDocument();
     expect(
       within(screen.getByTestId("smrp-pm-by-team")).getByText("Mécanique"),
     ).toBeInTheDocument();

@@ -202,13 +202,13 @@ function PmBreakdown({
   const list = (key: "site" | "team", groups: PmComplianceGroup[]) =>
     groups.length === 0 ? null : (
       <div data-testid={`smrp-pm-by-${key}`}>
-        <p className="mt-2 font-medium text-text-secondary">{t(`smrp.pm.by.${key}`)}</p>
+        <p className="mt-2 font-medium text-text-secondary">{t(`smrp.pmBy.${key}`)}</p>
         <ul className="mt-0.5 space-y-0.5">
           {[...groups]
             .sort((a, b) => (a.compliance_pct ?? 101) - (b.compliance_pct ?? 101))
             .map((g) => (
               <li key={g.id ?? "none"} className="flex justify-between gap-2">
-                <span className="truncate">{g.label ?? t(`smrp.pm.by.no_${key}`)}</span>
+                <span className="truncate">{g.label ?? t(`smrp.pmBy.no_${key}`)}</span>
                 <span className="shrink-0 tabular-nums">
                   {g.compliance_pct == null ? "—" : formatPercent(g.compliance_pct)}{" "}
                   <span className="text-text-muted">
@@ -223,7 +223,7 @@ function PmBreakdown({
   if (breakdown.by_site.length === 0 && breakdown.by_team.length === 0) return null;
   return (
     <details className="mt-1">
-      <summary className="cursor-pointer text-text-secondary">{t("smrp.pm.by.toggle")}</summary>
+      <summary className="cursor-pointer text-text-secondary">{t("smrp.pmBy.toggle")}</summary>
       {list("site", breakdown.by_site)}
       {list("team", breakdown.by_team)}
     </details>

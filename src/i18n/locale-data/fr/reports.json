@@ -241,6 +241,13 @@
     "dismiss": "Masquer ce message"
   },
   "smrp": {
+    "pmBy": {
+      "toggle": "Détail par site et par métier",
+      "site": "Par site",
+      "team": "Par métier (équipe du plan)",
+      "no_site": "Sans site",
+      "no_team": "Sans équipe affectée"
+    },
     "title": "Indicateurs SMRP",
     "subtitle": "Indicateurs de gestion de la maintenance conformes aux métriques SMRP Best Practice, calculés à partir de vos OT, planifications, MP et personnel. {{period}}.",
     "definitionAria": "Définition de {{title}}",
@@ -288,14 +295,7 @@
       "title": "Respect des MP",
       "none": "Aucune MP due sur la période",
       "detail": "{{done}} sur {{total}} réalisées dans leur fenêtre",
-      "formula": "Occurrences de MP réalisées dans leur fenêtre de tolérance — ni avant son ouverture, ni après sa fermeture (sans tolérance : le jour d’échéance) ÷ occurrences de MP dues sur la période, réalisées ou dont la fenêtre est close. Les occurrences annulées sont exclues ; celles encore dans leur fenêtre ne sont pas encore comptées. Même chiffre que la page MP et la tuile d’accueil.",
-      "by": {
-        "toggle": "Détail par site et par métier",
-        "site": "Par site",
-        "team": "Par métier (équipe du plan)",
-        "no_site": "Sans site",
-        "no_team": "Sans équipe affectée"
-      }
+      "formula": "Occurrences de MP réalisées dans leur fenêtre de tolérance — ni avant son ouverture, ni après sa fermeture (sans tolérance : le jour d’échéance) ÷ occurrences de MP dues sur la période, réalisées ou dont la fenêtre est close. Les occurrences annulées sont exclues ; celles encore dans leur fenêtre ne sont pas encore comptées. Même chiffre que la page MP et la tuile d’accueil."
     },
     "backlog": {
       "title": "Carnet de travaux",

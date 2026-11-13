@@ -241,6 +241,13 @@
     "dismiss": "Hide this message"
   },
   "smrp": {
+    "pmBy": {
+      "toggle": "Breakdown by site and trade",
+      "site": "By site",
+      "team": "By trade (plan's team)",
+      "no_site": "No site",
+      "no_team": "No team assigned"
+    },
     "title": "SMRP indicators",
     "subtitle": "Maintenance management indicators in line with SMRP Best Practice metrics, computed from your work orders, schedules, PM and personnel. {{period}}.",
     "definitionAria": "Definition of {{title}}",
@@ -288,14 +295,7 @@
       "title": "PM compliance",
       "none": "No PM was due in the period",
       "detail": "{{done}} of {{total}} done within their window",
-      "formula": "PM occurrences done within their tolerance window — not before it opens, not after it closes (without tolerance: on the due day) ÷ PM occurrences due in the period that are done or whose window has closed. Cancelled occurrences are excluded; those still inside their window are not counted yet. Same figure as the PM page and the home tile.",
-      "by": {
-        "toggle": "Breakdown by site and trade",
-        "site": "By site",
-        "team": "By trade (plan's team)",
-        "no_site": "No site",
-        "no_team": "No team assigned"
-      }
+      "formula": "PM occurrences done within their tolerance window — not before it opens, not after it closes (without tolerance: on the due day) ÷ PM occurrences due in the period that are done or whose window has closed. Cancelled occurrences are excluded; those still inside their window are not counted yet. Same figure as the PM page and the home tile."
     },
     "backlog": {
       "title": "Backlog",
