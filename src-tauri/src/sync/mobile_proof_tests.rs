@@ -289,6 +289,7 @@ async fn mobile_proof() {
             initial_password: Some(technician_password.clone()),
             // The field app has no password-change screen yet: the operator signs in with it.
             force_password_change: Some(false),
+            display_name: None,
         },
     )
     .await

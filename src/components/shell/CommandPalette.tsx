@@ -1,9 +1,19 @@
-import { Activity, ClipboardList, Cog, Search, Wrench } from "lucide-react";
+import {
+  Activity,
+  ClipboardList,
+  Cog,
+  FileLock2,
+  Package,
+  Search,
+  User,
+  Wrench,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 
 import { type NavItem, canSeeNavItem } from "@/components/layout/Sidebar";
+import { PERMIT_QUERY_SELECT } from "@/components/permits/permit-rules";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui";
 import { useModuleCapabilities } from "@/hooks/use-module-capabilities";
 import { usePermissions } from "@/hooks/use-permissions";
@@ -11,7 +21,10 @@ import { invoke } from "@/lib/ipc-invoke";
 import { isModuleCapabilityAllowed } from "@/lib/module-capability";
 import { cn } from "@/lib/utils";
 import { defaultNavItems } from "@/navigation/nav-registry";
-import type { Asset, DiListPage, WoListPage } from "@shared/ipc-types";
+import type { InventoryArticleRow } from "@/services/inventory-service";
+import type { WorkPermitListPage } from "@/services/permit-service";
+import { usePersonnelStore } from "@/stores/personnel-store";
+import type { Asset, DiListPage, PersonnelListPage, WoListPage } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
 interface CommandPaletteProps {
@@ -49,6 +62,8 @@ interface PaletteEntry {
   kind?: string;
   path: string;
   icon: React.ReactNode;
+  /** Run after navigating (a record the page opens from its store, not from the address). */
+  onSelect?: () => void;
 }
 
 /** Records are searched from this many typed characters, after this pause. */
@@ -76,6 +91,10 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
   const canWo = can(P.OT_VIEW);
   const canDi = can(P.DI_VIEW);
   const canAsset = can(P.EQ_VIEW);
+  // People, permits and stock articles too (L6-23).
+  const canPerson = can(P.PER_VIEW);
+  const canPermit = can(P.PTW_VIEW);
+  const canArticle = can(P.INV_VIEW);
   useEffect(() => {
     const text = query.trim();
     if (!open || text.length < RECORD_SEARCH_MIN_CHARS) {
@@ -157,6 +176,66 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
               ),
             )
           : Promise.resolve([]),
+        canPerson
+          ? attempt(async () =>
+              (
+                await invoke<PersonnelListPage>(
+                  "list_personnel",
+                  { filter: { search: text, limit: RECORDS_PER_KIND, offset: 0 } },
+                  { notifyOnError: false },
+                )
+              ).items.map(
+                (person): PaletteEntry => ({
+                  key: `person-${person.id}`,
+                  label: `${person.full_name} · ${person.employee_code}`,
+                  kind: t("commandPalette.kind.person"),
+                  path: "/personnel",
+                  icon: <User className="h-4 w-4" />,
+                  onSelect: () => void usePersonnelStore.getState().openPersonnel(person.id),
+                }),
+              ),
+            )
+          : Promise.resolve([]),
+        canPermit
+          ? attempt(async () =>
+              (
+                await invoke<WorkPermitListPage>(
+                  "list_work_permits",
+                  { filter: { search: text, limit: RECORDS_PER_KIND } },
+                  { notifyOnError: false },
+                )
+              ).items.map(
+                (permit): PaletteEntry => ({
+                  key: `permit-${permit.id}`,
+                  label: permit.code,
+                  kind: t("commandPalette.kind.permit"),
+                  path: `/permits?${PERMIT_QUERY_SELECT}=${permit.id}`,
+                  icon: <FileLock2 className="h-4 w-4" />,
+                }),
+              ),
+            )
+          : Promise.resolve([]),
+        canArticle
+          ? attempt(async () =>
+              (
+                await invoke<InventoryArticleRow[]>(
+                  "list_inventory_articles",
+                  { filter: { search: text } },
+                  { notifyOnError: false },
+                )
+              )
+                .slice(0, RECORDS_PER_KIND)
+                .map(
+                  (article): PaletteEntry => ({
+                    key: `article-${article.id}`,
+                    label: `${article.article_code} · ${article.article_name}`,
+                    kind: t("commandPalette.kind.article"),
+                    path: `/inventory?articleId=${article.id}`,
+                    icon: <Package className="h-4 w-4" />,
+                  }),
+                ),
+            )
+          : Promise.resolve([]),
       ]).then((groups) => {
         if (!stale) setFound({ query: text, items: groups.flat() });
       });
@@ -165,7 +244,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
       stale = true;
       window.clearTimeout(timer);
     };
-  }, [query, open, canWo, canDi, canAsset, t]);
+  }, [query, open, canWo, canDi, canAsset, canPerson, canPermit, canArticle, t]);
 
   // Same filter as the Sidebar: the user's rights and the modules the licence includes. A module
   // outside the licence is not offered here either (it used to open and refuse every list).
@@ -216,6 +295,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
     (item: PaletteEntry) => {
       onOpenChange(false);
       navigate(item.path);
+      item.onSelect?.();
     },
     [navigate, onOpenChange],
   );

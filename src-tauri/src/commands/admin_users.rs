@@ -102,6 +102,10 @@ pub struct CreateUserInput {
     pub personnel_id: Option<i64>,
     pub initial_password: Option<String>,
     pub force_password_change: Option<bool>,
+    /// The person's name shown as author and approver. Blank: the linked personnel record's
+    /// name, else none (the login is shown) — L5-23.
+    #[serde(default)]
+    pub display_name: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -775,6 +779,24 @@ pub(crate) async fn create_user_impl(
         }
     }
 
+    let display_name: Option<String> = match input.display_name.as_deref().map(str::trim) {
+        Some(name) if !name.is_empty() => Some(name.to_string()),
+        _ => match input.personnel_id {
+            Some(pid) => state
+                .db
+                .query_one(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "SELECT full_name FROM personnel WHERE id = ?",
+                    [pid.into()],
+                ))
+                .await?
+                .and_then(|r| r.try_get::<Option<String>>("", "full_name").ok().flatten())
+                .map(|n| n.trim().to_string())
+                .filter(|n| !n.is_empty()),
+            None => None,
+        },
+    };
+
     let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let entity_sync_id = crate::sync::identity::new_entity_sync_id();
     let assignment_sync_id = Uuid::new_v4().to_string();
@@ -814,16 +836,17 @@ pub(crate) async fn create_user_impl(
 
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        "INSERT INTO user_accounts (entity_sync_id, username, identity_mode, password_hash, personnel_id, \
-                 is_active, is_admin, force_password_change, password_changed_at, password_changed_by_id, \
-                 password_set_at, password_set_by_id, status_changed_by_id, failed_login_attempts, created_at, \
-                 updated_at, row_version) \
-             VALUES (?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?, ?, ?, 0, ?, ?, 1)",
+        "INSERT INTO user_accounts (entity_sync_id, username, display_name, identity_mode, password_hash, \
+                 personnel_id, is_active, is_admin, force_password_change, password_changed_at, \
+                 password_changed_by_id, password_set_at, password_set_by_id, status_changed_by_id, \
+                 failed_login_attempts, created_at, updated_at, row_version) \
+             VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?, ?, ?, 0, ?, ?, 1)",
         // A password set here is dated and names its creator, who also enabled the account (the
         // other PCs check they could, `sync::credential_check`); no password (SSO): neither.
         vec![
             entity_sync_id.into(),
             username.clone().into(),
+            display_name.map_or(sea_orm::Value::String(None), Into::into),
             identity_mode.clone().into(),
             password_hash
                 .as_ref()

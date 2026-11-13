@@ -357,10 +357,37 @@ export function SmrpIndicatorsSection({
                 {t("smrp.backlog.withoutSchedule", { count: b.people_without_schedule })}
               </>
             ) : null}
+            {b.by_team.length > 0 ? (
+              <>
+                <br />
+                <span data-testid="smrp-backlog-by-team">
+                  {t("smrp.backlog.byTeam", {
+                    teams: b.by_team
+                      .map((team) =>
+                        t("smrp.backlog.teamLine", {
+                          team: team.team_name ?? t("smrp.backlog.noTeam"),
+                          hours: hours(team.backlog_hours),
+                          count: team.work_orders,
+                        }),
+                      )
+                      .join(" · "),
+                  })}
+                </span>
+              </>
+            ) : null}
             {b.work_orders_without_estimate > 0 ? (
               <>
                 <br />
                 {t("smrp.backlog.withoutEstimate", { count: b.work_orders_without_estimate })}
+                {b.without_estimate_list.length > 0 ? (
+                  <>
+                    {" : "}
+                    <span data-testid="smrp-backlog-unestimated">
+                      {b.without_estimate_list.map((w) => `${w.code} ${w.title}`.trim()).join(", ")}
+                      {b.work_orders_without_estimate > b.without_estimate_list.length ? ", …" : ""}
+                    </span>
+                  </>
+                ) : null}
               </>
             ) : null}
           </>

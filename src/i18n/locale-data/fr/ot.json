@@ -542,6 +542,9 @@
   },
   "cancel": {
     "title": "Annuler l'ordre de travail",
+    "keep": "Garder l'OT",
+    "partsIssued_one": "{{count}} ligne de pièces a déjà été sortie du magasin pour cet OT : l'annulation ne la remet pas en stock. Faites un retour magasin pour les pièces non utilisées.",
+    "partsIssued_other": "{{count}} lignes de pièces ont déjà été sorties du magasin pour cet OT : l'annulation ne les remet pas en stock. Faites un retour magasin pour les pièces non utilisées.",
     "warning": "L'annulation arrête le cycle de vie. Cette action n'est pas réversible via le même chemin.",
     "reason": "Motif d'annulation",
     "reasonPlaceholder": "Expliquez pourquoi cet OT est annulé…",
@@ -587,6 +590,9 @@
       "planned": "Planifié",
       "actual": "Réel",
       "efficiency": "Efficacité",
+      "notEstimated": "Non estimé",
+      "efficiencyNeedsEstimate": "Sans estimation : non calculable",
+      "noHours": "Aucune heure saisie",
       "laborTitle": "Heures",
       "partsTitle": "Pièces",
       "partsLine": "{{planned}} planifiées · {{used}} utilisées · {{unused}} non utilisées · {{extra}} ajoutées",
@@ -898,7 +904,13 @@
       "expired": "Contrat expiré"
     },
     "save": "Enregistrer le sous-traitant",
-    "loadError": "Les informations du sous-traitant de cet OT n'ont pas pu être chargées."
+    "loadError": "Les informations du sous-traitant de cet OT n'ont pas pu être chargées.",
+    "warranty": {
+      "label": "Réparation sous garantie (à refacturer au fournisseur)",
+      "assetUntil": "Équipement sous garantie jusqu'au {{date}}.",
+      "note": "Note de refacturation",
+      "noteHint": "Référence de la réclamation, pièces ou heures à récupérer auprès du fournisseur ou du constructeur."
+    }
   },
   "closeout": {
     "progressTitle": "Progression de clôture",
@@ -1003,6 +1015,7 @@
       "task_reopened": "Tâche rouverte",
       "labor_closed_by_cancellation": "Main-d'œuvre ouverte clôturée par l'annulation",
       "labor_closed_by_closeout": "Main-d'œuvre ouverte clôturée par la clôture",
+      "labor_added": "Heures de main-d'œuvre saisies",
       "permit_rule_flag_cleared": "Exigence de permis (règle) levée",
       "shutdown_required_set": "OT marqué « nécessite un arrêt »",
       "shutdown_required_cleared": "« Nécessite un arrêt » retiré",

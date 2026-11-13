@@ -22,6 +22,7 @@ import { useSyncOrchestratorStore } from "@/stores/sync-orchestrator-store";
 import { Sidebar } from "./Sidebar";
 import { StatusBar } from "./StatusBar";
 import { TopBar } from "./TopBar";
+import { useSidebarFolded } from "./use-sidebar-folded";
 
 interface AppShellProps {
   children: ReactNode;
@@ -32,7 +33,7 @@ export function AppShell({ children }: AppShellProps) {
   const appStatus = useAppStore((s) => s.appStatus);
   const startupMsg = useAppStore((s) => s.startupMessage);
   const startupStalled = useAppStore((s) => s.startupStalled);
-  const collapsed = useAppStore((s) => s.sidebarCollapsed);
+  const collapsed = useSidebarFolded();
   const initializeSync = useSyncOrchestratorStore((s) => s.initialize);
   const shutdownSync = useSyncOrchestratorStore((s) => s.shutdown);
   const refreshCurrency = useLocaleStore((s) => s.refreshCurrency);

@@ -111,6 +111,10 @@ pub struct SmrpBacklog {
     pub open_work_orders_rule: String,
     /// Open work orders without an estimate (counted as 0 h).
     pub work_orders_without_estimate: i64,
+    /// The first of those, by number, so the planner knows which ones to estimate (L1-21).
+    pub without_estimate_list: Vec<SmrpBacklogWo>,
+    /// Open backlog split by assigned team (one team per trade), unassigned last (L1-21).
+    pub by_team: Vec<SmrpBacklogTeam>,
     /// Weekly crew hours used as capacity.
     pub weekly_capacity_hours: f64,
     /// Active personnel whose work schedule gave the capacity.
@@ -121,6 +125,25 @@ pub struct SmrpBacklog {
     pub previous_weeks: Option<f64>,
     pub ready_weeks: Option<f64>,
 }
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct SmrpBacklogWo {
+    pub id: i64,
+    pub code: String,
+    pub title: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct SmrpBacklogTeam {
+    /// `None` = no team assigned.
+    pub team_name: Option<String>,
+    pub backlog_hours: f64,
+    pub work_orders: i64,
+    pub without_estimate: i64,
+}
+
+/// Most open work orders without an estimate listed by name on the backlog card.
+const WITHOUT_ESTIMATE_LIST_MAX: i64 = 10;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct SmrpCostToRav {
@@ -408,6 +431,62 @@ pub async fn backlog(
         vec![org.into(), org.into()],
     )
     .await?;
+    let scope = "s.code IN {open} \
+               AND (? IS NULL OR wo.entity_id IN (SELECT d.id FROM org_nodes d JOIN org_nodes a ON d.ancestor_path LIKE a.ancestor_path || '%' WHERE a.id = ?))"
+        .replace("{open}", crate::wo::backlog::OPEN_STATUS_SQL);
+    let without_estimate_list = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT wo.id AS id, wo.code AS code, COALESCE(wo.title, '') AS title \
+                 FROM work_orders wo JOIN work_order_statuses s ON s.id = wo.status_id \
+                 WHERE {scope} AND COALESCE(wo.expected_duration_hours, 0) <= 0 \
+                 ORDER BY wo.code LIMIT {WITHOUT_ESTIMATE_LIST_MAX}"
+            ),
+            vec![org.into(), org.into()],
+        ))
+        .await?
+        .iter()
+        .map(|r| {
+            let get = |col: &str| {
+                String::try_get(r, "", col)
+                    .map_err(|e| AppError::Internal(anyhow::anyhow!("smrp decode '{col}': {e:?}")))
+            };
+            Ok(SmrpBacklogWo {
+                id: f(r, "id")? as i64,
+                code: get("code")?,
+                title: get("title")?,
+            })
+        })
+        .collect::<AppResult<Vec<_>>>()?;
+    let by_team = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT t.name AS team_name, \
+                    COALESCE(SUM(COALESCE(wo.expected_duration_hours, 0)), 0) AS hours, \
+                    COUNT(*) AS n, \
+                    COALESCE(SUM(CASE WHEN COALESCE(wo.expected_duration_hours, 0) <= 0 THEN 1 ELSE 0 END), 0) AS no_estimate \
+                 FROM work_orders wo JOIN work_order_statuses s ON s.id = wo.status_id \
+                 LEFT JOIN teams t ON t.id = wo.assigned_team_id \
+                 WHERE {scope} \
+                 GROUP BY t.id, t.name \
+                 ORDER BY t.id IS NULL, hours DESC, t.name"
+            ),
+            vec![org.into(), org.into()],
+        ))
+        .await?
+        .iter()
+        .map(|r| {
+            Ok(SmrpBacklogTeam {
+                team_name: Option::<String>::try_get(r, "", "team_name")
+                    .map_err(|e| AppError::Internal(anyhow::anyhow!("smrp decode 'team_name': {e:?}")))?,
+                backlog_hours: f(r, "hours")?,
+                work_orders: f(r, "n")? as i64,
+                without_estimate: f(r, "no_estimate")? as i64,
+            })
+        })
+        .collect::<AppResult<Vec<_>>>()?;
     let (capacity, counted, without) = weekly_capacity(db, org).await?;
     let weeks = |h: f64| (capacity > 0.0).then(|| h / capacity);
     let ready = f(&row, "ready")?;
@@ -418,6 +497,8 @@ pub async fn backlog(
         open_work_orders: f(&row, "n")? as i64,
         open_work_orders_rule: crate::wo::backlog::RULE_OPEN_WORK_TO_DO.to_string(),
         work_orders_without_estimate: f(&row, "no_estimate")? as i64,
+        without_estimate_list,
+        by_team,
         weekly_capacity_hours: capacity,
         people_counted: counted,
         people_without_schedule: without,

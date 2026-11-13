@@ -66,6 +66,8 @@ export function WoSubcontractingCard({ wo, canEdit }: WoSubcontractingCardProps)
   const [orderRef, setOrderRef] = useState("");
   const [hours, setHours] = useState<number | null>(null);
   const [cost, setCost] = useState<number | null>(null);
+  const [underWarranty, setUnderWarranty] = useState(false);
+  const [warrantyNote, setWarrantyNote] = useState("");
 
   const apply = useCallback((s: WoSubcontracting) => {
     setSaved(s);
@@ -73,6 +75,8 @@ export function WoSubcontractingCard({ wo, canEdit }: WoSubcontractingCardProps)
     setOrderRef(s.service_order_ref ?? "");
     setHours(s.subcontractor_hours);
     setCost(s.service_cost > 0 ? s.service_cost : null);
+    setUnderWarranty(s.under_warranty);
+    setWarrantyNote(s.warranty_claim_note ?? "");
   }, []);
 
   useEffect(() => {
@@ -103,7 +107,9 @@ export function WoSubcontractingCard({ wo, canEdit }: WoSubcontractingCardProps)
       companyId ||
       (saved.service_order_ref ?? "") !== orderRef.trim() ||
       saved.subcontractor_hours !== hours ||
-      (saved.service_cost > 0 ? saved.service_cost : null) !== cost);
+      (saved.service_cost > 0 ? saved.service_cost : null) !== cost ||
+      saved.under_warranty !== underWarranty ||
+      (saved.warranty_claim_note ?? "") !== (underWarranty ? warrantyNote.trim() : ""));
 
   const save = async () => {
     if (!saved) return;
@@ -116,6 +122,9 @@ export function WoSubcontractingCard({ wo, canEdit }: WoSubcontractingCardProps)
         service_order_ref: orderRef.trim() === "" ? null : orderRef.trim(),
         subcontractor_hours: hours,
         service_cost: cost,
+        under_warranty: underWarranty,
+        warranty_claim_note:
+          underWarranty && warrantyNote.trim() !== "" ? warrantyNote.trim() : null,
       });
       apply(next);
       await refreshActiveWo();
@@ -213,6 +222,39 @@ export function WoSubcontractingCard({ wo, canEdit }: WoSubcontractingCardProps)
           ) : null}
         </div>
       ) : null}
+      <div className="space-y-2 border-t border-surface-border pt-3">
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            className="h-5 w-5 accent-primary"
+            checked={underWarranty}
+            disabled={!editable}
+            onChange={(e) => setUnderWarranty(e.target.checked)}
+          />
+          {t("subcontracting.warranty.label")}
+        </label>
+        {saved.asset_warranty_expiry ? (
+          <p className="text-xs text-text-muted">
+            {t("subcontracting.warranty.assetUntil", {
+              date: formatDate(saved.asset_warranty_expiry),
+            })}
+          </p>
+        ) : null}
+        {underWarranty ? (
+          <FormField
+            name="wo-sub-warranty-note"
+            label={t("subcontracting.warranty.note")}
+            description={t("subcontracting.warranty.noteHint")}
+          >
+            <Input
+              id="wo-sub-warranty-note"
+              value={warrantyNote}
+              onChange={(e) => setWarrantyNote(e.target.value)}
+              disabled={!editable}
+            />
+          </FormField>
+        ) : null}
+      </div>
       {editable ? (
         <Button className="h-11" onClick={() => void save()} disabled={!dirty || saving}>
           {t("subcontracting.save")}

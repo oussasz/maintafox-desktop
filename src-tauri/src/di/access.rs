@@ -294,6 +294,49 @@ pub async fn check_convert(db: &impl ConnectionTrait, map: &AccessMap, di_id: i6
     Ok(anchor)
 }
 
+/// Separation of duties on requests (L1-34, owner decision 2026-11-12): the person who declared a
+/// request (`submitter_id`) cannot approve it nor convert it into a work order; another person
+/// must, as for purchases (`GATE_PROC_SELF_APPROVAL`). Checked by the approve and convert
+/// commands after the rights.
+pub async fn check_not_declarer(
+    db: &impl ConnectionTrait,
+    di_id: i64,
+    user_id: i64,
+    step: DiDecision,
+) -> AppResult<()> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT submitter_id FROM intervention_requests WHERE id = ?",
+            [di_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "InterventionRequest".into(),
+            id: di_id.to_string(),
+        })?;
+    let submitter: Option<i64> = row.try_get("", "submitter_id").ok();
+    if submitter == Some(user_id) {
+        return Err(AppError::ValidationFailed(vec![match step {
+            DiDecision::Approve => {
+                "GATE_DI_SELF_APPROVAL: you declared this request; another person must approve it.".to_string()
+            }
+            DiDecision::Convert => {
+                "GATE_DI_SELF_CONVERSION: you declared this request; another person must convert it into a work order."
+                    .to_string()
+            }
+        }]));
+    }
+    Ok(())
+}
+
+/// The decisions the declarer of a request may not take on it ([`check_not_declarer`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiDecision {
+    Approve,
+    Convert,
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // Command checks: the decision, then entitlement and licence (as `require_permission!`)
 // ═══════════════════════════════════════════════════════════════════════════════

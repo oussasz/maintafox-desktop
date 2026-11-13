@@ -543,6 +543,15 @@ pub async fn update_wo_draft(
         input.equipment_id,
     )
     .await?;
+    // L1-35: only its execution actors (assignee, team, planner, `ot.approve`) or its creator edit a draft.
+    execution_actor::require_draft_edit(
+        &state.db,
+        &state.permission_cache,
+        user.user_id,
+        crate::rbac::permissions::OT_EDIT,
+        input.id,
+    )
+    .await?;
     let before = queries::get_work_order(&state.db, input.id).await?;
     let expected = input.expected_row_version;
     let wo = queries::update_wo_draft_fields(&state.db, input, Some(i64::from(user.user_id))).await?;
@@ -1422,7 +1431,37 @@ pub(crate) async fn add_labor_impl(state: &AppState, input: labor::AddLaborInput
         None,
     )
     .await?;
-    labor::add_labor_entry(&state.db, input).await
+    let entry = labor::add_labor_entry(&state.db, input).await?;
+    record_labor_added(state, i64::from(user.user_id), &entry).await;
+    Ok(entry)
+}
+
+/// L1-36: a labour entry, retroactive included, appears in the WO history.
+async fn record_labor_added(state: &AppState, actor_id: i64, entry: &labor::WoIntervener) {
+    audit::record_wo_change_event(
+        &state.db,
+        audit::WoAuditInput {
+            wo_id: Some(entry.work_order_id),
+            action: "labor_added".into(),
+            actor_id: Some(actor_id),
+            summary: Some(match entry.hours_worked {
+                Some(h) => format!("{h:.2} h de main-d'œuvre saisies"),
+                None => "Main-d'œuvre démarrée".to_string(),
+            }),
+            details_json: Some(
+                serde_json::json!({
+                    "labor_id": entry.id,
+                    "started_at": entry.started_at,
+                    "ended_at": entry.ended_at,
+                    "hours_worked": entry.hours_worked,
+                })
+                .to_string(),
+            ),
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+    )
+    .await;
 }
 
 /// Labour for a person of the register, login or not (contractor technicians). Refused with
@@ -1454,7 +1493,9 @@ pub async fn add_personnel_labor(
             ));
         }
     }
-    labor::add_personnel_labor_entry(&state.db, input).await
+    let entry = labor::add_personnel_labor_entry(&state.db, input).await?;
+    record_labor_added(&state, i64::from(user.user_id), &entry).await;
+    Ok(entry)
 }
 
 /// Whether the user may see people other than himself (training or personnel view right).
@@ -2696,11 +2737,16 @@ pub async fn set_wo_subcontracting(
     let wo_id = input.wo_id;
     let expected = input.expected_row_version;
     let summary = format!(
-        "Contractor updated (company {}, cost {})",
+        "Contractor updated (company {}, cost {}{})",
         input
             .external_company_id
             .map_or_else(|| "none".to_string(), |id| id.to_string()),
-        input.service_cost.unwrap_or(0.0)
+        input.service_cost.unwrap_or(0.0),
+        match input.under_warranty {
+            Some(true) => ", under warranty",
+            Some(false) => ", not under warranty",
+            None => "",
+        }
     );
     let saved = crate::wo::subcontracting::set_wo_subcontracting(&state.db, input).await?;
     audit::record_wo_change_with_diff(

@@ -190,7 +190,7 @@
       "allModes": "All modes",
       "local": "Local",
       "sso": "SSO",
-      "hybrid": "Hybrid",
+      "hybrid": "Local or SSO",
       "statusLabel": "Status",
       "modeLabel": "Mode"
     },
@@ -286,6 +286,10 @@
     "create.personnelLocked": "Linked to personnel ID {{id}}",
     "create.personnelNone": "No personnel linked",
     "create.usernamePlaceholder": "john.smith",
+    "create.usernameTaken": "This login already exists: choose another one.",
+    "create.displayName": "Display name",
+    "create.displayNamePlaceholder": "First Last",
+    "create.displayNameHint": "Name shown as author and approver. Left blank, the linked personnel record's name is used, else the login.",
     "edit": {
       "title": "Edit user",
       "description": "Update account identity and flags. To change permissions, use Assign role (shield) on a user row.",
@@ -1115,8 +1119,8 @@
     },
     "identityMode": {
       "local": "Local password",
-      "sso": "SSO",
-      "hybrid": "Hybrid"
+      "sso": "Company sign-in (SSO)",
+      "hybrid": "Local password or company sign-in"
     },
     "scope": {
       "label": "Scope",
@@ -1166,7 +1170,7 @@
       "unlockBody": "The account was locked after failed sign-ins. Unlocking resets the counter.",
       "disable": "Disable",
       "disableTitle": "Disable the account of {{name}}?",
-      "disableBody": "The person can no longer sign in. The account and all its history (work orders, approvals, signatures) are kept and it can be re-enabled.",
+      "disableBody": "The person can no longer sign in. The account and all its history (work orders, approvals, signatures) are kept and it can be re-enabled. Work orders and requests still assigned to this person stay in their name: reassign them from Work orders (\"Assigned to\" filter).",
       "enable": "Re-enable",
       "enableTitle": "Re-enable the account of {{name}}?",
       "enableBody": "The person can sign in again with their current roles.",
@@ -1187,6 +1191,7 @@
       "validUntil": "until {{date}}"
     },
     "sessions": {
+      "showOlder": "Show the {{count}} older sessions",
       "hint": "Sessions open on this computer.",
       "none": "No open session.",
       "unknownDevice": "Unregistered device",

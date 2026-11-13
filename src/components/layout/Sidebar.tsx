@@ -2,11 +2,11 @@ import type { MouseEvent, ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 
+import { useSidebarFolded } from "@/components/layout/use-sidebar-folded";
 import { useModuleCapabilities } from "@/hooks/use-module-capabilities";
 import { usePermissions } from "@/hooks/use-permissions";
 import { isModuleCapabilityAllowed } from "@/lib/module-capability";
 import { cn } from "@/lib/utils";
-import { useAppStore } from "@/store/app-store";
 import type { PermissionName } from "@shared/rbac/permissions.generated";
 
 export interface NavItem {
@@ -41,7 +41,7 @@ interface SidebarProps {
 
 export function Sidebar({ items }: SidebarProps) {
   const { t } = useTranslation("shell");
-  const collapsed = useAppStore((s) => s.sidebarCollapsed);
+  const collapsed = useSidebarFolded();
   const { can } = usePermissions();
   const { capabilityMap } = useModuleCapabilities();
   const location = useLocation();

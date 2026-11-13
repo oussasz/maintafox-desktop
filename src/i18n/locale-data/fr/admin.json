@@ -190,7 +190,7 @@
       "allModes": "Tous modes",
       "local": "Local",
       "sso": "SSO",
-      "hybrid": "Hybride",
+      "hybrid": "Local ou SSO",
       "statusLabel": "Statut",
       "modeLabel": "Mode"
     },
@@ -286,6 +286,10 @@
     "create.personnelLocked": "Lié au personnel n° {{id}}",
     "create.personnelNone": "Aucun personnel lié",
     "create.usernamePlaceholder": "jean.dupont",
+    "create.usernameTaken": "Cet identifiant existe déjà : choisissez-en un autre.",
+    "create.displayName": "Nom affiché",
+    "create.displayNamePlaceholder": "Prénom Nom",
+    "create.displayNameHint": "Nom montré comme auteur et approbateur. Laissé vide, c'est le nom de la fiche personnel liée, sinon l'identifiant.",
     "edit": {
       "title": "Modifier l'utilisateur",
       "description": "Mettez à jour l'identité et les options du compte. Pour modifier les permissions, utilisez « Assigner un rôle » (bouclier) sur la ligne de l'utilisateur.",
@@ -1115,8 +1119,8 @@
     },
     "identityMode": {
       "local": "Mot de passe local",
-      "sso": "SSO",
-      "hybrid": "Hybride"
+      "sso": "Connexion d’entreprise (SSO)",
+      "hybrid": "Mot de passe local ou connexion d’entreprise"
     },
     "scope": {
       "label": "Périmètre",
@@ -1166,7 +1170,7 @@
       "unlockBody": "Le compte a été verrouillé après des échecs de connexion. Le déverrouillage remet le compteur à zéro.",
       "disable": "Désactiver",
       "disableTitle": "Désactiver le compte de {{name}} ?",
-      "disableBody": "La personne ne pourra plus se connecter. Le compte et tout son historique (OT, validations, signatures) sont conservés et il pourra être réactivé.",
+      "disableBody": "La personne ne pourra plus se connecter. Le compte et tout son historique (OT, validations, signatures) sont conservés et il pourra être réactivé. Les OT et demandes encore affectés à cette personne restent à son nom : réaffectez-les depuis Ordres de travail (filtre « Assigné à »).",
       "enable": "Réactiver",
       "enableTitle": "Réactiver le compte de {{name}} ?",
       "enableBody": "La personne pourra de nouveau se connecter avec ses rôles actuels.",
@@ -1187,6 +1191,7 @@
       "validUntil": "jusqu'au {{date}}"
     },
     "sessions": {
+      "showOlder": "Afficher les {{count}} sessions plus anciennes",
       "hint": "Sessions ouvertes sur cet ordinateur.",
       "none": "Aucune session ouverte.",
       "unknownDevice": "Appareil non enregistré",

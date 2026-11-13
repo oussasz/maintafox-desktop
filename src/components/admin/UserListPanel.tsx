@@ -55,7 +55,8 @@ export function UserListPanel() {
 
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
-  const [status, setStatus] = useState<StatusValue | null>(null);
+  // Disabled accounts are one filter away, not mixed into the daily list (L5-24).
+  const [status, setStatus] = useState<StatusValue | null>("active");
   const [roleFilter, setRoleFilter] = useState<string | null>(null);
   const [siteFilter, setSiteFilter] = useState<string | null>(null);
   const [modeFilter, setModeFilter] = useState<string | null>(null);
@@ -276,7 +277,7 @@ export function UserListPanel() {
             onReset={() => {
               setSearchInput("");
               setSearch("");
-              setStatus(null);
+              setStatus("active");
               setRoleFilter(null);
               setSiteFilter(null);
               setModeFilter(null);
