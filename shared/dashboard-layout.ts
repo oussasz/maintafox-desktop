@@ -73,14 +73,14 @@ export const DEFAULT_DASHBOARD_LAYOUT: DashboardLayoutV1 = {
  */
 export const DASHBOARD_WIDGET_PERMISSIONS: Record<DashboardWidgetId, readonly PermissionName[]> = {
   [DASHBOARD_WIDGET_IDS.MY_WORK]: [P.OT_VIEW, P.DI_VIEW, P.INS_VIEW, P.PM_VIEW],
+  // People who review or approve the work of others; closing one's own work order or reading
+  // reports does not make a technician a supervisor (L5-26).
   [DASHBOARD_WIDGET_IDS.SUPERVISION]: [
     P.OT_APPROVE,
-    P.OT_CLOSE,
     P.DI_SCREEN,
     P.DI_REVIEW,
     P.DI_APPROVE,
     P.PM_APPROVE,
-    P.REP_VIEW,
   ],
   [DASHBOARD_WIDGET_IDS.PLANNING]: [P.PLAN_VIEW],
   [DASHBOARD_WIDGET_IDS.KPIS]: [P.DI_VIEW, P.OT_VIEW, P.EQ_VIEW, P.PM_VIEW, P.INV_VIEW, P.REP_VIEW],

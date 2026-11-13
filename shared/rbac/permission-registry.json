@@ -1139,8 +1139,6 @@
       "pm.view",
       "ram.view",
       "sync.view",
-      "rep.view",
-      "arc.view",
       "doc.view",
       "plan.view",
       "log.view",
@@ -1150,8 +1148,6 @@
       "ptw.view",
       "ptw.issue",
       "ptw.lock_own",
-      "fin.view",
-      "fin.report",
       "ins.view",
       "ins.execute",
       "cfg.view"

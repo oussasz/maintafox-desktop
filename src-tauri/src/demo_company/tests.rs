@@ -172,6 +172,7 @@ async fn refuses_one_more_user_account() {
                 personnel_id: None,
                 initial_password: None,
                 force_password_change: Some(true),
+                display_name: None,
             },
         )
         .await
@@ -335,6 +336,7 @@ async fn onboarded_company_file(path: &Path) {
             personnel_id: None,
             initial_password: None,
             force_password_change: Some(true),
+            display_name: None,
         },
     )
     .await

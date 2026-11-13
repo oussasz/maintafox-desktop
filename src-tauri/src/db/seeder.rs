@@ -2598,6 +2598,14 @@ async fn seed_permissions(db: &impl ConnectionTrait) -> AppResult<()> {
     Ok(())
 }
 
+/// Views of the read-only roles beyond the technician's: kept out of the field menu (L5-26).
+/// `plan.view` stays with the technician: team schedule notifications need it.
+const READONLY_EXTRA_VIEWS: &[&str] = &[
+    crate::rbac::permissions_generated::FIN_VIEW,
+    crate::rbac::permissions_generated::REP_VIEW,
+    crate::rbac::permissions_generated::ARC_VIEW,
+];
+
 /// Seeds baseline roles and assigns their initial permissions.
 ///
 /// Protection policy:
@@ -2658,9 +2666,12 @@ async fn seed_system_roles(db: &impl ConnectionTrait) -> AppResult<()> {
     let operator_permissions = crate::rbac::permissions::OPERATOR_PERMISSIONS;
     let names = |list: &[&str]| list.iter().map(|p| (*p).to_string()).collect::<Vec<_>>();
     #[allow(clippy::case_sensitive_file_extension_comparisons)]
+    // Read-only observers (management, audit) see every module a technician sees, plus budget,
+    // analytics and archive, which left the technician default (L5-26: a field menu).
     let view_permissions: Vec<String> = operator_permissions
         .iter()
         .filter(|p| p.ends_with(".view"))
+        .chain(READONLY_EXTRA_VIEWS.iter())
         .map(|p| (*p).to_string())
         .collect();
     let all_permissions = system_permission_names(db, &[]).await?;

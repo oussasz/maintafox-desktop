@@ -6616,6 +6616,8 @@ export interface CreateUserInput {
   personnel_id?: number | null;
   initial_password?: string | null;
   force_password_change?: boolean;
+  /** Name shown as author and approver; blank: the linked personnel record's name. */
+  display_name?: string | null;
 }
 
 /** Role row for create-user dropdown (adm.users; no permission matrix). */

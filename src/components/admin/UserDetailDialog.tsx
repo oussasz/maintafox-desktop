@@ -77,6 +77,8 @@ type PendingAction =
   | { kind: "revoke"; assignment: RoleAssignmentSummary }
   | { kind: "session"; session: SessionSummary };
 
+const SESSIONS_SHOWN = 5;
+
 /** One account: identity and state, roles per scope, open sessions, permissions, history. */
 export function UserDetailDialog({
   userId,
@@ -98,6 +100,8 @@ export function UserDetailDialog({
   const permissionText = usePermissionText();
   const [detail, setDetail] = useState<UserDetail | null>(null);
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
+  /** The most recent sessions first; older ones one click away (L5-24). */
+  const [showAllSessions, setShowAllSessions] = useState(false);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<unknown>(null);
   const [tab, setTab] = useState("overview");
@@ -476,7 +480,7 @@ export function UserDetailDialog({
                   <p className="text-text-secondary">{t("console.sessions.none")}</p>
                 ) : (
                   <ul className="divide-y divide-surface-border rounded-md border border-surface-border">
-                    {sessions.map((s) => (
+                    {(showAllSessions ? sessions : sessions.slice(0, SESSIONS_SHOWN)).map((s) => (
                       <li
                         key={s.session_id}
                         className="flex flex-wrap items-center justify-between gap-2 px-3 py-2"
@@ -508,6 +512,11 @@ export function UserDetailDialog({
                     ))}
                   </ul>
                 )}
+                {!showAllSessions && sessions.length > SESSIONS_SHOWN ? (
+                  <Button variant="ghost" size="sm" onClick={() => setShowAllSessions(true)}>
+                    {t("console.sessions.showOlder", { count: sessions.length - SESSIONS_SHOWN })}
+                  </Button>
+                ) : null}
               </TabsContent>
 
               <TabsContent value="permissions" className="space-y-3 pt-4 text-sm">
