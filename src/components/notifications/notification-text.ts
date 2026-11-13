@@ -35,6 +35,8 @@ export const MESSAGE_KEYS = [
   "di_approved",
   "di_closed",
   "di_converted",
+  // The work order made from a request is closed (its requester, L1-31).
+  "di_work_done",
   "di_deferred",
   "di_sla_breach_response",
   "di_sla_breach_resolution",

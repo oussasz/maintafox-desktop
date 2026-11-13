@@ -471,10 +471,11 @@ pub async fn list_intervention_requests_in_scope(
     let offset = filter.offset.max(0);
 
     // A work queue is worked safety reports first (CMMS Advisor decision on L4-11), then most urgent
-    // first, then oldest first (first in, first out); the other lists show the latest requests first.
+    // first, then the most critical equipment first (L1-29: A before B before C, none last), then
+    // oldest first (first in, first out); the other lists show the latest requests first.
     let order_sql = match queue {
         Some(q) if q != "mine" => format!(
-            "ir.safety_flag DESC, {} ASC, ir.submitted_at ASC, ir.id ASC",
+            "ir.safety_flag DESC, {} ASC, CASE UPPER(TRIM(COALESCE(asset_criticality_code, ''))) WHEN 'A' THEN 1 WHEN 'CRITIQUE' THEN 1              WHEN 'B' THEN 2 WHEN 'IMPORTANT' THEN 2 WHEN 'C' THEN 3 WHEN 'STANDARD' THEN 3              WHEN 'D' THEN 4 WHEN 'NON_CRITIQUE' THEN 4 WHEN 'NON-CRITIQUE' THEN 4 ELSE 9 END ASC,              ir.submitted_at ASC, ir.id ASC",
             urgency_rank_sql()
         ),
         _ => "ir.submitted_at DESC, ir.id DESC".to_string(),

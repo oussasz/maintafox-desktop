@@ -277,6 +277,10 @@ describe("InspectionRunner", () => {
     const complete = await screen.findByRole("button", { name: "Complete the round" });
     expect(complete).toBeEnabled();
     fireEvent.click(complete);
+    // L1-32: finishing is final, so it is confirmed first.
+    expect(svc.completeInspectionRound).not.toHaveBeenCalled();
+    const confirm = await screen.findByRole("dialog", { name: "Finish the round?" });
+    fireEvent.click(within(confirm).getByRole("button", { name: "Complete the round" }));
     await waitFor(() =>
       expect(svc.completeInspectionRound).toHaveBeenCalledWith({
         round_id: 42,

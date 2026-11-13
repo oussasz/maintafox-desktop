@@ -224,6 +224,7 @@
     "show": "Afficher la fiche",
     "recordPrint": "Enregistrer l'impression",
     "print": "Imprimer la fiche LOTO",
+    "printSheet": "Imprimer la fiche LOTO du permis",
     "doNotOperate": "DANGER — NE PAS MANŒUVRER. Équipement consigné.",
     "signature": "Signature de l'intervenant",
     "forcedRemoval": "Retrait forcé",
