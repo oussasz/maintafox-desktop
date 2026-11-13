@@ -295,6 +295,7 @@ pub(crate) async fn record_signer_outcome(
         committed_break_in.map(|row_id| crate::auth::second_signer::CosignedRecord {
             entity_type: "schedule_break_ins",
             row_id,
+            author_field: "approved_by_user_sync_id",
         }),
         &crate::auth::second_signer::SignatureContext {
             actor_id,

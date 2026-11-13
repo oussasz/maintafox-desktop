@@ -355,6 +355,12 @@ fn with_store<R>(store: Store, f: impl FnOnce(&mut KeyMap) -> R) -> Option<R> {
 }
 
 /// The live entry of `user_sync_id` in `keys`; an entry past its deadline is removed.
+/// Drops every entry past its deadline (the key is wiped when its last reference goes).
+fn sweep_expired(keys: &mut KeyMap) {
+    let now = chrono::Utc::now();
+    keys.retain(|_, held| now <= held.deadline);
+}
+
 fn live_entry<'a>(keys: &'a mut KeyMap, user_sync_id: &str) -> Option<&'a HeldKey> {
     if keys
         .get(user_sync_id)
@@ -399,6 +405,7 @@ pub fn held_key(user_sync_id: &str) -> Option<std::sync::Arc<UnlockedSigningKey>
 pub fn hold_cosigner_key(key: UnlockedSigningKey, after_outbox_id: i64) {
     let key = std::sync::Arc::new(key);
     with_store(Store::Cosigner, |keys| {
+        sweep_expired(keys);
         keys.insert(
             key.user_sync_id.clone(),
             HeldKey {
@@ -413,6 +420,7 @@ pub fn hold_cosigner_key(key: UnlockedSigningKey, after_outbox_id: i64) {
 /// Takes (removes) the staged key of `user_sync_id`, with the outbox id it was staged after.
 pub fn take_cosigner_key(user_sync_id: &str) -> Option<(std::sync::Arc<UnlockedSigningKey>, i64)> {
     with_store(Store::Cosigner, |keys| {
+        sweep_expired(keys);
         let live = live_entry(keys, user_sync_id).is_some();
         let held = keys.remove(user_sync_id)?;
         live.then_some((held.key, held.after_outbox_id))

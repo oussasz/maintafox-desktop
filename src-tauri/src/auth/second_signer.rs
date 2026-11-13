@@ -151,6 +151,8 @@ pub(crate) struct CosignedRecord {
     pub entity_type: &'static str,
     /// Local row id of the record.
     pub row_id: i64,
+    /// Payload key of the author field the action names the second signer in.
+    pub author_field: &'static str,
 }
 
 /// Once the action committed: the second signer's staged key signs that record's item(s) right
@@ -169,6 +171,7 @@ async fn bind_or_release_cosigner(db: &DatabaseConnection, sync_id: &str, record
                     entity_type: record.entity_type.to_string(),
                     entity_sync_id,
                     maker_user_sync_id,
+                    author_field: record.author_field.to_string(),
                 }),
                 _ => None,
             }
@@ -181,9 +184,25 @@ async fn bind_or_release_cosigner(db: &DatabaseConnection, sync_id: &str, record
         .flatten();
     match (staged, grant, tenant) {
         (Some((key, after_outbox_id)), Some(grant), Some(tenant_id)) => {
-            match crate::sync::signing::cosign_committed(db, &key, &grant, after_outbox_id, &tenant_id).await {
-                Ok(n) => tracing::info!(cosigned = n, "second signer: committed change co-signed"),
-                Err(e) => tracing::warn!(error = %e, "second signer: committed change not co-signed"),
+            // A busy database (a push running at the same moment) is retried: once the key is
+            // dropped the change can never be co-signed again (review of 31c3820f8, MEDIUM 2).
+            let mut attempt: u64 = 0;
+            loop {
+                attempt += 1;
+                match crate::sync::signing::cosign_committed(db, &key, &grant, after_outbox_id, &tenant_id).await {
+                    Ok(n) => {
+                        tracing::info!(cosigned = n, "second signer: committed change co-signed");
+                        break;
+                    }
+                    Err(e) if attempt < 5 => {
+                        tracing::warn!(error = %e, attempt, "second signer: co-signing retried");
+                        tokio::time::sleep(std::time::Duration::from_millis(200 * attempt)).await;
+                    }
+                    Err(e) => {
+                        tracing::error!(error = %e, "second signer: committed change not co-signed");
+                        break;
+                    }
+                }
             }
             if let Some(password) = password {
                 crate::sync::signing::spawn_enrolment_if_needed(db.clone(), key, password);

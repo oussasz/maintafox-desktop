@@ -374,6 +374,7 @@ async fn a_committed_action_is_cosigned_at_once_and_only_its_item() {
         entity_type: "user_scope_assignments".to_string(),
         entity_sync_id: row.entity_sync_id.clone(),
         maker_user_sync_id: "user-v".to_string(),
+        author_field: "assigned_by_sync_id".to_string(),
     };
     let n = super::signing::cosign_committed(&db, &b_key, &grant, after, "tenant-1")
         .await

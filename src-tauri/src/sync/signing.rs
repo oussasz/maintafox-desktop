@@ -66,6 +66,22 @@ pub(crate) fn required_cosigners(
     previous_json: Option<&str>,
     maker: &str,
 ) -> Vec<String> {
+    let mut required: Vec<String> = Vec::new();
+    for (_, named) in required_cosigner_fields(entity_type, payload_json, previous_json, maker) {
+        if !required.contains(&named) {
+            required.push(named);
+        }
+    }
+    required
+}
+
+/// [`required_cosigners`] with the payload key of each author field: `(field, named person)`.
+pub(crate) fn required_cosigner_fields(
+    entity_type: &str,
+    payload_json: &str,
+    previous_json: Option<&str>,
+    maker: &str,
+) -> Vec<(String, String)> {
     let Some(rule) = signing_rule(entity_type) else {
         return Vec::new();
     };
@@ -77,7 +93,7 @@ pub(crate) fn required_cosigners(
         _ => None,
     });
     let before = |key: &str| previous.as_ref().and_then(|p| p.get(key));
-    let mut required: Vec<String> = Vec::new();
+    let mut required: Vec<(String, String)> = Vec::new();
     for field in rule.author_fields {
         let key = author_payload_key(field);
         let value = payload.get(&key);
@@ -91,8 +107,8 @@ pub(crate) fn required_cosigners(
             continue;
         }
         if let Some(named) = value.and_then(Value::as_str).filter(|v| !v.is_empty()) {
-            if named != maker && !required.iter().any(|r| r == named) {
-                required.push(named.to_string());
+            if named != maker {
+                required.push((key, named.to_string()));
             }
         }
     }
@@ -257,12 +273,14 @@ pub async fn sign_pending_items(conn: &impl ConnectionTrait, tenant_id: &str) ->
 
 // ── Co-signature of a committed action (review F2, review of 5feb40ade) ─────────────────────
 
-/// The record a second signer's password was typed for, and who made the change.
+/// The record a second signer's password was typed for, who made the change, and the author
+/// field (payload key) the action names them in.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CosignGrant {
     pub entity_type: String,
     pub entity_sync_id: String,
     pub maker_user_sync_id: String,
+    pub author_field: String,
 }
 
 /// Right after the action committed: stages its captured changes and signs, with the second
@@ -322,8 +340,17 @@ pub async fn cosign_committed(
             continue;
         }
         let previous = previous_payload(&txn, &item).await?;
-        let named = required_cosigners(&item.entity_type, &item.payload_json, previous.as_deref(), &item.maker);
-        if !named.iter().any(|n| n == key.user_sync_id()) {
+        // Only an item where the action's author field names them, and no other changed author
+        // field does: an earlier change of the same record (still in the capture journal when
+        // the password was typed, so staged with this one) naming them elsewhere is not theirs
+        // to vouch for (review of 31c3820f8, LOW 3).
+        let theirs: Vec<String> =
+            required_cosigner_fields(&item.entity_type, &item.payload_json, previous.as_deref(), &item.maker)
+                .into_iter()
+                .filter(|(_, named)| named == key.user_sync_id())
+                .map(|(field, _)| field)
+                .collect();
+        if theirs.is_empty() || theirs.iter().any(|field| *field != grant.author_field) {
             continue;
         }
         let mut signatures = item.signatures.clone();

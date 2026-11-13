@@ -617,6 +617,7 @@ async fn record_signer_password_outcome(
     let cosigned = committed.then_some(second_signer::CosignedRecord {
         entity_type: "work_orders",
         row_id: input.wo_id,
+        author_field: "fmeca_parts_override_signed_by_sync_id",
     });
     second_signer::record_outcome(
         db,
