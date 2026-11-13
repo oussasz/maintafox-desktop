@@ -7506,6 +7506,11 @@ export interface ExternalCompany {
   consumed_amount: number;
   contract_state: "none" | "active" | "expiring" | "expired";
   contract_days_left: number | null;
+  /** Work orders given to the company (cancelled excluded). */
+  wo_count: number;
+  /** Closed work orders that had a planned end, and those closed by it (UX L3-19). */
+  wo_closed_with_deadline: number;
+  wo_on_time: number;
   onboarding_status: string;
   insurance_status: string;
   notes: string | null;

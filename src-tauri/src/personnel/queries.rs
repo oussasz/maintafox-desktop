@@ -1941,7 +1941,7 @@ const COMPANY_SELECT: &str = "SELECT id, name, service_domain, contract_start, c
         (SELECT COALESCE(SUM(COALESCE(wo.service_cost_input, wo.service_cost, 0.0)), 0.0) \
            FROM work_orders wo \
            WHERE wo.external_company_id = external_companies.id \
-             AND wo.status_id NOT IN (SELECT id FROM work_order_statuses WHERE code = 'cancelled')) AS consumed_amount, \
+             AND wo.status_id NOT IN (SELECT id FROM work_order_statuses WHERE code = 'cancelled')) AS consumed_amount,         (SELECT COUNT(*) FROM work_orders wo            WHERE wo.external_company_id = external_companies.id              AND wo.status_id NOT IN (SELECT id FROM work_order_statuses WHERE code = 'cancelled')) AS wo_count,         (SELECT COUNT(*) FROM work_orders wo            WHERE wo.external_company_id = external_companies.id AND wo.closed_at IS NOT NULL              AND wo.planned_end IS NOT NULL              AND wo.status_id NOT IN (SELECT id FROM work_order_statuses WHERE code = 'cancelled')) AS wo_closed_with_deadline,         (SELECT COUNT(*) FROM work_orders wo            WHERE wo.external_company_id = external_companies.id AND wo.closed_at IS NOT NULL              AND wo.planned_end IS NOT NULL AND wo.closed_at <= wo.planned_end              AND wo.status_id NOT IN (SELECT id FROM work_order_statuses WHERE code = 'cancelled')) AS wo_on_time, \
         onboarding_status, insurance_status, notes, is_active, created_at, updated_at \
      FROM external_companies";
 
@@ -2004,6 +2004,11 @@ fn map_external_company_row(row: &sea_orm::QueryResult) -> AppResult<ExternalCom
             .map_err(|e| map_err("consumed_amount", e))?,
         contract_state,
         contract_days_left,
+        wo_count: row.try_get("", "wo_count").map_err(|e| map_err("wo_count", e))?,
+        wo_closed_with_deadline: row
+            .try_get("", "wo_closed_with_deadline")
+            .map_err(|e| map_err("wo_closed_with_deadline", e))?,
+        wo_on_time: row.try_get("", "wo_on_time").map_err(|e| map_err("wo_on_time", e))?,
         id: row.try_get("", "id").map_err(|e| map_err("id", e))?,
         name: row.try_get("", "name").map_err(|e| map_err("name", e))?,
         service_domain: row

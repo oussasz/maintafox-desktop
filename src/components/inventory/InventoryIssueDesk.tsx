@@ -12,15 +12,20 @@
  * movement keeps the unit and quantity typed.
  */
 import type { ColumnDef } from "@tanstack/react-table";
-import { PackageCheck, ScanLine } from "lucide-react";
+import { PackageCheck, Printer, ScanLine } from "lucide-react";
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { PermissionGate } from "@/components/PermissionGate";
 import { DataTable } from "@/components/data/DataTable";
+import { printIssueSlip } from "@/components/inventory/IssueSlipPrint";
 import { PartsToIssuePanel } from "@/components/inventory/PartsToIssuePanel";
 import { WorkOrderReferencePicker } from "@/components/inventory/WorkOrderReferencePicker";
-import { toStockQuantity, useEntryFactor } from "@/components/inventory/entered-unit";
+import {
+  compatibleEntryUnits,
+  toStockQuantity,
+  useEntryFactor,
+} from "@/components/inventory/entered-unit";
 import {
   MeasureUnitSelect,
   unitSymbol,
@@ -40,6 +45,7 @@ import {
 import { StatusChip } from "@/components/ui/status-chip";
 import type { Tone } from "@/design-system/tone";
 import { useFormatters } from "@/hooks/use-formatters";
+import { cn } from "@/lib/utils";
 import {
   type InventoryArticleRow,
   type IssueOutcome,
@@ -93,8 +99,8 @@ export interface InventoryIssueDeskProps {
 }
 
 export function InventoryIssueDesk({ reloadToken = 0 }: InventoryIssueDeskProps) {
-  const { t } = useTranslation("inventory");
-  const { formatNumber, formatCurrency, formatDate } = useFormatters();
+  const { t, i18n } = useTranslation("inventory");
+  const { formatNumber, formatCurrency, formatDate, currencyCode } = useFormatters();
   const qty = useCallback(
     (v: number) => formatNumber(v, { maximumFractionDigits: 3 }),
     [formatNumber],
@@ -133,6 +139,8 @@ export function InventoryIssueDesk({ reloadToken = 0 }: InventoryIssueDeskProps)
   const [outcome, setOutcome] = useState<{
     result: IssueOutcome;
     articleCode: string;
+    articleName: string | null;
+    locationLabel: string | null;
     unit: string;
   } | null>(null);
 
@@ -316,6 +324,9 @@ export function InventoryIssueDesk({ reloadToken = 0 }: InventoryIssueDeskProps)
                 ? t("issueDesk.blockers.tooMuch", { qty: qty(maxQty), unit })
                 : null;
 
+  // Not enough stock here: shown as a visible warning, not a small grey line (UX L3-16).
+  const stockShort = blocker != null && stockQty != null && stockQty > maxQty + 1e-9;
+
   // The return uses the same quantity field; it goes back into the stock of the issue's location.
   const returnBlocker = !returnTarget
     ? null
@@ -391,7 +402,15 @@ export function InventoryIssueDesk({ reloadToken = 0 }: InventoryIssueDeskProps)
         notes: null,
         entered_unit_value_id: entryUnitId,
       });
-      setOutcome({ result, articleCode: scan.article_code, unit });
+      setOutcome({
+        result,
+        articleCode: scan.article_code,
+        articleName: articleRow?.article_name ?? null,
+        locationLabel: selectedBalance
+          ? `${selectedBalance.warehouse_code}/${selectedBalance.location_code}`
+          : null,
+        unit,
+      });
       pushAppToast({
         title: t("issueDesk.outcome.toast", {
           qty: qty(parsedQty),
@@ -636,7 +655,9 @@ export function InventoryIssueDesk({ reloadToken = 0 }: InventoryIssueDeskProps)
                 </SelectContent>
               </Select>
               {scan && balances.length === 0 ? (
-                <p className="text-xs text-text-muted">{t("issueDesk.location.empty")}</p>
+                <p className="text-sm font-medium text-status-warning">
+                  {t("issueDesk.location.empty")}
+                </p>
               ) : null}
             </div>
 
@@ -707,7 +728,7 @@ export function InventoryIssueDesk({ reloadToken = 0 }: InventoryIssueDeskProps)
                 <MeasureUnitSelect
                   id="inv-issue-unit"
                   value={entryUnitId ?? stockUnitId}
-                  units={units}
+                  units={compatibleEntryUnits(units, stockUnitId)}
                   disabled={!scan || stockUnitId == null}
                   onChange={(next) => setEntryUnitId(next === stockUnitId ? null : next)}
                   className="h-11 w-full rounded-md border border-surface-border bg-surface-0 px-2 text-sm"
@@ -721,7 +742,16 @@ export function InventoryIssueDesk({ reloadToken = 0 }: InventoryIssueDeskProps)
             ) : null}
 
             {blocker ? (
-              <p id="inv-issue-blocker" role="status" className="text-xs text-text-muted">
+              <p
+                id="inv-issue-blocker"
+                role="status"
+                className={cn(
+                  "text-sm",
+                  stockShort
+                    ? "rounded-md border border-status-warning/40 bg-status-warning/10 px-3 py-2 font-medium text-text-primary"
+                    : "text-text-muted",
+                )}
+              >
                 {blocker}
               </p>
             ) : null}
@@ -820,6 +850,29 @@ export function InventoryIssueDesk({ reloadToken = 0 }: InventoryIssueDeskProps)
                     })}
                   </p>
                 ) : null}
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="mt-1 gap-1.5"
+                  onClick={() =>
+                    void printIssueSlip(
+                      {
+                        outcome: outcome.result,
+                        articleCode: outcome.articleCode,
+                        articleName: outcome.articleName,
+                        unit: outcome.unit,
+                        locationLabel: outcome.locationLabel,
+                      },
+                      (key) => (t as (k: string) => string)(key),
+                      i18n.language,
+                      currencyCode,
+                    )
+                  }
+                >
+                  <Printer className="h-4 w-4" aria-hidden />
+                  {t("issueDesk.slip.print")}
+                </Button>
               </div>
             ) : null}
           </form>

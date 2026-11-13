@@ -1457,6 +1457,25 @@
       "xyzDone_one": "XYZ class recalculated for {{count}} article",
       "xyzDone_other": "XYZ class recalculated for {{count}} articles",
       "noMovement": "No movement in the last 12 months: no class was changed."
+    },
+    "priceHistory": {
+      "title": "Price history by supplier",
+      "supplier": "Supplier (last purchase)",
+      "last": "Last price",
+      "previous": "Previous price",
+      "change": "Change",
+      "range": "Lowest – highest",
+      "purchases": "Purchases",
+      "noSupplier": "No supplier"
+    },
+    "hints": {
+      "oemPartNumber": "Part number at the machine builder (often different from the part maker's number).",
+      "eoq": "Quantity to order at once that keeps the total cost (ordering + holding) lowest. Leave empty if unknown.",
+      "moq": "Smallest quantity the supplier accepts to deliver.",
+      "orderMultiple": "The ordered quantity is rounded to a multiple of this number (e.g. boxes of 10).",
+      "reviewPeriodDays": "How often, in days, the stock of this item is reviewed to decide on an order.",
+      "abcClass": "A: the few items that weigh most in the consumed value; B: medium share; C: many low-value items. Calculated automatically from the issues of the last 12 months.",
+      "xyzClass": "X: steady, easy-to-forecast use; Y: variable use; Z: irregular, hard-to-forecast use. Calculated automatically from the issues of the last 12 months."
     }
   },
   "wo": {
@@ -1512,7 +1531,7 @@
     }
   },
   "nonStock": {
-    "tab": "Non-stock",
+    "tab": "Non-stock parts",
     "title": "Non-stock parts",
     "description": "Parts bought for a work order, never in the store: out of stock lists, counts, replenishment and valuation. Those created from a work order are to review.",
     "toReviewOnly": "To review only",
@@ -1851,8 +1870,8 @@
       }
     },
     "toIssue": {
-      "title": "Parts to issue",
-      "description": "Parts recorded on a work order by someone without the stock right. Nothing has moved in stock: issue them (confirming or correcting the quantity) or cancel them with a reason. A work order cannot be closed while any remain.",
+      "title": "Parts to regularise (to issue from stock)",
+      "description": "Parts taken from the store without a storekeeper (at night, at the weekend or by someone without the stock right) and recorded on a work order. Nothing has moved in stock: regularise them the next day by issuing them (confirming or correcting the quantity) or cancel them with a reason. A work order cannot be closed while any remain.",
       "empty": "No part to issue.",
       "loadFailed": "The list of parts to issue could not be loaded.",
       "workOrder": "WO",
@@ -1879,6 +1898,20 @@
       "issued": "{{part}} issued from stock for {{wo}}.",
       "cancelled": "Part to issue cancelled for {{wo}}.",
       "actionFailed": "The action did not go through."
+    },
+    "slip": {
+      "print": "Print the issue slip",
+      "title": "Store issue slip",
+      "workOrder": "Work order",
+      "location": "Location",
+      "date": "Date",
+      "article": "Item",
+      "lot": "Lot / serial",
+      "quantity": "Quantity",
+      "unitCost": "Unit cost",
+      "total": "Total cost",
+      "issuedBy": "Issued by (storekeeper) — name and signature",
+      "receivedBy": "Received by — name and signature"
     }
   },
   "valuation": {
@@ -2032,5 +2065,28 @@
     "COUNT_ALREADY_POSTED": "Count {{session}} has already moved the stock of this article at this location (posted or reversed on another PC): refresh the session; nothing was moved twice.",
     "NEGATIVE_STOCK_COUNT_NOT_PENDING": "This count is no longer waiting for its approval (approved, replaced by a new count or cancelled): refresh the list.",
     "NEGATIVE_STOCK_COUNT_STALE": "The stock of this location moved since count {{session}} was made: approving it would no longer give the counted quantity. Count the location again."
+  },
+  "dormant": {
+    "title": "Dormant stock",
+    "description": "Items still in stock with no issue during the chosen period (or never issued), most valuable first. Click a row to open the item.",
+    "period": {
+      "label": "No issue for",
+      "months_one": "{{count}} month",
+      "months_other": "{{count}} months"
+    },
+    "columns": {
+      "code": "Code",
+      "name": "Item",
+      "quantity": "On hand",
+      "value": "Value",
+      "lastIssue": "Last issue",
+      "lastMovement": "Last movement"
+    },
+    "neverIssued": "Never issued",
+    "count": "Dormant items",
+    "total": "Tied-up value",
+    "empty_one": "No item in stock without an issue for {{count}} month.",
+    "empty_other": "No item in stock without an issue for {{count}} months.",
+    "loadError": "Could not load dormant stock"
   }
 }

@@ -155,7 +155,10 @@
       "di30d": "DI sur 30 jours"
     },
     "workHistory": {
-      "module": { "wo": "OT", "di": "DI" },
+      "module": {
+        "wo": "OT",
+        "di": "DI"
+      },
       "role": {
         "primary_responsible": "Responsable principal",
         "intervener": "Intervenant",
@@ -175,7 +178,9 @@
       "labor": "Taux horaire",
       "overtime": "Taux heures sup.",
       "source": "Source",
-      "sourceType": { "manual": "Saisie manuelle" },
+      "sourceType": {
+        "manual": "Saisie manuelle"
+      },
       "active": "Actif",
       "empty": "Aucune grille de taux. Ajoutez un taux horaire pour le Planning et le coût main-d'œuvre OT.",
       "addTitle": "Ajouter une grille de taux",
@@ -871,6 +876,14 @@
       "valid": "Valide",
       "expired": "Échue",
       "not_required": "Non exigée"
+    },
+    "performance": {
+      "header": "Performance",
+      "workOrders_one": "{{count}} OT confié",
+      "workOrders_other": "{{count}} OT confiés",
+      "onTime": "Délais tenus : {{pct}} % ({{onTime}}/{{total}})",
+      "noClosed": "Aucun OT clôturé avec échéance",
+      "onTimeHint": "Part des OT clôturés au plus tard à leur fin planifiée, parmi les OT clôturés qui avaient une fin planifiée (OT annulés exclus)."
     }
   },
   "siteWeek": {

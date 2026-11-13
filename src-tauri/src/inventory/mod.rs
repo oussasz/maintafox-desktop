@@ -5,6 +5,7 @@ pub mod controls;
 pub mod count_four_eyes;
 pub mod count_sync;
 pub mod domain;
+pub mod dormant;
 pub mod fx;
 pub mod issue;
 pub mod ledger;
