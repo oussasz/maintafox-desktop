@@ -105,6 +105,9 @@
     "possibleDuplicates_other": "{{count}} other open requests on this asset with the same symptom"
   },
   "form": {
+    "createdToast": "Request {{code}} created",
+    "savedToast": "Request {{code}} saved",
+    "openCreated": "Open the request",
     "section": {
       "requester": "Requester",
       "equipment": "Equipment",

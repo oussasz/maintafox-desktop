@@ -117,6 +117,7 @@
     }
   },
   "woCost": {
+    "varianceNegligible": "Écart négligeable (moins de 2 % de la référence).",
     "title": "Coûts de l'OT",
     "loading": "Chargement des coûts…",
     "loadError": "Les coûts de l'OT n'ont pas pu être chargés.",

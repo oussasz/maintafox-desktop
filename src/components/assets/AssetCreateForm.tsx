@@ -38,7 +38,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ListAccessNote } from "@/components/ui/list-access-note";
 import { useUnsavedFormGuard } from "@/components/ui/unsaved-changes-guard";
-import { useToast } from "@/hooks/use-toast";
+import { useAppToast } from "@/hooks/use-toast";
 import { appErrorReason } from "@/lib/app-error";
 import { useZodForm } from "@/lib/form-helpers";
 import { useCanReadList } from "@/lib/list-access";
@@ -62,7 +62,7 @@ function translateFieldError(
 export function AssetCreateForm() {
   const { t } = useTranslation("equipment");
   const canReadOrg = useCanReadList("orgNodes");
-  const { toast } = useToast();
+  const { toast } = useAppToast();
   const open = useAssetStore((s) => s.showCreateForm);
   const closeForm = useAssetStore((s) => s.closeCreateForm);
   const submitCreate = useAssetStore((s) => s.createAsset);

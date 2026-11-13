@@ -11,6 +11,7 @@ import { useTranslation } from "react-i18next";
 
 import { DiCreateForm } from "@/components/di/DiCreateForm";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { pushAppToast } from "@/store/app-toast-store";
 import { useDiStore } from "@/stores/di-store";
 
 export function DiFormDialog() {
@@ -21,6 +22,7 @@ export function DiFormDialog() {
   const createPrefillAsset = useDiStore((s) => s.createPrefillAsset);
   const createPrefillEquipmentId = useDiStore((s) => s.createPrefillEquipmentId);
   const closeCreateForm = useDiStore((s) => s.closeCreateForm);
+  const openDi = useDiStore((s) => s.openDi);
 
   const isEdit = editingDi !== null;
   const formKey = open
@@ -44,7 +46,19 @@ export function DiFormDialog() {
             initial={editingDi}
             prefillAsset={createPrefillAsset}
             prefillEquipmentId={createPrefillEquipmentId}
-            onSubmitted={() => closeCreateForm()}
+            onSubmitted={(di) => {
+              closeCreateForm();
+              // A visible confirmation with the request number (the list may be filtered).
+              pushAppToast({
+                title: t(isEdit ? "form.savedToast" : "form.createdToast", { code: di.code }),
+                variant: "success",
+                ...(isEdit
+                  ? {}
+                  : {
+                      action: { label: t("form.openCreated"), onClick: () => void openDi(di.id) },
+                    }),
+              });
+            }}
             onCancel={closeCreateForm}
           />
         ) : null}

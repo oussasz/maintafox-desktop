@@ -88,6 +88,7 @@ import {
   ReferenceValueTableRow,
 } from "@/components/lookups/ReferenceValueTable";
 import { SchedulePatternDialog } from "@/components/lookups/SchedulePatternPanel";
+import { codeFromLabel } from "@/components/lookups/reference-code";
 import { buildReferenceCsv } from "@/components/lookups/reference-csv";
 import {
   REFERENCE_SET_STATUS_TONE,
@@ -240,9 +241,12 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
     natureTag: null,
   });
   const [deleteTarget, setDeleteTarget] = useState<ReferenceValue | null>(null);
+  /** The user typed the code: stop proposing one from the label. */
+  const [codeTouched, setCodeTouched] = useState(false);
   const [aliasValueId, setAliasValueId] = useState<number | null>(null);
   const [patternValueId, setPatternValueId] = useState<number | null>(null);
-  const [sortField, setSortField] = useState<SortField>("code");
+  // Sorted by the French label: the code is internal (L5-19).
+  const [sortField, setSortField] = useState<SortField>("label");
   const [sortAsc, setSortAsc] = useState(true);
   const [parentCandidates, setParentCandidates] = useState<ReferenceValue[]>([]);
   const columnFlags = useMemo(() => resolveReferenceValueColumns(domain), [domain]);
@@ -398,6 +402,12 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
     setPatternValueId(null);
   }, [setEditingValueId]);
 
+  const confirmSaved = useCallback(
+    (key: "editor.savedToast" | "editor.addedToast", label: string) =>
+      pushAppToast({ title: t(key, { label }), variant: "success" }),
+    [t],
+  );
+
   const commitEdit = useCallback(
     async (valueId: number) => {
       const existing = values.find((v) => v.id === valueId);
@@ -409,6 +419,7 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
             description: editRow.description || null,
             metadata_json: buildPermitRuleMetadata(existing.metadata_json, editRule),
           });
+          confirmSaved("editor.savedToast", editRow.label);
           return;
         }
         if (showUnit && existing) {
@@ -431,6 +442,7 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
               baseFactor: factor,
             }),
           });
+          confirmSaved("editor.savedToast", editRow.label);
           return;
         }
         if (showCharacteristic && !characteristicComplete(editChar)) return;
@@ -457,6 +469,7 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
           }));
         }
         setPatternValueId(null);
+        confirmSaved("editor.savedToast", editRow.label);
       } catch {
         // The store keeps the translated error (shown above the table) and the row stays in edit.
       }
@@ -474,12 +487,14 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
       editRule,
       showCharacteristic,
       editChar,
+      confirmSaved,
     ],
   );
 
   const startNewRow = useCallback(() => {
     setNewValueDraft({});
     setNewRow({ code: "", label: "", description: "", parentId: null, natureTag: null });
+    setCodeTouched(false);
     setNewUnit(EMPTY_UNIT_EDIT);
     setNewRule(EMPTY_PERMIT_RULE_EDIT);
     setNewChar(EMPTY_CHARACTERISTIC_EDIT);
@@ -491,9 +506,14 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
 
   const commitNewRow = useCallback(async () => {
     if (!newRow.code.trim() || !newRow.label.trim()) return;
+    const added = newRow.label.trim();
+    const addAndConfirm = async (payload: CreateReferenceValuePayload) => {
+      await addValue(payload);
+      if (!useReferenceGovernanceStore.getState().error) confirmSaved("editor.addedToast", added);
+    };
     if (showPermitRule) {
       if (!permitRuleComplete(newRule)) return;
-      await addValue({
+      await addAndConfirm({
         set_id: setId,
         code: newRow.code.trim(),
         label: newRow.label.trim(),
@@ -506,7 +526,7 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
       // A plant unit: base standard unit (same set) and factor; the dimension is the base's.
       const factor = parsePositiveNumber(newUnit.factor);
       if (factor == null || newUnit.baseId == null || !newUnit.symbol.trim()) return;
-      await addValue({
+      await addAndConfirm({
         set_id: setId,
         parent_id: newUnit.baseId,
         code: newRow.code.trim(),
@@ -531,9 +551,10 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
       ...(showSemanticTag && newRow.natureTag ? { semantic_tag: newRow.natureTag } : {}),
       ...(showCharacteristic ? { metadata_json: buildCharacteristicMetadata(null, newChar) } : {}),
     };
-    await addValue(payload);
+    await addAndConfirm(payload);
   }, [
     addValue,
+    confirmSaved,
     setId,
     newRow,
     showSemanticTag,
@@ -987,7 +1008,7 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
                 sortDirection={sortDirection("code")}
                 onSort={() => toggleSort("code")}
               >
-                {t("editor.colCode")}
+                <span title={t("editor.codeHint")}>{t("editor.colCode")}</span>
               </ReferenceValueTableHeadCell>
               <ReferenceValueTableHeadCell
                 sortable
@@ -1041,7 +1062,12 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
                 <ReferenceValueTableCell>
                   <Input
                     value={newRow.code}
-                    onChange={(e) => setNewRow({ ...newRow, code: e.target.value })}
+                    onChange={(e) => {
+                      // Emptying the field brings the proposal from the label back.
+                      setCodeTouched(e.target.value !== "");
+                      setNewRow({ ...newRow, code: e.target.value.toUpperCase() });
+                    }}
+                    title={t("editor.codeProposedHint")}
                     onKeyDown={handleNewKeyDown}
                     placeholder={t("editor.codePlaceholder")}
                     aria-label={t("editor.colCode")}
@@ -1052,7 +1078,13 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
                 <ReferenceValueTableCell>
                   <Input
                     value={newRow.label}
-                    onChange={(e) => setNewRow({ ...newRow, label: e.target.value })}
+                    onChange={(e) =>
+                      setNewRow({
+                        ...newRow,
+                        label: e.target.value,
+                        ...(codeTouched ? {} : { code: codeFromLabel(e.target.value) }),
+                      })
+                    }
                     onKeyDown={handleNewKeyDown}
                     placeholder={t("editor.labelPlaceholder")}
                     aria-label={t("editor.colLabel")}
@@ -1229,7 +1261,12 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
                             aria-label={t("editor.systemValue")}
                           />
                         ) : null}
-                        <span className="font-mono text-xs">{v.code}</span>
+                        <span
+                          className="font-mono text-xs text-text-muted"
+                          title={t("editor.codeHint")}
+                        >
+                          {v.code}
+                        </span>
                       </span>
                     )}
                   </ReferenceValueTableCell>
@@ -1251,6 +1288,7 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
                             type="button"
                             className="min-h-9 shrink-0 rounded text-left text-xs font-medium text-primary underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                             aria-expanded={aliasValueId === v.id}
+                            title={t("editor.aliasesHint")}
                             onClick={() => {
                               setAliasValueId(aliasValueId === v.id ? null : v.id);
                               if (aliasValueId !== v.id) setPatternValueId(null);
@@ -1360,7 +1398,8 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
                           ) : null}
                         </>
                       ) : parentValue ? (
-                        parentLabel(parentValue)
+                        // The French label; the internal code only on hover (L5-19).
+                        <span title={parentValue.code}>{parentValue.label}</span>
                       ) : parentRequired ? (
                         <span className="text-tone-warning-fg">{t("editor.orphanParent")}</span>
                       ) : (
@@ -1407,7 +1446,10 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
                     <div className="flex items-center gap-2" title={switchReason}>
                       <Switch
                         checked={v.is_active}
-                        onCheckedChange={(next) => void setValueActive(v.id, next)}
+                        // Switching a value off asks first (it disappears from every picker).
+                        onCheckedChange={(next) =>
+                          next ? void setValueActive(v.id, true) : setDeleteTarget(v)
+                        }
                         disabled={savingValue || !canDeactivateValue || isSystemRow}
                         aria-label={t("editor.activeToggle", { label: v.label })}
                       />

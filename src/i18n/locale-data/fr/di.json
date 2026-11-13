@@ -105,6 +105,9 @@
     "possibleDuplicates_other": "{{count}} autres demandes ouvertes sur cet équipement avec le même symptôme"
   },
   "form": {
+    "createdToast": "Demande {{code}} créée",
+    "savedToast": "Demande {{code}} enregistrée",
+    "openCreated": "Ouvrir la demande",
     "section": {
       "requester": "Déclarant",
       "equipment": "Équipement",

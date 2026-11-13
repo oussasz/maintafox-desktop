@@ -117,6 +117,7 @@
     }
   },
   "woCost": {
+    "varianceNegligible": "Negligible gap (under 2% of the reference).",
     "title": "Work order costs",
     "loading": "Loading costs…",
     "loadError": "The work order costs could not be loaded.",
