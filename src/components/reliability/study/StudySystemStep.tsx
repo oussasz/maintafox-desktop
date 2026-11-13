@@ -173,9 +173,11 @@ export function StudySystemStep({
         {
           id: root,
           label: t("rams.system.newSystem"),
-          node_type: "parallel",
+          // Series by default: the line stops when any of its machines stops (UX L2-34). The user
+          // switches a group to parallel when machines really back each other up.
+          node_type: "series",
           children: blocks.map((b) => b.id),
-          k: 1,
+          k: null,
           source: null,
           group: null,
           mttr_hours: null,

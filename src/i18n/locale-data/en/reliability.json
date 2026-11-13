@@ -768,6 +768,14 @@
         "restoredAt": "{{count}} excluded: back-in-service time missing",
         "inconsistent": "{{count}} excluded: back in service before the failure",
         "repairHours": "{{count}} excluded: repair time missing"
+      },
+      "formula": {
+        "availability": "Operational availability Aₒ = uptime ÷ (uptime + downtime due to failures), over the chosen period and scope.",
+        "mtbf": "MTBF (mean time between failures) = observed time (on the basis shown under the value) ÷ number of unplanned failures.",
+        "mttr": "MTTR (mean time to repair) = sum of repair durations ÷ number of repairs, in clock hours.",
+        "repair": "Mean repair man-hours = hours booked by technicians on failure work orders ÷ number of failures.",
+        "failures": "Number of unplanned corrective work orders in the period; click to open the work order list.",
+        "dataQuality": "Data quality = share of failures whose coding is complete (mode, cause, dates). The point-by-point detail is on the “Data quality” page."
       }
     },
     "fleet": {
@@ -819,7 +827,10 @@
       "shareLabel": "{{share}} of fleet downtime",
       "openAsset": "Open the record of {{code}}",
       "handedError": "The equipment handed over could not be loaded",
-      "handedSelected": "{{code}} is selected for a study."
+      "handedSelected": "{{code}} is selected for a study.",
+      "resetFilters": "Reset filters",
+      "countLabel_one": "asset",
+      "countLabel_other": "assets"
     },
     "dataQuality": {
       "complete": "Complete",
@@ -969,7 +980,15 @@
       "excludeTitle": "Exclude this record",
       "excludeBody": "{{record}} will no longer be used in the analyses of this study. The reason is kept in the history.",
       "excludeReason": "Reason (required)",
-      "excludeAction": "Exclude the record"
+      "excludeAction": "Exclude the record",
+      "readOnlyReason": "Read only: the study is archived or you lack the reliability analysis right needed to include or exclude a row.",
+      "historyEmpty": "No inclusion or exclusion has been recorded yet.",
+      "flag": {
+        "di_earlier": "Request raised before the failure date",
+        "cause_missing": "Cause not coded",
+        "mechanism_missing": "Mechanism not coded",
+        "mode_missing": "Failure mode not coded"
+      }
     },
     "checks": {
       "useDi": "Use the request time",
@@ -1088,7 +1107,8 @@
       "proposedLegend": "Proposed interval",
       "currentLegend": "Current practice",
       "recomputeError": "The analysis could not be recomputed: the figures shown are from the last successful calculation",
-      "recomputeRetry": "Recompute"
+      "recomputeRetry": "Recompute",
+      "goToData": "Go to step 1 (data)"
     },
     "cost": {
       "title": "Optimal replacement interval",
@@ -1121,7 +1141,8 @@
       "costRateLegend": "Cost per hour",
       "rtfLegend": "Run to failure",
       "currentLegend": "Current practice ({{hours}} h)",
-      "proposedLegend": "Optimum"
+      "proposedLegend": "Optimum",
+      "unsaved": "Costs not saved: they are used in the calculation above but will be lost if you leave the study without “Save costs”."
     },
     "memo": {
       "title": "Decision note for management",
@@ -1314,7 +1335,7 @@
         "monitor": "To monitor",
         "acceptable": "Acceptable"
       },
-      "rpnThreshold": "Plant critical RPN threshold: {{threshold}}.",
+      "rpnThreshold": "Plant critical RPN threshold: {{threshold}}. RPN (risk priority number) = severity × occurrence × detection, each rated 1 to 10. From this threshold the mode is critical and needs an action. The administrator sets the threshold in Settings.",
       "proposalsTitle": "Observed modes",
       "proposalsHint": "Recorded in the work orders of this equipment (period) and its class (history).",
       "noProposals": "Every observed mode is already in the FMECA.",
@@ -1536,7 +1557,7 @@
       "newEvent": "New event",
       "newGate": "New gate",
       "rbdTitle": "Reliability block diagram",
-      "rbdHint": "Select a block or a branch to edit its structure and the source of its reliability; the results update.",
+      "rbdHint": "Series: the system stops as soon as one of its blocks stops (a production line). Parallel: one working block is enough (standby machines). Select a block or a branch to change its structure and the source of its reliability; the results update.",
       "kOfN": "{{k}} out of {{n}}",
       "selectBlock": "Edit {{label}}, reliability {{r}}",
       "selectEvent": "Edit {{label}}, probability {{p}}",
@@ -1636,7 +1657,7 @@
       "perYear": "/yr",
       "markov": {
         "title": "Markov chain",
-        "hint": "Availability of a repairable system with degraded states: states and rates (λ, μ per hour) in a table.",
+        "hint": "Use it for equipment that can run degraded (for example one pump out of two): describe its states (running, degraded, stopped) and the failure rate λ and repair rate μ per hour; the tool gives the share of time spent in each state.",
         "fromEquipment": "Start from a study equipment",
         "equipmentOption": "{{code}} — MTBF {{mtbf}} h, MTTR {{mttr}} h",
         "running": "{{code}} running",
@@ -1662,7 +1683,7 @@
       },
       "simulation": {
         "title": "Monte Carlo simulation",
-        "hint": "Availability and cost over the mission with uncertainty, simulated on the study reliability block diagram.",
+        "hint": "Use it when durations are uncertain: the tool replays the mission thousands of times on the study's reliability diagram (Monte Carlo method) and gives the mean availability and cost with their range.",
         "needRbd": "Build the reliability block diagram and give the mission time first.",
         "trials": "Number of trials",
         "seed": "Seed (optional)",
@@ -1751,7 +1772,8 @@
       "dismiss": "Dismiss this point",
       "dismissTitle": "Dismiss this data issue?",
       "dismissBody": "\"{{issue}}\" on {{asset}} will no longer be listed. Dismiss it only when the data is right as it is.",
-      "truncated": "Only the first ones are listed: fix these, then refresh to see the next."
+      "truncated": "Only the first ones are listed: fix these, then refresh to see the next.",
+      "dismissHint": "Removes this point from the list when the data is right as it is (for example a failure whose cause is truly unknown). A dismissed point is no longer counted."
     },
     "studyName": {
       "createTitle": "New study",

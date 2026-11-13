@@ -508,6 +508,7 @@ export function RamsStudyPage() {
                 }
                 onStudyChanged={() => void load()}
                 onDecide={(p) => openDecision(p)}
+                onGoData={() => goStep("data")}
               />
             ) : null}
             {step === "fmeca" ? (

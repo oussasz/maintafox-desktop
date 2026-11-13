@@ -768,6 +768,14 @@
         "restoredAt": "{{count}} exclus : heure de remise en service manquante",
         "inconsistent": "{{count}} exclus : remise en service avant la panne",
         "repairHours": "{{count}} exclus : temps de réparation manquant"
+      },
+      "formula": {
+        "availability": "Disponibilité opérationnelle Aₒ = temps de marche ÷ (temps de marche + temps d'arrêt dû aux défaillances), sur la période et le périmètre choisis.",
+        "mtbf": "MTBF (temps moyen entre défaillances) = temps observé (sur la base indiquée sous la valeur) ÷ nombre de défaillances non planifiées.",
+        "mttr": "MTTR (temps moyen de réparation) = somme des durées de réparation ÷ nombre de réparations, en heures d'horloge.",
+        "repair": "Heures-homme de réparation moyennes = heures pointées par les intervenants sur les OT de défaillance ÷ nombre de défaillances.",
+        "failures": "Nombre d'OT correctifs non planifiés sur la période ; cliquez pour ouvrir la liste des OT.",
+        "dataQuality": "Qualité des données = part des défaillances dont le codage est complet (mode, cause, dates). Le détail point par point est sur la page « Qualité des données »."
       }
     },
     "fleet": {
@@ -819,7 +827,10 @@
       "shareLabel": "{{share}} de l'arrêt du parc",
       "openAsset": "Ouvrir la fiche de {{code}}",
       "handedError": "L'équipement transmis n'a pas pu être chargé",
-      "handedSelected": "{{code}} est sélectionné pour une étude."
+      "handedSelected": "{{code}} est sélectionné pour une étude.",
+      "resetFilters": "Réinitialiser les filtres",
+      "countLabel_one": "équipement",
+      "countLabel_other": "équipements"
     },
     "dataQuality": {
       "complete": "Complètes",
@@ -969,7 +980,15 @@
       "excludeTitle": "Exclure cet enregistrement",
       "excludeBody": "{{record}} ne sera plus utilisé dans les analyses de cette étude. Le motif est gardé dans l'historique.",
       "excludeReason": "Motif (obligatoire)",
-      "excludeAction": "Exclure l'enregistrement"
+      "excludeAction": "Exclure l'enregistrement",
+      "readOnlyReason": "Lecture seule : l'étude est archivée ou vous n'avez pas le droit d'analyse fiabilité, nécessaire pour inclure ou exclure une ligne.",
+      "historyEmpty": "Aucune inclusion ou exclusion n'a encore été enregistrée.",
+      "flag": {
+        "di_earlier": "Demande d'intervention antérieure à la date de panne",
+        "cause_missing": "Cause non codée",
+        "mechanism_missing": "Mécanisme non codé",
+        "mode_missing": "Mode de défaillance non codé"
+      }
     },
     "checks": {
       "useDi": "Utiliser l'heure de la DI",
@@ -1088,7 +1107,8 @@
       "proposedLegend": "Intervalle proposé",
       "currentLegend": "Pratique actuelle",
       "recomputeError": "L'analyse n'a pas pu être recalculée : les chiffres affichés sont ceux du dernier calcul réussi",
-      "recomputeRetry": "Recalculer"
+      "recomputeRetry": "Recalculer",
+      "goToData": "Aller à l'étape 1 (données)"
     },
     "cost": {
       "title": "Intervalle de remplacement optimal",
@@ -1121,7 +1141,8 @@
       "costRateLegend": "Coût par heure",
       "rtfLegend": "Jusqu'à la panne",
       "currentLegend": "Pratique actuelle ({{hours}} h)",
-      "proposedLegend": "Optimum"
+      "proposedLegend": "Optimum",
+      "unsaved": "Coûts non enregistrés : ils servent au calcul ci-dessus mais seront perdus si vous quittez l'étude sans « Enregistrer les coûts »."
     },
     "memo": {
       "title": "Note de décision pour la direction",
@@ -1314,7 +1335,7 @@
         "monitor": "À surveiller",
         "acceptable": "Acceptable"
       },
-      "rpnThreshold": "Seuil IPR critique de l'usine : {{threshold}}.",
+      "rpnThreshold": "Seuil IPR critique de l'usine : {{threshold}}. L'IPR (indice de priorité de risque) = gravité × occurrence × détection, chacune notée de 1 à 10. À partir de ce seuil, le mode est critique et doit recevoir une action. L'administrateur règle ce seuil dans Paramètres.",
       "proposalsTitle": "Modes observés",
       "proposalsHint": "Relevés dans les OT de ces équipements (période) et de leur classe (historique).",
       "noProposals": "Tous les modes observés sont déjà dans l'AMDEC.",
@@ -1536,7 +1557,7 @@
       "newEvent": "Nouvel événement",
       "newGate": "Nouvelle porte",
       "rbdTitle": "Diagramme de fiabilité",
-      "rbdHint": "Sélectionnez un bloc ou une branche pour modifier sa structure et la source de sa fiabilité ; les résultats se mettent à jour.",
+      "rbdHint": "Série : le système s'arrête dès qu'un de ses blocs s'arrête (cas d'une ligne). Parallèle : un seul bloc qui marche suffit (machines de secours). Sélectionnez un bloc ou une branche pour modifier sa structure et la source de sa fiabilité ; les résultats se mettent à jour.",
       "kOfN": "{{k}} sur {{n}}",
       "selectBlock": "Modifier {{label}}, fiabilité {{r}}",
       "selectEvent": "Modifier {{label}}, probabilité {{p}}",
@@ -1636,7 +1657,7 @@
       "perYear": "/an",
       "markov": {
         "title": "Chaîne de Markov",
-        "hint": "Disponibilité d'un système réparable avec états dégradés : états et taux (λ, μ par heure) dans un tableau.",
+        "hint": "À utiliser pour un équipement qui peut tourner en mode dégradé (par exemple une pompe sur deux) : décrivez ses états (marche, dégradé, arrêt) et les taux de panne λ et de réparation μ par heure ; l'outil donne la part du temps passée dans chaque état.",
         "fromEquipment": "Partir d'un équipement de l'étude",
         "equipmentOption": "{{code}} — MTBF {{mtbf}} h, MTTR {{mttr}} h",
         "running": "{{code}} en marche",
@@ -1662,7 +1683,7 @@
       },
       "simulation": {
         "title": "Simulation de Monte-Carlo",
-        "hint": "Disponibilité et coût sur la mission avec incertitude, simulés sur le diagramme de fiabilité de l'étude.",
+        "hint": "À utiliser quand les durées sont incertaines : l'outil rejoue la mission des milliers de fois sur le diagramme de fiabilité de l'étude (méthode de Monte-Carlo) et donne la disponibilité et le coût moyens avec leur fourchette.",
         "needRbd": "Construisez d'abord le diagramme de fiabilité et indiquez la durée de mission.",
         "trials": "Nombre de tirages",
         "seed": "Graine (facultatif)",
@@ -1751,7 +1772,8 @@
       "dismiss": "Ignorer ce point",
       "dismissTitle": "Écarter cet écart de données ?",
       "dismissBody": "« {{issue}} » sur {{asset}} ne sera plus listé. Écartez-le seulement si les données sont justes telles quelles.",
-      "truncated": "Seuls les premiers sont listés : corrigez-les puis actualisez pour voir les suivants."
+      "truncated": "Seuls les premiers sont listés : corrigez-les puis actualisez pour voir les suivants.",
+      "dismissHint": "Retire ce point de la liste quand les données sont justes telles quelles (par exemple une défaillance réellement sans cause connue). Le point écarté n'est plus compté."
     },
     "studyName": {
       "createTitle": "Nouvelle étude",
