@@ -1818,6 +1818,15 @@
       "labelled": "{{label}}: {{value}}",
       "plannedCost": "Cost of a planned replacement",
       "failureCost": "Cost of a breakdown (lost production included)"
+    },
+    "summary": {
+      "title": "In short:",
+      "failures_one": "{{count}} failure used, {{hours}} h of downtime.",
+      "failures_other": "{{count}} failures used, {{hours}} h of downtime.",
+      "topAsset_one": "Most affected equipment: {{code}} ({{count}} time).",
+      "topAsset_other": "Most affected equipment: {{code}} ({{count}} times).",
+      "topMode_one": "Most frequent failure: {{mode}} ({{count}} time).",
+      "topMode_other": "Most frequent failure: {{mode}} ({{count}} times)."
     }
   },
   "errors": {
