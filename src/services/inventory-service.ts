@@ -1757,6 +1757,23 @@ export function listInventoryArticleEquivalents(articleId: number): Promise<Arti
   );
 }
 
+const DormantStockRowSchema = z.object({
+  article_id: z.number(),
+  article_code: z.string(),
+  article_name: z.string(),
+  on_hand_qty: z.number(),
+  stock_value: z.number().nullable(),
+  last_issue_at: z.string().nullable(),
+  last_movement_at: z.string().nullable(),
+  article_created_at: z.string(),
+});
+export type DormantStockRow = z.infer<typeof DormantStockRowSchema>;
+
+/** Articles on hand with no issue for `months` months, most valuable first (UX L3-15). */
+export function listInventoryDormantStock(months: number): Promise<DormantStockRow[]> {
+  return invokeParsed("list_inventory_dormant_stock", { months }, z.array(DormantStockRowSchema));
+}
+
 export function listInventoryArticleUsage(articleId: number): Promise<ArticleAssetUsage[]> {
   return invokeParsed(
     "list_inventory_article_usage",

@@ -75,7 +75,7 @@ describe("PartsToIssuePanel", () => {
     expect(await screen.findByText("OT-0042")).toBeInTheDocument();
     expect(screen.getByText("BRG-6207")).toBeInTheDocument();
     expect(screen.getByText("MAIN/BIN-1")).toBeInTheDocument();
-    expect(screen.getByText("Parts to issue (1)")).toBeInTheDocument();
+    expect(screen.getByText("Parts to regularise (to issue from stock) (1)")).toBeInTheDocument();
   });
 
   it("says when nothing is to issue", async () => {

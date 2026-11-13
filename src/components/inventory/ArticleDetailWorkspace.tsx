@@ -35,6 +35,10 @@ import {
   composeArticleActivity,
   computeArticleKpis,
 } from "@/components/inventory/article-activity";
+import {
+  type PricedPurchase,
+  summarizeSupplierPrices,
+} from "@/components/inventory/supplier-price-history";
 import { useLookupOptions } from "@/components/inventory/use-lookup-options";
 import { BackToOriginButton } from "@/components/ui/back-to-origin-button";
 import { Badge } from "@/components/ui/badge";
@@ -69,6 +73,7 @@ import { StatusChip } from "@/components/ui/status-chip";
 import { PROCUREMENT_STATUS_TONE, REPAIRABLE_STATUS_TONE, toneOf } from "@/design-system/tone";
 import { useFormatters } from "@/hooks/use-formatters";
 import { formatOrDash, formatSiteLabel } from "@/lib/display";
+import { cn } from "@/lib/utils";
 import {
   type InventoryArticleRow,
   deleteInventoryArticleEquivalent,
@@ -650,6 +655,7 @@ export function ArticleDetailWorkspace({
                 <p className="text-sm text-text-muted">{t("article.purchaseHistory.empty")}</p>
               ) : (
                 <div className="space-y-2">
+                  <SupplierPriceTable rows={purchaseHistory.data} />
                   {purchaseHistory.data.map((row) => (
                     <div
                       key={row.purchase_order_id}
@@ -1221,6 +1227,78 @@ export function ArticleDetailWorkspace({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+/** Price history per supplier (UX L3-13): last and previous price, change, lowest and highest. */
+function SupplierPriceTable({ rows }: { rows: readonly PricedPurchase[] }) {
+  const { t } = useTranslation("inventory");
+  const { formatCurrency, formatNumber, formatDate } = useFormatters();
+  const summaries = summarizeSupplierPrices(rows);
+  if (summaries.length === 0) return null;
+  return (
+    <div className="overflow-x-auto rounded border border-surface-border">
+      <table className="w-full text-xs">
+        <caption className="px-2.5 pt-2 text-left text-sm font-medium">
+          {t("article.priceHistory.title")}
+        </caption>
+        <thead className="text-text-muted">
+          <tr>
+            <th className="px-2.5 py-1.5 text-left font-medium">
+              {t("article.priceHistory.supplier")}
+            </th>
+            <th className="px-2.5 py-1.5 text-right font-medium">
+              {t("article.priceHistory.last")}
+            </th>
+            <th className="px-2.5 py-1.5 text-right font-medium">
+              {t("article.priceHistory.previous")}
+            </th>
+            <th className="px-2.5 py-1.5 text-right font-medium">
+              {t("article.priceHistory.change")}
+            </th>
+            <th className="px-2.5 py-1.5 text-right font-medium">
+              {t("article.priceHistory.range")}
+            </th>
+            <th className="px-2.5 py-1.5 text-right font-medium">
+              {t("article.priceHistory.purchases")}
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {summaries.map((s) => (
+            <tr key={s.supplierId ?? "none"} className="border-t border-surface-border">
+              <td className="px-2.5 py-1.5">
+                {s.supplierName ?? t("article.priceHistory.noSupplier")}
+                {s.lastOrderedAt ? (
+                  <span className="ml-1 text-text-muted">({formatDate(s.lastOrderedAt)})</span>
+                ) : null}
+              </td>
+              <td className="px-2.5 py-1.5 text-right tabular-nums">
+                {formatCurrency(s.lastPrice)}
+              </td>
+              <td className="px-2.5 py-1.5 text-right tabular-nums">
+                {s.previousPrice != null ? formatCurrency(s.previousPrice) : "—"}
+              </td>
+              <td
+                className={cn(
+                  "px-2.5 py-1.5 text-right tabular-nums",
+                  s.changePct != null && s.changePct > 0 && "text-status-danger",
+                  s.changePct != null && s.changePct < 0 && "text-status-success",
+                )}
+              >
+                {s.changePct != null
+                  ? `${s.changePct > 0 ? "+" : ""}${formatNumber(s.changePct, { maximumFractionDigits: 1 })} %`
+                  : "—"}
+              </td>
+              <td className="px-2.5 py-1.5 text-right tabular-nums">
+                {formatCurrency(s.minPrice)} – {formatCurrency(s.maxPrice)}
+              </td>
+              <td className="px-2.5 py-1.5 text-right tabular-nums">{formatNumber(s.purchases)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

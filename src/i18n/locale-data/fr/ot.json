@@ -167,7 +167,10 @@
     "repair.swapDowntime": "Inverser le début et la fin de l'arrêt (durée négative)",
     "repair.closeAtStart": "Clôturer l'arrêt à l'heure de début",
     "repair.trimOverlap": "Raccourcir la fin du premier arrêt (chevauchement)",
-    "severity": { "error": "Erreur", "warning": "Avertissement" },
+    "severity": {
+      "error": "Erreur",
+      "warning": "Avertissement"
+    },
     "code": {
       "FK_ORPHAN_FAILURE_MODE": "Mode de défaillance introuvable",
       "WO_DOWNTIME_NEGATIVE_DURATION": "Arrêt de durée négative",
@@ -362,18 +365,18 @@
     "full_day": "Journée complète"
   },
   "nonStockPurchase": {
-    "open": "Acheter une pièce hors stock",
-    "title": "Acheter une pièce hors stock pour cet OT",
+    "open": "Acheter une pièce non stockée",
+    "title": "Acheter une pièce non stockée pour cet OT",
     "description": "Pour une pièce que le magasin ne tient pas : elle est commandée pour cet OT, réceptionnée sans entrer en stock et comptée dans les pièces réelles de l’OT. La demande d’achat suit les approbations habituelles.",
-    "search": "Pièce hors stock déjà connue",
+    "search": "Pièce non stockée déjà connue",
     "searchPlaceholder": "Rechercher par code ou désignation",
-    "matches": "Pièces hors stock existantes",
+    "matches": "Pièces non stockées existantes",
     "reused": "Pièce reprise : {{code}} — {{name}}",
     "notThisOne": "Autre pièce",
     "name": "Désignation de la pièce",
     "namePlaceholder": "Ex. joint torique Ø212 Viton",
     "unit": "Unité",
-    "newHint": "Aucune pièce existante ne convient ? Une pièce hors stock est créée depuis cet OT, « à revoir » par le gestionnaire du catalogue.",
+    "newHint": "Aucune pièce existante ne convient ? Une pièce non stockée est créée depuis cet OT, « à revoir » par le gestionnaire du catalogue.",
     "qty": "Quantité",
     "estimate": "Prix unitaire estimé (facultatif)",
     "reason": "Motif de l’achat (facultatif)",
@@ -382,9 +385,9 @@
     "unitRequired": "Choisissez l’unité de la pièce.",
     "submit": "Demander l’achat",
     "cancel": "Annuler",
-    "error": "La demande d’achat hors stock n’a pas pu être créée.",
+    "error": "La demande d’achat de pièce non stockée n’a pas pu être créée.",
     "created": "Demande d’achat {{number}} créée pour cet OT.",
-    "badge": "Hors stock",
+    "badge": "Non stockée",
     "awaiting": "Achat en cours",
     "received": "Reçu : {{received}} / {{planned}}",
     "handedTo": "Remis à {{name}}"
@@ -765,7 +768,7 @@
       "markUsed": "Utilisée",
       "usedQtyLabel": "Qté : {{qty}}",
       "toIssue": {
-        "badge": "À sortir : {{qty}} {{unit}}",
+        "badge": "À régulariser : {{qty}} {{unit}} à sortir",
         "hint": "Pièce enregistrée sans le droit magasin : le magasinier la sort du stock depuis le comptoir de sortie. L'OT ne peut pas être clôturé avant."
       },
       "badge": {
@@ -781,11 +784,11 @@
         "labelRequired": "Le libellé est obligatoire.",
         "qty": "Quantité utilisée",
         "save": "Ajouter",
-        "stockHint": "Choisissez l'article et l'emplacement d'où il est sorti : la quantité est réservée et sortie du stock. Utilisez « Hors stock » seulement pour un article non géré en magasin.",
-        "stockHintRequest": "Choisissez l'article et l'emplacement d'où il a été pris. Sans le droit magasin, la pièce est enregistrée « à sortir » : le magasinier la sort du stock, rien ne bouge avant. Utilisez « Hors stock » seulement pour un article non géré en magasin.",
+        "stockHint": "Choisissez l'article et l'emplacement d'où il est sorti : la quantité est réservée et sortie du stock. Choisissez « Pièce non stockée » seulement pour un article que le magasin ne gère pas.",
+        "stockHintRequest": "Choisissez l'article et l'emplacement d'où il a été pris. Sans le droit magasin (par exemple la nuit, sans magasinier), la pièce est enregistrée « à régulariser » : le magasinier la sort du stock le jour suivant, rien ne bouge avant. Choisissez « Pièce non stockée » seulement pour un article que le magasin ne gère pas.",
         "modeLabel": "Origine de la pièce",
         "modeStock": "Article en stock",
-        "modeNonStock": "Hors stock",
+        "modeNonStock": "Pièce non stockée (achat direct)",
         "searchArticle": "Rechercher un article",
         "searchPlaceholder": "Code ou désignation",
         "article": "Article",
@@ -1036,7 +1039,7 @@
     "blocked": "Bloqué",
     "partial": "Partiel",
     "stepUp": "Vérification",
-    "loadError": "Impossible de charger le journal d'audit\u00a0: ",
+    "loadError": "Impossible de charger le journal d'audit : ",
     "empty": "Aucun événement d'audit enregistré pour cet ordre de travail.",
     "user": "{{name}}",
     "system": "Système"
@@ -1124,8 +1127,8 @@
   },
   "dashboard": {
     "loading": "Chargement des statistiques…",
-    "loadError": "\u00c9chec du chargement des donn\u00e9es du tableau de bord.",
-    "retry": "R\u00e9essayer",
+    "loadError": "Échec du chargement des données du tableau de bord.",
+    "retry": "Réessayer",
     "total": "Total OT",
     "inProgress": "En cours",
     "completed": "Terminés",

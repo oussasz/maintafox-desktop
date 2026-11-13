@@ -152,6 +152,11 @@ pub async fn generate(
 
     let company = master::build(&mut ctx, opts, start_day).await?;
     history::run(&mut ctx, &company, opts, start_day).await?;
+    // ABC/XYZ classes from the simulated issues, as the storekeeper's "Recalculer" button does.
+    let abc = crate::inventory::queries::calculate_abc_classification(db).await?;
+    let xyz = crate::inventory::queries::calculate_xyz_classification(db).await?;
+    ctx.count("classes ABC calculées", abc);
+    ctx.count("classes XYZ calculées", xyz);
 
     let end = limit - Duration::minutes(1);
     if end >= ctx.last + Duration::seconds(2) {

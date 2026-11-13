@@ -167,7 +167,10 @@
     "repair.swapDowntime": "Swap segment start/end (negative duration)",
     "repair.closeAtStart": "Close segment at start time",
     "repair.trimOverlap": "Trim first segment end to remove overlap",
-    "severity": { "error": "Error", "warning": "Warning" },
+    "severity": {
+      "error": "Error",
+      "warning": "Warning"
+    },
     "code": {
       "FK_ORPHAN_FAILURE_MODE": "Failure mode not found",
       "WO_DOWNTIME_NEGATIVE_DURATION": "Downtime with negative duration",
@@ -782,10 +785,10 @@
         "qty": "Quantity used",
         "save": "Add part",
         "stockHint": "Choose the article and the location it was taken from: the quantity is reserved and issued from stock. Use “Non-stock” only for an item the store does not manage.",
-        "stockHintRequest": "Choose the article and the location it was taken from. Without the stock right, the part is recorded “to issue”: the storekeeper issues it from stock, nothing moves before. Use “Non-stock” only for an item the store does not manage.",
+        "stockHintRequest": "Choose the article and the location it was taken from. Without the stock right (for example at night, with no storekeeper), the part is recorded “to regularise”: the storekeeper issues it from stock the next day, nothing moves before. Choose “Non-stock part” only for an item the store does not manage.",
         "modeLabel": "Part origin",
         "modeStock": "Stock article",
-        "modeNonStock": "Non-stock",
+        "modeNonStock": "Non-stock part (direct purchase)",
         "searchArticle": "Search an article",
         "searchPlaceholder": "Code or description",
         "article": "Article",

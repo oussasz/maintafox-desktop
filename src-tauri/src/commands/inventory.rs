@@ -1418,6 +1418,23 @@ pub async fn list_inventory_article_usage(
     crate::assets::spare_parts::list_article_asset_usage(&state.db, article_id).await
 }
 
+/// Dormant stock (UX L3-15): articles on hand with no issue for `months` months, most valuable
+/// first. Read with the inventory view right.
+#[tauri::command]
+pub async fn list_inventory_dormant_stock(
+    months: i64,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::inventory::dormant::DormantStockRow>> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INV_VIEW,
+        PermissionScope::Global
+    );
+    crate::inventory::dormant::list_dormant_stock(&state.db, months).await
+}
+
 #[tauri::command]
 pub async fn upsert_inventory_article_equivalent(
     input: ArticleEquivalentInput,

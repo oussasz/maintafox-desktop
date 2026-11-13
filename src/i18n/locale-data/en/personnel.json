@@ -155,7 +155,10 @@
       "di30d": "DI last 30 days"
     },
     "workHistory": {
-      "module": { "wo": "WO", "di": "Request" },
+      "module": {
+        "wo": "WO",
+        "di": "Request"
+      },
       "role": {
         "primary_responsible": "Primary responsible",
         "intervener": "Intervener",
@@ -175,7 +178,9 @@
       "labor": "Labor rate",
       "overtime": "Overtime rate",
       "source": "Source",
-      "sourceType": { "manual": "Entered manually" },
+      "sourceType": {
+        "manual": "Entered manually"
+      },
       "active": "Active",
       "empty": "No rate cards yet. Add an hourly labor rate to enable Planning and WO labor cost.",
       "addTitle": "Add rate card",
@@ -871,6 +876,14 @@
       "valid": "Valid",
       "expired": "Expired",
       "not_required": "Not required"
+    },
+    "performance": {
+      "header": "Performance",
+      "workOrders_one": "{{count}} work order",
+      "workOrders_other": "{{count}} work orders",
+      "onTime": "On time: {{pct}} % ({{onTime}}/{{total}})",
+      "noClosed": "No closed work order with a deadline",
+      "onTimeHint": "Share of work orders closed by their planned end, among closed work orders that had a planned end (cancelled ones excluded)."
     }
   },
   "siteWeek": {

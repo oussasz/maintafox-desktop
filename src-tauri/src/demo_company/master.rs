@@ -163,6 +163,7 @@ pub async fn build(ctx: &mut Ctx<'_>, _opts: &GenerationOptions, start_day: Naiv
     let (people, teams) = people(ctx, &nodes, schedule_id, admin_id, &admin, start_day).await?;
     let (stores, articles) = stock(ctx, admin_id, start_day).await?;
     let suppliers = suppliers(ctx).await?;
+    article_sources(ctx, &articles, &suppliers).await?;
     approval_limits(ctx, admin_id).await?;
     budgets(ctx, admin_id, start_day).await?;
     let mut company = Company {
@@ -996,6 +997,8 @@ async fn stock(
     let stocked = lookup_value_id(ctx.db, "inventory.stocking_type", "STOCKED").await?;
     let tax = lookup_value_id(ctx.db, "inventory.tax_category", "TVA_20").await?;
     let buy = lookup_value_id(ctx.db, "inventory.procurement_category", "BUY").await?;
+    let critical_spare = lookup_value_id(ctx.db, "equipment.criticality", "CRITIQUE").await?;
+    let standard_spare = lookup_value_id(ctx.db, "equipment.criticality", "STANDARD").await?;
     let mut articles = Vec::new();
     for a in catalog::ARTICLES {
         let unit_id = crate::reference::units::unit_id_by_code(ctx.db, a.unit).await?;
@@ -1009,6 +1012,7 @@ async fn stock(
                 "stocking_type_value_id": stocked,
                 "tax_category_value_id": tax,
                 "procurement_category_value_id": buy,
+                "criticality_value_id": if a.critical { critical_spare } else { standard_spare },
                 "min_stock": a.min,
                 "reorder_point": a.reorder,
                 "safety_stock": a.min,
@@ -1088,6 +1092,36 @@ async fn suppliers(ctx: &mut Ctx<'_>) -> AppResult<Vec<i64>> {
     }
     ctx.count("fournisseurs", out.len() as i64);
     Ok(out)
+}
+
+/// Two suppliers for every article (the preferred one at the catalogue price, a second one a
+/// little dearer), so the item record shows its sources and the supplier comparison has data.
+/// Taken among the first suppliers, the ones the purchase history buys from.
+async fn article_sources(ctx: &mut Ctx<'_>, articles: &[ArticleInfo], suppliers: &[i64]) -> AppResult<()> {
+    let pool = &suppliers[..suppliers.len().min(5)];
+    if pool.len() < 2 {
+        return Ok(());
+    }
+    for (i, a) in articles.iter().enumerate() {
+        for (rank, factor) in [(0usize, 1.0_f64), (1, 1.08)] {
+            let supplier_id = pool[(i + rank) % pool.len()];
+            ctx.tick()?;
+            crate::inventory::suppliers::upsert_supplier_article_source(
+                ctx.db,
+                de(json!({
+                    "supplier_id": supplier_id,
+                    "article_id": a.id,
+                    "is_preferred": rank == 0,
+                    "priority": rank as i64 + 1,
+                    "unit_price_hint": (a.unit_cost * factor * 100.0).round() / 100.0,
+                    "is_active": true,
+                }))?,
+            )
+            .await?;
+            ctx.count("sources fournisseur d'articles", 1);
+        }
+    }
+    Ok(())
 }
 
 // ── Purchase approval limits ─────────────────────────────────────────────────────────────────
