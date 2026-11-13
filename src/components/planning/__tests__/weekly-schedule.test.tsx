@@ -399,7 +399,7 @@ describe("WeeklySchedulePanel", () => {
     render(<WeeklySchedulePanel />);
     expect(await screen.findByText("OT-0005")).toBeInTheDocument();
     expect(planning.getWeeklySchedule).toHaveBeenCalledWith(10, expect.any(String));
-    expect(screen.getByText("MEC — Mécanique")).toBeInTheDocument();
+    expect(screen.getByText("Mécanique (MEC)")).toBeInTheDocument();
     expect(screen.getAllByText(enPlanning.weekly.frozenWithoutApproval).length).toBeGreaterThan(0);
     expect(screen.getByText(enPlanning.weekly.frozenWithoutApprovalHint)).toBeInTheDocument();
     expect(screen.getByText(/Frozen automatically · System/)).toBeInTheDocument();
@@ -459,7 +459,7 @@ describe("CrewsWithoutSiteBanner", () => {
       </MemoryRouter>,
     );
     expect(await screen.findByText(enPlanning.crewsWithoutSite.title)).toBeInTheDocument();
-    expect(screen.getByText("ELEC — Électricité")).toBeInTheDocument();
+    expect(screen.getByText("Électricité (ELEC)")).toBeInTheDocument();
     expect(
       screen.getByRole("link", { name: enPlanning.crewsWithoutSite.fixTeams }),
     ).toHaveAttribute("href", "/personnel?tab=teams");

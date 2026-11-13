@@ -50,7 +50,7 @@
     "horizonDays": "{{count}} jours",
     "sourceTypes": {
       "work_order": "Ordre de travail",
-      "pm_occurrence": "Occurrence PM",
+      "pm_occurrence": "Occurrence MP",
       "inspection_follow_up": "Demande approuvée"
     }
   },
@@ -173,7 +173,7 @@
       "budgetInvalid": "Le seuil budgétaire doit être un nombre positif ou nul.",
       "capacityExceededDay": "Capacité insuffisante le {{day}} : {{share}} h nécessaires, {{remaining}} h libres."
     },
-    "notEstimated": "Ce travail n'est pas estimé : saisissez sa durée et son effectif sur l'OT ou le PM avant de l'engager.",
+    "notEstimated": "Ce travail n'est pas estimé : saisissez sa durée et son effectif sur l'OT ou le MP avant de l'engager.",
     "labourHours": "{{hours}} h de main-d'œuvre ({{duration}} h × {{crew}} pers.)",
     "shiftTimeShort": "Chaque personne travaille {{duration}} h, mais le créneau ne contient que {{shift}} h de poste : allongez le créneau ou prévoyez des heures supplémentaires.",
     "capacityByDay": "{{day}} : {{share}} h de ce travail, {{remaining}} h libres sur {{available}} h"

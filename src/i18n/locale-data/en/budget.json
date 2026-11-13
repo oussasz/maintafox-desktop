@@ -66,6 +66,7 @@
     "closed": "Close the version"
   },
   "scenario": {
+    "baseline": "Baseline",
     "original": "Original budget",
     "approved": "Approved budget",
     "reforecast": "Reforecast",

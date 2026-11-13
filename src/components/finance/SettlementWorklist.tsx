@@ -215,8 +215,8 @@ export function SettlementWorklist({
         accessorFn: (s) => s.cost_center_code ?? "",
         cell: ({ row }) =>
           row.original.cost_center_code ? (
-            <span title={row.original.cost_center_name ?? undefined}>
-              {row.original.cost_center_code}
+            <span title={row.original.cost_center_code}>
+              {row.original.cost_center_name ?? row.original.cost_center_code}
             </span>
           ) : (
             "—"

@@ -19,6 +19,7 @@ import { EntityFormDialog, EntityFormFooter } from "@/components/entity-form";
 import { FormField } from "@/components/ui/FormField";
 import { Button } from "@/components/ui/button";
 import { ErrorState } from "@/components/ui/data-state";
+import { FileInput } from "@/components/ui/file-input";
 import { Input } from "@/components/ui/input";
 import { ListAccessNote } from "@/components/ui/list-access-note";
 import {
@@ -195,9 +196,8 @@ function UploadDialog({
               : undefined
           }
         >
-          <Input
+          <FileInput
             id={`${formId}-file`}
-            type="file"
             onChange={(e) => {
               const next = e.target.files?.[0] ?? null;
               setFile(next);

@@ -18,6 +18,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { FileInput } from "@/components/ui/file-input";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useFormatters } from "@/hooks/use-formatters";
@@ -133,13 +134,11 @@ export function DocumentNewVersionDialog({ doc, onOpenChange, onUploaded }: NewV
             <Label htmlFor="doc-version-file">
               {t("upload.fields.file")} <span aria-hidden>*</span>
             </Label>
-            <input
+            <FileInput
               key={fileInputKey}
               id="doc-version-file"
-              type="file"
               aria-describedby={fileError ? "doc-version-file-error" : undefined}
               aria-invalid={fileError ? true : undefined}
-              className="min-h-10 text-sm text-text-secondary file:me-3 file:h-10 file:cursor-pointer file:rounded-md file:border file:border-surface-border file:bg-surface-1 file:px-3 file:text-sm file:font-medium file:text-text-primary hover:file:bg-surface-2"
               disabled={uploading}
               onChange={(e) => pickFile(e.target.files)}
             />

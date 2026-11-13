@@ -1,4 +1,10 @@
 {
+  "fileInput": {
+    "choose": "Choisir un fichier",
+    "chooseMany": "Choisir des fichiers",
+    "none": "Aucun fichier choisi",
+    "many": "{{count}} fichiers choisis"
+  },
   "toast": {
     "dismiss": "Fermer le message"
   },

@@ -15,7 +15,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
+import { FileInput } from "@/components/ui/file-input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -185,9 +185,8 @@ export function PersonnelImportWizard() {
             </div>
 
             <div className="flex items-center gap-2">
-              <Input
+              <FileInput
                 ref={fileRef}
-                type="file"
                 className="max-w-sm"
                 accept=".csv,.xlsx"
                 onChange={(e) => void onFileChange(e)}

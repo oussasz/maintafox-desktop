@@ -270,7 +270,7 @@ describe("PmDuplicatePlanDialog — guidance and safety", () => {
     fireEvent.click(screen.getByRole("button", { name: "Duplicate" }));
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent(
-      "Plan PM refusé : un autre plan utilise déjà ce code. Choisissez un autre code.",
+      "Plan MP refusé : un autre plan utilise déjà ce code. Choisissez un autre code.",
     );
     expect(alert.textContent).not.toContain("GATE_");
     expect(onClose).not.toHaveBeenCalled();

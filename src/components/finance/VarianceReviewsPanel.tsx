@@ -156,7 +156,7 @@ export function VarianceReviewsPanel({
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div className="min-w-0">
                     <div className="font-medium text-text-primary">
-                      {r.cost_center_code} · {categoryLabel(r.budget_bucket)}
+                      {r.cost_center_name} · {categoryLabel(r.budget_bucket)}
                       {r.period_month ? ` · ${periodLabel(r.period_month)}` : ""}
                     </div>
                     <div className="text-xs text-text-muted">

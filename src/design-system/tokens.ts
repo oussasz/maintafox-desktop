@@ -32,9 +32,9 @@ export const mfLayout = {
   /** Segmented view control (list / kanban / …) */
   viewToggleGroup:
     "flex items-center rounded-md border border-surface-border p-0.5 gap-0.5 bg-surface-1/80",
-  /** 40 px button inside a 2 px-padded group = 44 px target row */
+  /** 40 px high button inside a 2 px-padded group = 44 px target row; icon + visible name (L6-13) */
   viewToggleButton:
-    "inline-flex h-10 w-10 items-center justify-center rounded transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+    "inline-flex h-10 min-w-10 items-center justify-center gap-1.5 rounded px-2.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
   /** Icon-only toolbar button (filter toggle, refresh): 44 px target */
   toolbarIconButton: "h-11 w-11 p-0",
   /** Primary header action (create): 44 px high */

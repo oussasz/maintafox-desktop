@@ -61,7 +61,7 @@ export function CrewsWithoutSiteBanner() {
       <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
       <div className="min-w-0 flex-1">
         <p className="font-medium">{t("crewsWithoutSite.title")}</p>
-        <p>{crews.map((c) => `${c.team_code} — ${c.team_name}`).join(", ")}</p>
+        <p>{crews.map((c) => `${c.team_name} (${c.team_code})`).join(", ")}</p>
         <p className="text-xs">{t("crewsWithoutSite.hint")}</p>
       </div>
       <div className="flex flex-wrap gap-3 text-xs font-medium">

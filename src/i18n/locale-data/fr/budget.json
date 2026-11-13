@@ -66,6 +66,7 @@
     "closed": "Clôturer la version"
   },
   "scenario": {
+    "baseline": "Référence",
     "original": "Budget initial",
     "approved": "Budget approuvé",
     "reforecast": "Révision",

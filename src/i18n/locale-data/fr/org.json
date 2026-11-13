@@ -322,7 +322,7 @@
     "ORG_LEGACY_PUBLISH_REMOVED": "Cette action de publication n’est plus disponible. Utilisez l’action Publier actuelle, qui vérifie le brouillon et met à jour les liens en toute sécurité.",
     "ORG_ASSIGNEE_UNCHANGED": "Cette personne ou équipe assure déjà cette responsabilité sur l’unité.",
     "ORG_NODE_CANNOT_HOST_ASSETS": "Ce niveau d’organisation ne peut pas accueillir d’équipements. Choisissez une unité dont le niveau accueille des équipements.",
-    "ORG_EQUIPMENT_RETIRED": "Un équipement déclassé ou mis au rebut ne peut pas être placé dans la structure."
+    "ORG_EQUIPMENT_RETIRED": "Un équipement réformé ou mis au rebut ne peut pas être placé dans la structure."
   },
   "audit": {
     "changeType": {

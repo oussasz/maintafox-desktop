@@ -363,7 +363,7 @@ export function WeeklySchedulePanel() {
                     scope="row"
                     className="border border-surface-border p-1 text-left font-medium"
                   >
-                    {crew.team_code} — {crew.team_name}
+                    {crew.team_name} ({crew.team_code})
                   </th>
                   {days.map((d) => (
                     <td

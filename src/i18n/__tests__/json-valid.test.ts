@@ -54,6 +54,8 @@ const COMMON_TOP_KEYS = [
   "listValue",
   // Required / optional part lines (src/components/common/PartNecessityChoice.tsx).
   "partNecessity",
+  // File picker in the interface language (src/components/ui/file-input.tsx).
+  "fileInput",
   // Dismiss button of the app-wide messages (src/components/shell/AppToastHost.tsx).
   "toast",
   // Date and time fields (src/components/ui/date-field.tsx, time-input.tsx, month-calendar.tsx).

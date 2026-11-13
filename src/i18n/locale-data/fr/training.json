@@ -394,7 +394,7 @@
     "COMPANY_CONTRACT_AMOUNT": "Le montant du contrat ne peut pas être négatif.",
     "COMPANY_ALERT_DAYS": "Le délai d'alerte doit être compris entre 0 et 365 jours.",
     "TEAM_NO_SCHEDULE": "L'équipe n'a aucune heure de travail le {{day}} : donnez un horaire à ses membres ou définissez une règle de capacité.",
-    "PLANNING_NOT_ESTIMATED": "Ce travail n'est pas estimé : saisissez sa durée et son effectif sur l'OT ou le PM avant de l'engager.",
+    "PLANNING_NOT_ESTIMATED": "Ce travail n'est pas estimé : saisissez sa durée et son effectif sur l'OT ou le MP avant de l'engager.",
     "PLANNING_CREW_SIZE_INVALID": "L'effectif doit être un nombre entier de personnes, de {{min}} à {{max}}.",
     "PLANNING_SLOT_TOO_LONG": "Un créneau couvre au plus {{maxDays}} jours : découpez les travaux plus longs en plusieurs travaux.",
     "PLANNING_ASSIGNEE_NOT_IN_CREW": "Le technicien n'est pas membre de l'équipe le {{day}} : choisissez un membre de l'équipe ou forcez avec un motif.",
