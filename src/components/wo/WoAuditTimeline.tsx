@@ -74,6 +74,7 @@ const KNOWN_ACTIONS = new Set([
   "task_reopened",
   "labor_closed_by_cancellation",
   "labor_closed_by_closeout",
+  "labor_added",
 ]);
 
 function actionIcon(action: string) {

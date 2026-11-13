@@ -803,6 +803,18 @@ async fn backlog_weeks_from_crew_schedules() {
     assert!((b.backlog_hours - 20.0).abs() < 1e-9, "{b:?}");
     assert!((b.ready_backlog_hours - 6.0).abs() < 1e-9);
     assert_eq!((b.open_work_orders, b.work_orders_without_estimate), (4, 1));
+    // L1-21: the OT without estimate is named; no team assigned → one "unassigned" row.
+    assert_eq!(
+        b.without_estimate_list
+            .iter()
+            .map(|w| w.code.as_str())
+            .collect::<Vec<_>>(),
+        vec!["B4"]
+    );
+    assert_eq!(b.by_team.len(), 1, "{:?}", b.by_team);
+    assert_eq!(b.by_team[0].team_name, None);
+    assert_eq!((b.by_team[0].work_orders, b.by_team[0].without_estimate), (4, 1));
+    assert!((b.by_team[0].backlog_hours - 20.0).abs() < 1e-9);
     // The backlog figure is "open (work to do)": the OT list's `open_only` filter lists it.
     assert_eq!(b.open_work_orders_rule, crate::wo::backlog::RULE_OPEN_WORK_TO_DO);
     let listed = crate::wo::queries::list_work_orders(

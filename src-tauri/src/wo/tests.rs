@@ -1034,6 +1034,23 @@ mod tests {
             "{refusals:?}"
         );
 
+        // L1-36: an intervener row with no hours does not count as labour.
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO work_order_interveners (work_order_id, intervener_id, hours_worked) VALUES (?, ?, 0)",
+            [wo.id.into(), admin_id(&db).await.into()],
+        ))
+        .await
+        .expect("zero-hour intervener");
+        let refusals = crate::wo::closeout::close_preflight(&db, wo.id, &evidence, 1000)
+            .await
+            .expect("close-out gate")
+            .0;
+        assert!(
+            refusals.iter().any(|m| m.starts_with("GATE_CLOSEOUT_LABOR_REQUIRED")),
+            "zero-hour intervener must not satisfy the labour gate: {refusals:?}"
+        );
+
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "UPDATE work_orders SET status_id = (SELECT id FROM work_order_statuses WHERE code = 'closed') \
@@ -1668,5 +1685,38 @@ mod tests {
         let one = audit::list_wo_change_events(&db, wo.id, 0).await.expect("clamped");
         assert_eq!(one.len(), 1);
         assert_eq!(one[0].action, "e3");
+    }
+
+    /// L1-36: a retroactive entry keeps the net hours given with its times (break deducted) and
+    /// an end before the start is refused.
+    #[tokio::test]
+    async fn retroactive_labor_keeps_net_hours_and_refuses_reversed_times() {
+        let db = setup().await;
+        let actor = admin_id(&db).await;
+        let wo = create_wo_draft(&db, "Retroactive labour").await;
+        let wo = transition_to_in_progress(&db, wo.id, wo.row_version, actor).await;
+        let entry = |start: &str, end: &str, hours: Option<f64>| AddLaborInput {
+            wo_id: wo.id,
+            intervener_id: actor,
+            skill_id: None,
+            started_at: Some(start.into()),
+            ended_at: Some(end.into()),
+            hours_worked: hours,
+            hourly_rate: Some(60.0),
+            notes: None,
+        };
+        let net = labor::add_labor_entry(&db, entry("2026-04-10T08:00:00Z", "2026-04-10T12:00:00Z", Some(3.5)))
+            .await
+            .expect("net hours");
+        approx_eq(net.hours_worked.unwrap_or(0.0), 3.5, 0.001);
+        let too_many = labor::add_labor_entry(&db, entry("2026-04-10T13:00:00Z", "2026-04-10T15:00:00Z", Some(9.0)))
+            .await
+            .expect("gross span");
+        approx_eq(too_many.hours_worked.unwrap_or(0.0), 2.0, 0.001);
+        let reversed = labor::add_labor_entry(&db, entry("2026-04-10T15:00:00Z", "2026-04-10T13:00:00Z", None)).await;
+        assert!(
+            matches!(&reversed, Err(AppError::ValidationFailed(m)) if m.iter().any(|x| x.starts_with("GATE_WO_LABOR_END_BEFORE_START"))),
+            "{reversed:?}"
+        );
     }
 }
