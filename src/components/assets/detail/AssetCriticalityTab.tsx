@@ -189,6 +189,7 @@ export function AssetCriticalityTab({
         {asset.criticality_to_review ? (
           <p className="text-xs text-tone-warning-fg">{t("criticalityReview.hint")}</p>
         ) : null}
+        <p className="text-xs text-text-secondary">{t("critMethod.usedFor")}</p>
         <p className="text-xs text-text-muted">
           {t("critMethod.explain", {
             a: method.class_a_min_risk,
@@ -236,6 +237,14 @@ export function AssetCriticalityTab({
               <CriticalityBadge criticality={preview.resulting_class} />
               {preview.hse_override ? (
                 <span className="text-xs text-text-muted">{t("critMethod.hseOverride")}</span>
+              ) : null}
+              {asset.criticality_code && preview.resulting_class !== asset.criticality_code ? (
+                <span className="basis-full text-xs font-medium text-tone-attention-fg">
+                  {t("critMethod.differs", {
+                    current: asset.criticality_code,
+                    next: preview.resulting_class,
+                  })}
+                </span>
               ) : null}
             </>
           ) : (

@@ -64,7 +64,7 @@
       "code": "Code",
       "name": "Name",
       "class": "Class",
-      "site": "Site",
+      "site": "Organisation unit",
       "status": "Status",
       "criticality": "Criticality",
       "family": "Family",
@@ -861,7 +861,7 @@
     "currentValue": "Current value: {{value}} {{unit}}",
     "errors": {
       "number": "Enter a number.",
-      "belowCurrent": "The value cannot be lower than the current reading ({{current}}).",
+      "belowCurrent": "The value cannot be lower than the current reading ({{current}}). If the meter was changed, use “Replace meter”.",
       "future": "A reading cannot be in the future.",
       "positive": "Enter zero or a positive number."
     },
@@ -904,6 +904,11 @@
       "alreadyOpen": "{{level}} threshold crossed: request {{code}} is still open, no new request.",
       "notRaised": "{{level}} threshold crossed, but no request was raised.",
       "raisedChip": "{{level}} threshold → {{code}}"
+    },
+    "replace": {
+      "action": "Replace meter",
+      "title": "New meter fitted — {{name}}",
+      "body": "Type the value shown by the new meter (often 0). It may be lower than the old one: the equipment's lifetime total continues without going back and meter-based preventive plans stay right."
     }
   },
   "spares": {
@@ -996,7 +1001,9 @@
     "history": "Assessment history",
     "noHistory": "No assessment yet: the class was set by hand.",
     "historyLine": "Risk {{risk}} (previous class {{previous}})",
-    "historyScores": "S {{s}} · E {{e}} · P {{p}} · Q {{q}} · C {{c}} · L {{l}}"
+    "historyScores": "S {{s}} · E {{e}} · P {{p}} · Q {{q}} · C {{c}} · L {{l}}",
+    "differs": "The class shown everywhere stays {{current}}: this assessment gives {{next}}. Save the assessment to apply {{next}}, or adjust the scores.",
+    "usedFor": "The criticality class drives the response times of intervention requests (“SLA rules” in the Requests module) and the asset filters and rankings."
   },
   "errors": {
     "ASSET_DATE_INVALID": "Enter the date as a calendar date.",

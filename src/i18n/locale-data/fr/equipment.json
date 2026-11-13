@@ -64,7 +64,7 @@
       "code": "Code",
       "name": "Désignation",
       "class": "Classe",
-      "site": "Site",
+      "site": "Unité d'organisation",
       "status": "Statut",
       "criticality": "Criticité",
       "family": "Famille",
@@ -861,7 +861,7 @@
     "currentValue": "Valeur actuelle : {{value}} {{unit}}",
     "errors": {
       "number": "Saisissez un nombre.",
-      "belowCurrent": "La valeur ne peut pas être inférieure au relevé actuel ({{current}}).",
+      "belowCurrent": "La valeur ne peut pas être inférieure au relevé actuel ({{current}}). Si le compteur a été changé, utilisez « Remplacer le compteur ».",
       "future": "Un relevé ne peut pas être dans le futur.",
       "positive": "Saisissez zéro ou un nombre positif."
     },
@@ -904,6 +904,11 @@
       "alreadyOpen": "Seuil {{level}} franchi : la demande {{code}} est déjà ouverte, aucune nouvelle demande.",
       "notRaised": "Seuil {{level}} franchi, mais aucune demande n'a été créée.",
       "raisedChip": "Seuil {{level}} → {{code}}"
+    },
+    "replace": {
+      "action": "Remplacer le compteur",
+      "title": "Nouveau compteur posé — {{name}}",
+      "body": "Saisissez la valeur affichée par le nouveau compteur (souvent 0). Elle peut être inférieure à l'ancienne : le total de vie de l'équipement continue sans retour en arrière et les préventifs au compteur restent justes."
     }
   },
   "spares": {
@@ -996,7 +1001,9 @@
     "history": "Historique des évaluations",
     "noHistory": "Aucune évaluation : la classe a été saisie à la main.",
     "historyLine": "Risque {{risk}} (classe précédente {{previous}})",
-    "historyScores": "S {{s}} · E {{e}} · P {{p}} · Q {{q}} · C {{c}} · Pr {{l}}"
+    "historyScores": "S {{s}} · E {{e}} · P {{p}} · Q {{q}} · C {{c}} · Pr {{l}}",
+    "differs": "La classe affichée partout reste {{current}} : cette évaluation donne {{next}}. Enregistrez l'évaluation pour appliquer {{next}}, ou ajustez les notes.",
+    "usedFor": "La classe de criticité sert aux délais de réponse des demandes d'intervention (« Règles SLA » du module Demandes) et aux filtres et classements des équipements."
   },
   "errors": {
     "ASSET_DATE_INVALID": "Saisissez une date de calendrier.",

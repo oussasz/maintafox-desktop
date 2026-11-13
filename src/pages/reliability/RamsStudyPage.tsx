@@ -28,12 +28,14 @@ import {
   isoDay,
   useRamsRight,
 } from "@/components/reliability/study/rams-ui";
+import { type SummaryRecord, summarizeStudy } from "@/components/reliability/study/study-summary";
 import { hasScreenToReturnTo } from "@/components/ui/back-to-origin-button";
 import { Button } from "@/components/ui/button";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import { DateField } from "@/components/ui/date-field";
 import { StatusChip } from "@/components/ui/status-chip";
 import { mfLayout } from "@/design-system/tokens";
+import { useFormatters } from "@/hooks/use-formatters";
 import { cn } from "@/lib/utils";
 import { listFailureCodes, listFailureHierarchies } from "@/services/reliability-service";
 import {
@@ -491,6 +493,7 @@ export function RamsStudyPage() {
             aria-labelledby={`rams-tab-${step}`}
             className="p-4"
           >
+            <StudyPlainSummary records={dataset.records} />
             {step === "data" ? (
               <StudyDataStep
                 dataset={dataset}
@@ -566,5 +569,28 @@ export function RamsStudyPage() {
         />
       ) : null}
     </ModulePageShell>
+  );
+}
+
+/** "En bref" (UX L2-37): the plain reading of the study before the expert steps. */
+function StudyPlainSummary({ records }: { records: readonly SummaryRecord[] }) {
+  const { t } = useTranslation("reliability");
+  const { formatNumber } = useFormatters();
+  const s = summarizeStudy(records);
+  if (s.failures === 0) return null;
+  return (
+    <p className="mb-4 rounded-md border border-surface-border bg-surface-1 px-3 py-2 text-sm">
+      <span className="font-semibold">{t("rams.summary.title")} </span>
+      {t("rams.summary.failures", {
+        count: s.failures,
+        hours: formatNumber(Math.round(s.downtimeHours)),
+      })}
+      {s.topAsset
+        ? ` ${t("rams.summary.topAsset", { code: s.topAsset.code, count: s.topAsset.count })}`
+        : ""}
+      {s.topMode
+        ? ` ${t("rams.summary.topMode", { mode: s.topMode.label, count: s.topMode.count })}`
+        : ""}
+    </p>
   );
 }

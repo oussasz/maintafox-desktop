@@ -1796,6 +1796,15 @@
       "labelled": "{{label}} : {{value}}",
       "plannedCost": "Coût d'un remplacement planifié",
       "failureCost": "Coût d'une panne (perte de production incluse)"
+    },
+    "summary": {
+      "title": "En bref :",
+      "failures_one": "{{count}} défaillance retenue, {{hours}} h d'arrêt.",
+      "failures_other": "{{count}} défaillances retenues, {{hours}} h d'arrêt.",
+      "topAsset_one": "Équipement le plus touché : {{code}} ({{count}} fois).",
+      "topAsset_other": "Équipement le plus touché : {{code}} ({{count}} fois).",
+      "topMode_one": "Panne la plus fréquente : {{mode}} ({{count}} fois).",
+      "topMode_other": "Panne la plus fréquente : {{mode}} ({{count}} fois)."
     }
   },
   "errors": {
