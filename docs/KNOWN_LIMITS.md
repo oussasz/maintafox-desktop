@@ -21,7 +21,8 @@ Last updated: 2026-11-13 (0.9.3 release action list: server first, rights to gra
 ### 0.9.3 release action list (in this order)
 
 1. **Sync server first.** Deploy the vendor-console change that adds the 7 new synced record types
-   (229 → 236: `asset_corrective_actions`, `asset_five_why_analyses`, `equipment_isolation_points`,
+   (server registry 229 → 236; the desktop registry gained the same 7, 222 → 229:
+   `asset_corrective_actions`, `asset_five_why_analyses`, `equipment_isolation_points`,
    `permit_gas_tests`, `permit_personal_locks`, `permit_workers`, `wo_history_records`), regenerated
    from the desktop registry. Do this before any PC installs 0.9.3. Otherwise the server refuses
    those rows as `unknown_entity_type`.
@@ -38,12 +39,15 @@ Last updated: 2026-11-13 (0.9.3 release action list: server first, rights to gra
      planners, custom roles) keeps creating requests and orders but **no longer approves**. Grant
      `inv.approve` and an approval limit where the plant wants it. Roles that held `inv.procure`
      receive `inv.receive`, so goods receipts continue.
+   - Stock from work orders (`inv.manage`, migration 275): only a user with the stock right moves
+     stock when recording a part on a work order. For anyone else the line is recorded "à sortir"
+     and the storekeeper issues it. Grant `inv.manage` to roles that must still issue directly.
 4. **Reprint the equipment QR labels** printed before the asset-code labels. Scanning an old label is
    refused with "Étiquette à réimprimer". Reprint from each equipment record; there is no bulk
    reprint yet.
 5. **What the upgrade itself changes (migrations 266 to 296, run on each PC, nothing is sent):**
    - Work on equipment of criticality A now needs a consignation permit (rule `CRITICITE_A`,
-     migration 278). Open work orders on such equipment are flagged at the first start, so starting
+     migration 278). Open work orders on such equipment are flagged at the first launch of 0.9.3, so starting
      or resuming them needs a live LOTO permit, or a person with the permit-issue right clears the
      flag with a reason. To change or remove the rule: Données de référence → permit rules.
    - Every permit type that the plant's rules give a work order is now required to start it
