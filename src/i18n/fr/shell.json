@@ -715,6 +715,7 @@
       "available": "La version {{version}} est disponible. Installez-la depuis le message en haut de la fenêtre.",
       "up_to_date": "Maintafox est à jour.",
       "not_configured": "Les mises à jour intégrées ne sont pas encore configurées dans cette version.",
+      "store_managed": "Cette version de Maintafox vient du Microsoft Store : c’est le Store qui installe les mises à jour. Pour l’obtenir tout de suite, ouvrez le Microsoft Store, puis Bibliothèque > Obtenir les mises à jour.",
       "not_activated": "Les mises à jour sont disponibles une fois cet ordinateur activé.",
       "unreachable": "Le serveur de mises à jour est injoignable. Maintafox continue de fonctionner ; il réessaiera plus tard.",
       "close": "Fermer"

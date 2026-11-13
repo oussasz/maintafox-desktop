@@ -1,0 +1,168 @@
+# Microsoft Store package (MSIX). Builds the Store flavour of Maintafox (MAINTAFOX_DISTRIBUTION=store:
+# no in-app updater, the Store installs updates) and packs it into an UNSIGNED .msix plus the
+# .msixupload that Partner Center takes. The Store signs the package (owner decision 2026-10-24: no
+# code-signing certificate). Nothing is uploaded to the Store from here: the owner uploads the
+# .msixupload in Partner Center (docs/store/MICROSOFT_STORE.md).
+#
+# Package identity: repository variables (Settings > Secrets and variables > Actions > Variables),
+# copied from Partner Center > the app > Product management > Product identity. They are public
+# values (they are inside every package), not secrets:
+#   MSSTORE_IDENTITY_NAME            Package/Identity/Name
+#   MSSTORE_PUBLISHER                Package/Identity/Publisher (CN=...)
+#   MSSTORE_PUBLISHER_DISPLAY_NAME   Package/Properties/PublisherDisplayName
+#
+# Runs:
+# - on a release tag vX.Y.Z, once the three variables are set (before that it is skipped);
+# - on a pull request that changes the Store packaging (always a packaging check);
+# - by hand (Actions > Microsoft Store package > Run workflow) on a release tag, or with "Packaging
+#   check" on any branch. "Packaging
+#   check" builds with a test identity so the packaging can be checked before the Partner Center
+#   account exists; its artifact is named NOT-FOR-STORE and the Store would refuse it.
+#
+# Supply-chain rules as in release.yml: every ${{ }} value reaches scripts through env:, actions
+# are pinned to full commit SHAs, no build cache is restored.
+name: Microsoft Store package
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  # A change to the Store packaging gets a packaging check (test identity) on its pull request.
+  pull_request:
+    paths:
+      - ".github/workflows/store.yml"
+      - "scripts/store/**"
+      - "src-tauri/windows/msix/**"
+      - "src-tauri/build.rs"
+  workflow_dispatch:
+    inputs:
+      packaging_check:
+        description: "Packaging check with a test identity (artifact NOT for the Store)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: store-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  SQLX_OFFLINE: "true"
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  msix:
+    name: Build the Store package (MSIX)
+    if: github.event_name != 'push' || vars.MSSTORE_IDENTITY_NAME != ''
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Version and package identity
+        id: meta
+        shell: pwsh
+        env:
+          PACKAGING_CHECK: ${{ github.event_name == 'pull_request' || inputs.packaging_check }}
+          REF_TYPE: ${{ github.ref_type }}
+          TAG: ${{ github.ref_name }}
+          IDENTITY_NAME: ${{ vars.MSSTORE_IDENTITY_NAME }}
+          PUBLISHER: ${{ vars.MSSTORE_PUBLISHER }}
+          PUBLISHER_DISPLAY_NAME: ${{ vars.MSSTORE_PUBLISHER_DISPLAY_NAME }}
+        run: |
+          $conf = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          if ($env:PACKAGING_CHECK -eq "true") {
+            # Test identity: makeappx checks the package, the Store would refuse it.
+            if ($conf -notmatch '^(\d+\.\d+\.\d+)') { Write-Host "::error::tauri.conf.json version '$conf' does not start with MAJOR.MINOR.PATCH."; exit 1 }
+            $version = $Matches[1]
+            $identity = "MaintafoxPackagingCheck.NotForStore"
+            # A plain CN without commas: the Publisher must be a valid distinguished name.
+            $publisher = "CN=MaintafoxPackagingCheckNotForStore"
+            $display = "Packaging check (not for the Store)"
+            $artifact = "maintafox-store-$version-NOT-FOR-STORE"
+            Write-Host "::warning title=Packaging check::This package uses a test identity. It checks the packaging only; do not upload it to Partner Center."
+          } else {
+            if ($conf -notmatch '^\d+\.\d+\.\d+$') {
+              Write-Host "::error::tauri.conf.json has version '$conf', not a plain release version MAJOR.MINOR.PATCH. Store packages are made from release versions only (use 'Packaging check' to test)."; exit 1
+            }
+            $version = $conf
+            # A package for the Store is made from a release tag only, never from a branch.
+            if ($env:REF_TYPE -ne "tag") {
+              Write-Host "::error::A Store package is built from a release tag vX.Y.Z (choose the tag in 'Use workflow from'), or tick 'Packaging check' to test a branch."; exit 1
+            }
+            if ($env:TAG -cne "v$version") {
+              Write-Host "::error::The tag is $($env:TAG) but tauri.conf.json has version $version."; exit 1
+            }
+            $missing = @(@("IDENTITY_NAME", "PUBLISHER", "PUBLISHER_DISPLAY_NAME") | Where-Object { -not [Environment]::GetEnvironmentVariable($_) } | ForEach-Object { "MSSTORE_$_" })
+            if ($missing) {
+              Write-Host "::error::Repository variables not set: $($missing -join ', '). Copy them from Partner Center > Product identity (docs/store/MICROSOFT_STORE.md)."; exit 1
+            }
+            $identity = $env:IDENTITY_NAME
+            $publisher = $env:PUBLISHER
+            $display = $env:PUBLISHER_DISPLAY_NAME
+            $artifact = "maintafox-store-$version"
+          }
+          foreach ($v in @($identity, $publisher, $display)) {
+            if ($v -match "[`r`n]") { Write-Host "::error::A package identity value spans several lines."; exit 1 }
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "identity=$identity" >> $env:GITHUB_OUTPUT
+          "publisher=$publisher" >> $env:GITHUB_OUTPUT
+          "display=$display" >> $env:GITHUB_OUTPUT
+          "artifact=$artifact" >> $env:GITHUB_OUTPUT
+
+      - name: Install Rust (MSVC, the toolchain of src-tauri/rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master 2026-10-09 (input handling fix)
+        with:
+          toolchain: "1.94.1"
+          targets: x86_64-pc-windows-msvc
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The Store flavour: build.rs sees MAINTAFOX_DISTRIBUTION=store and builds without the
+      # updater (no key embedded, no plugin). No installer is bundled: the MSIX is made below.
+      - name: Build the app (Store flavour, no installer)
+        shell: pwsh
+        env:
+          MAINTAFOX_DISTRIBUTION: store
+        run: |
+          pnpm tauri build --no-bundle
+          if ($LASTEXITCODE -ne 0) { Write-Host "::error::tauri build failed."; exit 1 }
+
+      - name: Pack the MSIX and the .msixupload
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          IDENTITY_NAME: ${{ steps.meta.outputs.identity }}
+          PUBLISHER: ${{ steps.meta.outputs.publisher }}
+          PUBLISHER_DISPLAY_NAME: ${{ steps.meta.outputs.display }}
+        run: |
+          $exe = "src-tauri/target/release/maintafox.exe"
+          if (-not (Test-Path -LiteralPath $exe)) {
+            $found = (Get-ChildItem src-tauri/target/release -Filter *.exe -ErrorAction SilentlyContinue | ForEach-Object Name) -join ", "
+            Write-Host "::error::The app binary $exe was not built; found: $found"; exit 1
+          }
+          ./scripts/store/build-msix.ps1 -Executable $exe -IdentityName $env:IDENTITY_NAME `
+            -Publisher $env:PUBLISHER -PublisherDisplayName $env:PUBLISHER_DISPLAY_NAME `
+            -Version $env:VERSION -OutDir dist-store
+
+      - name: Keep the Store package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ steps.meta.outputs.artifact }}
+          path: dist-store/
+          if-no-files-found: error
+          retention-days: 30
