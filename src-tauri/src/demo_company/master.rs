@@ -929,6 +929,7 @@ async fn people(
                     personnel_id: Some(created.id),
                     initial_password: None,
                     force_password_change: Some(true),
+                    display_name: None,
                 },
             )
             .await?

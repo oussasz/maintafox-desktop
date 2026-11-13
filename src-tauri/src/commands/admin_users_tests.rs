@@ -860,6 +860,7 @@ async fn usernames_are_unique_regardless_of_case_and_spaces() {
         personnel_id: None,
         initial_password: Some("ValidPass1".into()),
         force_password_change: None,
+        display_name: None,
     };
     create_user_impl(&state, &caller, input(" New.User "))
         .await
@@ -2207,6 +2208,7 @@ async fn a_user_created_on_a_site_gets_only_that_site_and_administrators_stay_pl
         personnel_id: None,
         initial_password: Some("ValidPass1".into()),
         force_password_change: None,
+        display_name: None,
     };
 
     // On a site: one assignment on that node, no plant-wide one added.
@@ -2495,6 +2497,7 @@ async fn every_local_password_and_status_write_names_its_author() {
             personnel_id: None,
             initial_password: Some("ValidPass1".into()),
             force_password_change: None,
+            display_name: None,
         },
     )
     .await

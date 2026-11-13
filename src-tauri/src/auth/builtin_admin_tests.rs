@@ -605,6 +605,7 @@ async fn creating_an_administrator_in_user_administration_retires_the_builtin_ad
             personnel_id: None,
             initial_password: Some("Adjoint-Usine-2026!".into()),
             force_password_change: None,
+            display_name: None,
         },
     )
     .await

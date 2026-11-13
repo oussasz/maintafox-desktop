@@ -133,7 +133,7 @@ export function DashboardPage() {
         canInv: can(P.INV_VIEW),
         canRam: can(P.RAM_VIEW),
         canRep: can(P.REP_VIEW),
-        isSupervisorHeavy: can(P.DI_REVIEW) || can(P.OT_CLOSE),
+        isSupervisorHeavy: can(P.DI_REVIEW) || can(P.OT_APPROVE),
       }),
     [can],
   );
