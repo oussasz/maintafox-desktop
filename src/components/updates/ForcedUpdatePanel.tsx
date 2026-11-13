@@ -21,7 +21,10 @@ export function ForcedUpdatePanel() {
   const u = useUpdater();
   const status = u.result?.status;
   const statusMessage =
-    status === "not_configured" || status === "not_activated" || status === "unreachable"
+    status === "not_configured" ||
+    status === "store_managed" ||
+    status === "not_activated" ||
+    status === "unreachable"
       ? t(`updates.status.${status}`)
       : null;
 
@@ -29,7 +32,10 @@ export function ForcedUpdatePanel() {
     <div className="mt-6 space-y-3" data-testid="forced-update-panel">
       <UpdateBanner embedded />
       {statusMessage ? <p className="text-sm text-text-secondary">{statusMessage}</p> : null}
-      <p className="text-sm text-text-secondary">{t("updates.forced.adminHint")}</p>
+      {/* Store build: the Store installs the update, not an administrator from here. */}
+      {status === "store_managed" ? null : (
+        <p className="text-sm text-text-secondary">{t("updates.forced.adminHint")}</p>
+      )}
       {u.phase === "idle" ? (
         <Button size="sm" variant="outline" onClick={u.checkNow} disabled={u.isChecking || !ready}>
           {u.isChecking ? t("updates.status.checking") : t("updates.forced.check")}

@@ -715,6 +715,7 @@
       "available": "Version {{version}} is available. Install it from the message at the top of the window.",
       "up_to_date": "Maintafox is up to date.",
       "not_configured": "In-app updates are not set up in this build yet.",
+      "store_managed": "This copy of Maintafox comes from the Microsoft Store, which installs its updates. To get one now, open the Microsoft Store, then Library > Get updates.",
       "not_activated": "Updates are available once this computer is activated.",
       "unreachable": "The update server could not be reached. Maintafox keeps working; it will try again later.",
       "close": "Close"
