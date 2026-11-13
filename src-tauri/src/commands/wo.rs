@@ -2692,11 +2692,16 @@ pub async fn set_wo_subcontracting(
     let wo_id = input.wo_id;
     let expected = input.expected_row_version;
     let summary = format!(
-        "Contractor updated (company {}, cost {})",
+        "Contractor updated (company {}, cost {}{})",
         input
             .external_company_id
             .map_or_else(|| "none".to_string(), |id| id.to_string()),
-        input.service_cost.unwrap_or(0.0)
+        input.service_cost.unwrap_or(0.0),
+        match input.under_warranty {
+            Some(true) => ", under warranty",
+            Some(false) => ", not under warranty",
+            None => "",
+        }
     );
     let saved = crate::wo::subcontracting::set_wo_subcontracting(&state.db, input).await?;
     audit::record_wo_change_with_diff(

@@ -167,7 +167,10 @@
     "repair.swapDowntime": "Swap segment start/end (negative duration)",
     "repair.closeAtStart": "Close segment at start time",
     "repair.trimOverlap": "Trim first segment end to remove overlap",
-    "severity": { "error": "Error", "warning": "Warning" },
+    "severity": {
+      "error": "Error",
+      "warning": "Warning"
+    },
     "code": {
       "FK_ORPHAN_FAILURE_MODE": "Failure mode not found",
       "WO_DOWNTIME_NEGATIVE_DURATION": "Downtime with negative duration",
@@ -892,7 +895,13 @@
       "expired": "Contract expired"
     },
     "save": "Save contractor details",
-    "loadError": "The contractor details of this work order could not be loaded."
+    "loadError": "The contractor details of this work order could not be loaded.",
+    "warranty": {
+      "label": "Repair under warranty (to charge back to the supplier)",
+      "assetUntil": "Equipment under warranty until {{date}}.",
+      "note": "Charge-back note",
+      "noteHint": "Claim reference, parts or hours to recover from the supplier or the maker."
+    }
   },
   "closeout": {
     "progressTitle": "Closeout progress",

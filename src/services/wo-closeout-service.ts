@@ -410,6 +410,9 @@ const WoSubcontractingSchema = z.object({
   contract_end: z.string().nullable(),
   contract_state: z.enum(["none", "active", "expiring", "expired"]),
   contract_days_left: z.number().nullable(),
+  under_warranty: z.boolean().default(false),
+  warranty_claim_note: z.string().nullable().default(null),
+  asset_warranty_expiry: z.string().nullable().default(null),
 });
 
 export type WoSubcontracting = z.infer<typeof WoSubcontractingSchema>;
@@ -431,6 +434,9 @@ export interface SetWoSubcontractingInput {
   service_order_ref: string | null;
   subcontractor_hours: number | null;
   service_cost: number | null;
+  /** Repair covered by a warranty (UX L2-29); omit to keep the saved value. */
+  under_warranty?: boolean;
+  warranty_claim_note?: string | null;
 }
 
 /** Contractor, order reference, hours and cost of one work order. */
