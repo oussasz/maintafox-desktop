@@ -513,11 +513,19 @@ pub static SIGNING_RULES: &[SigningRule] = &[
         author_fields: &[
             author(
                 "three_person_changed_by_id",
-                &["three_person_changed_at", "three_person_change_reason"],
+                &[
+                    "requires_three_person_removal",
+                    "three_person_changed_at",
+                    "three_person_change_reason",
+                ],
             ),
             author(
                 "isolation_changed_by_id",
-                &["isolation_changed_at", "isolation_change_reason"],
+                &[
+                    "requires_energy_isolation",
+                    "isolation_changed_at",
+                    "isolation_change_reason",
+                ],
             ),
         ],
         not_attribution: &[],
