@@ -765,7 +765,13 @@ async fn issue_in(
             issued_by_user_id: caller.user_id,
             expires_at: answer.expires_at.clone(),
         });
-        save_follow_up(db, &state, Some(caller.user_id), "phone enrolment issued").await
+        save_follow_up(
+            db,
+            &state,
+            Some(caller.user_id),
+            "Téléphone enrôlé (code d’enrôlement émis)",
+        )
+        .await
     }
     .await;
     if let Err(e) = followed {
@@ -855,7 +861,7 @@ async fn settle_issued(db: &DatabaseConnection, status: &MobileEnrolmentStatus) 
         .await;
         notify_enrolled(db, &entry, status).await;
     }
-    save_follow_up(db, &state, None, "phone enrolment followed to its end").await
+    save_follow_up(db, &state, None, "Suivi de l’enrôlement d’un téléphone terminé").await
 }
 
 async fn notify_enrolled(db: &DatabaseConnection, entry: &IssuedEnrolment, status: &MobileEnrolmentStatus) {
@@ -1035,7 +1041,7 @@ pub(crate) async fn record_person_revocation_in<C: ConnectionTrait + Transaction
         conn,
         &state,
         Some(requested_by_user_id),
-        "phones of a disabled account to revoke",
+        "Téléphones d’un compte désactivé à révoquer",
     )
     .await
 }
@@ -1148,7 +1154,14 @@ async fn settle_sent(db: &DatabaseConnection, done: &[PendingRevocation], failed
         }
     }
     if changed {
-        if let Err(e) = save_follow_up(db, &state, None, "phones of disabled accounts revoked").await {
+        if let Err(e) = save_follow_up(
+            db,
+            &state,
+            None,
+            "Téléphones des comptes désactivés révoqués (automatique)",
+        )
+        .await
+        {
             tracing::error!(error = %e, "mobile enrolment: follow-up state not saved");
         }
     }

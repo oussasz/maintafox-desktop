@@ -963,7 +963,7 @@
       "requiresStepUp": "Require step-up for publishing"
     },
     "scopeTypes": {
-      "tenant": "Global (tenant)",
+      "tenant": "Whole company",
       "site": "Site",
       "department": "Department"
     },
@@ -1071,6 +1071,7 @@
     "department": "Department"
   },
   "audit": {
+    "scopeWholeCompany": "Whole company",
     "title": "Admin audit timeline",
     "applied": "Applied",
     "blocked": "Blocked",
