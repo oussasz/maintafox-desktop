@@ -334,8 +334,10 @@ pub static SIGNING_RULES: &[SigningRule] = &[
         author_fields: &[
             author("counted_by_id", &["counted_qty"]),
             // `self_approved`: the counter approved their own variance (four-eyes opt-out, m259):
-            // only the approver may set or clear it (review F6).
-            author("approved_by_id", &["approved_at", "approval_note", "self_approved"]),
+            // only the approver may change it, unless the approval itself is withdrawn (review
+            // F6). Vouched, not guarded: the column is NOT NULL and stays 0 when an approval is
+            // reset.
+            author_vouching("approved_by_id", &["approved_at", "approval_note"], &["self_approved"]),
             author("second_approved_by_id", &["second_approved_at", "second_approval_note"]),
         ],
         not_attribution: &[],
