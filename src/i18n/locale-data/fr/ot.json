@@ -542,6 +542,9 @@
   },
   "cancel": {
     "title": "Annuler l'ordre de travail",
+    "keep": "Garder l'OT",
+    "partsIssued_one": "{{count}} ligne de pièces a déjà été sortie du magasin pour cet OT : l'annulation ne la remet pas en stock. Faites un retour magasin pour les pièces non utilisées.",
+    "partsIssued_other": "{{count}} lignes de pièces ont déjà été sorties du magasin pour cet OT : l'annulation ne les remet pas en stock. Faites un retour magasin pour les pièces non utilisées.",
     "warning": "L'annulation arrête le cycle de vie. Cette action n'est pas réversible via le même chemin.",
     "reason": "Motif d'annulation",
     "reasonPlaceholder": "Expliquez pourquoi cet OT est annulé…",

@@ -601,6 +601,14 @@ pub async fn approve_di(
 ) -> AppResult<crate::di::domain::InterventionRequest> {
     let user = require_session!(state);
     require_on_di(&state, user.user_id, crate::rbac::permissions::DI_APPROVE, input.di_id).await?;
+    // L1-34: the declarer of the request does not approve it.
+    access::check_not_declarer(
+        &state.db,
+        input.di_id,
+        i64::from(user.user_id),
+        access::DiDecision::Approve,
+    )
+    .await?;
 
     input.actor_id = i64::from(user.user_id);
     let di = review::approve_di(&state.db, input).await?;
@@ -880,6 +888,14 @@ pub async fn convert_di_to_wo(
     // di.convert on the request, and the work-order create right where the new work order is
     // anchored (`conversion` copies the request's org node into `work_orders.entity_id`).
     access::require_convert(&state.db, &state.permission_cache, user.user_id, input.di_id).await?;
+    // L1-34: the declarer of the request does not convert it.
+    access::check_not_declarer(
+        &state.db,
+        input.di_id,
+        i64::from(user.user_id),
+        access::DiDecision::Convert,
+    )
+    .await?;
 
     input.actor_id = i64::from(user.user_id);
     let result = conversion::convert_di_to_work_order(&state.db, input).await?;

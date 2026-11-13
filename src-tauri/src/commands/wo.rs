@@ -543,6 +543,15 @@ pub async fn update_wo_draft(
         input.equipment_id,
     )
     .await?;
+    // L1-35: only its execution actors (assignee, team, planner, `ot.approve`) or its creator edit a draft.
+    execution_actor::require_draft_edit(
+        &state.db,
+        &state.permission_cache,
+        user.user_id,
+        crate::rbac::permissions::OT_EDIT,
+        input.id,
+    )
+    .await?;
     let before = queries::get_work_order(&state.db, input.id).await?;
     let expected = input.expected_row_version;
     let wo = queries::update_wo_draft_fields(&state.db, input, Some(i64::from(user.user_id))).await?;

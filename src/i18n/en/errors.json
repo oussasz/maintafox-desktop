@@ -894,6 +894,8 @@
     "GATE_DI_REJECT_REASON_REQUIRED": "Rejection refused: give the reason. The requester will read it.",
     "GATE_DI_RELATED_REQUIRED": "Closing refused: for a duplicate, state the original request this one duplicates.",
     "GATE_DI_RELATED_SELF": "The linked request cannot be the request you are closing. Choose the original request.",
+    "GATE_DI_SELF_APPROVAL": "Approval refused: you declared this request. Another person must approve it (separation of duties).",
+    "GATE_DI_SELF_CONVERSION": "Conversion refused: you declared this request. Another person must convert it into a work order (separation of duties).",
     "GATE_DI_RELATED_NOT_FOUND": "Linked request not found (no. {{id}}). Check the number of the original request.",
     "GATE_DI_QUEUE_UNKNOWN": "Unknown work queue. Choose a queue from the list offered.",
     "GATE_DI_CODE_DUPLICATE": "Creation refused: the generated request code already exists. Try again.",

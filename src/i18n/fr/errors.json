@@ -893,6 +893,8 @@
     "GATE_DI_REJECT_REASON_REQUIRED": "Rejet impossible : indiquez le motif du rejet. Le demandeur le lira.",
     "GATE_DI_RELATED_REQUIRED": "Clôture impossible : pour un doublon, indiquez la demande d'origine dont celle-ci est le doublon.",
     "GATE_DI_RELATED_SELF": "La demande liée ne peut pas être la demande que vous clôturez. Choisissez la demande d'origine.",
+    "GATE_DI_SELF_APPROVAL": "Approbation refusée : vous avez déclaré cette demande. Une autre personne doit l'approuver (séparation des tâches).",
+    "GATE_DI_SELF_CONVERSION": "Conversion refusée : vous avez déclaré cette demande. Une autre personne doit la convertir en OT (séparation des tâches).",
     "GATE_DI_RELATED_NOT_FOUND": "Demande liée introuvable (n° {{id}}). Vérifiez le numéro de la demande d'origine.",
     "GATE_DI_QUEUE_UNKNOWN": "File de travail inconnue. Choisissez une file dans la liste proposée.",
     "GATE_DI_CODE_DUPLICATE": "Création refusée : le code de demande généré existe déjà. Réessayez.",

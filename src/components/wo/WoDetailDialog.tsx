@@ -96,7 +96,8 @@ const EXECUTION_VISIBLE: Set<string> = new Set([
 ]);
 
 const CLOSEOUT_VISIBLE: Set<string> = new Set(["in_progress", "on_hold", "completed", "closed"]);
-const CANCELLABLE_DENY = new Set(["closed", "cancelled"]);
+// L1-33: a finished ("Terminé") work order goes to its close, not to a cancellation.
+const CANCELLABLE_DENY = new Set(["completed", "closed", "cancelled"]);
 /** Statuses whose footer offers execution steps (start, hold, resume, complete). */
 const FOOTER_EXECUTION_STATES = new Set(["ready", "in_progress", "on_hold"]);
 const ATTACHMENT_UPLOAD_DENY = new Set(["closed", "cancelled"]);
@@ -299,7 +300,9 @@ export function WoDetailDialog({
                 >
                   {t(`status.${statusKey}` as const)}
                 </Badge>
-                {isWoLifecycleState(wo.lifecycle_state) ? (
+                {/* L1-33: the lifecycle badge only when it says more than the status. */}
+                {isWoLifecycleState(wo.lifecycle_state) &&
+                t(`lifecycle.${wo.lifecycle_state}`) !== t(`status.${statusKey}` as const) ? (
                   <Badge
                     variant="outline"
                     className="text-xs"
@@ -737,7 +740,16 @@ function FooterActions({
     <>
       {s === "draft" && can(P.OT_EDIT) && (
         <>
-          <Button size="sm" variant="outline" onClick={onEdit} disabled={busy} className="gap-1.5">
+          {/* L1-35: a draft is edited by its creator or its execution actors (the cancel rule). */}
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={onEdit}
+            disabled={busy || cancelBlocker !== null}
+            title={cancelBlocker ?? undefined}
+            aria-describedby={cancelBlocker ? "wo-execution-blocker" : undefined}
+            className="gap-1.5"
+          >
             <Pencil className="h-3.5 w-3.5" />
             {t("action.edit")}
           </Button>
