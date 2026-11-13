@@ -223,9 +223,9 @@ pub(crate) async fn login_impl(
     let policy = password_policy::PasswordPolicy::load(&state.db).await;
     let mut effective_force_pw_change = force_pw_change;
     let mut password_expires_in_days: Option<i64> = None;
-    // Written once the signing session has started, so the synchronised account change is the
-    // user's own, signed with their key (review F5): written before, it had no maker and the
-    // server refuses an unsigned account change.
+    // The forced change is held by this session only, not stored on the account: the expiry is
+    // read again at every sign-in, and the account change would be an authority act the sync
+    // server refuses unless signed by a user administrator (review F5, review of 5feb40ade).
     let mut force_change_reason: Option<(&'static str, &'static str)> = None;
     let pin_configured = session_manager::get_pin_hash_for_user(&state.db, user_id)
         .await?
@@ -299,7 +299,15 @@ pub(crate) async fn login_impl(
     // the password just verified, and capture this session's changes as theirs. A missing key
     // never blocks the sign-in (their changes wait in the sync outbox until it can sign them); a
     // capture actor that cannot be switched does: the sign-in fails closed (review F1).
-    if let Err(e) = start_signing_session(&state.db, user_id, &payload.password, &stored_hash, session_expires_at).await
+    if let Err(e) = start_signing_session(
+        &state.db,
+        user_id,
+        &payload.password,
+        &stored_hash,
+        &session_id,
+        session_expires_at,
+    )
+    .await
     {
         tracing::error!(error = %e, "auth::signing session not started; sign-in refused");
         state.session.write().await.clear_session();
@@ -320,18 +328,6 @@ pub(crate) async fn login_impl(
     }
 
     if let Some((reason, summary)) = force_change_reason {
-        let now = chrono::Utc::now().to_rfc3339();
-        state
-            .db
-            .execute(sea_orm::Statement::from_sql_and_values(
-                sea_orm::DbBackend::Sqlite,
-                r"UPDATE user_accounts
-                   SET force_password_change = 1,
-                       updated_at = ?
-                   WHERE id = ?",
-                [now.into(), user_id.into()],
-            ))
-            .await?;
         crate::audit::emit(
             &state.db,
             crate::audit::AuditEvent {
@@ -374,6 +370,7 @@ async fn start_signing_session(
     user_id: i32,
     password: &str,
     password_hash: &str,
+    session_id: &str,
     session_expires_at: chrono::DateTime<chrono::Utc>,
 ) -> AppResult<()> {
     let user_sync_id =
@@ -404,6 +401,7 @@ async fn start_signing_session(
     let actor = crate::sync::capture::CaptureActor {
         user_sync_id: &user_sync_id,
         user_id: i64::from(user_id),
+        session_id,
         expires_at: session_expires_at,
     };
     if let Err(e) = crate::sync::capture::set_capture_actor(db, Some(&actor)).await {

@@ -909,6 +909,13 @@ pub async fn change_password_and_rotate(
         [user_id.into(), new_id.clone().into()],
     ))
     .await?;
+    // Per-user signing: the capture actor follows its session to the new stored row.
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE sync_capture_actor SET session_id = ? WHERE id = 1 AND session_id = ?",
+        [new_id.clone().into(), current.session_db_id.clone().into()],
+    ))
+    .await?;
     tx.commit().await?;
     current.session_db_id = new_id;
     // This session made the change: the new date is its reference, not a change after its start.

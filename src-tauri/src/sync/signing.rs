@@ -14,8 +14,6 @@
 //!   (`sync_outbox.awaiting_signers_json`, design §9 "never sent"; the server's rule 4 would
 //!   refuse it).
 
-use std::collections::HashSet;
-
 use base64::Engine as _;
 use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement};
 use serde_json::Value;
@@ -53,32 +51,10 @@ async fn key_is_enrolled(conn: &impl ConnectionTrait, key_id: &str) -> AppResult
         .is_some())
 }
 
-/// User sync ids named by the author fields of a payload (`*_sync_id` values).
-fn author_values(entity_type: &str, payload_json: &str) -> Vec<String> {
-    let Some(rule) = signing_rule(entity_type) else {
-        return Vec::new();
-    };
-    let Ok(Value::Object(payload)) = serde_json::from_str::<Value>(payload_json) else {
-        return Vec::new();
-    };
-    rule.author_fields
-        .iter()
-        .filter_map(|f| payload.get(&author_payload_key(f)).and_then(Value::as_str))
-        .filter(|v| !v.trim().is_empty())
-        .map(str::to_string)
-        .collect()
-}
-
-fn blank(value: Option<&Value>) -> bool {
-    match value {
-        None | Some(Value::Null) => true,
-        Some(Value::String(s)) => s.trim().is_empty(),
-        Some(_) => false,
-    }
-}
-
+/// As the server's rule 4 (`same` of signing-rules.ts): missing and null are equal; an empty
+/// string is not equal to null.
 fn same(a: Option<&Value>, b: Option<&Value>) -> bool {
-    (blank(a) && blank(b)) || a == b
+    a.unwrap_or(&Value::Null) == b.unwrap_or(&Value::Null)
 }
 
 /// The people other than `maker` whose signature the server's rule 4 requires on this payload:
@@ -114,7 +90,7 @@ pub(crate) fn required_cosigners(
         if !changed {
             continue;
         }
-        if let Some(named) = value.and_then(Value::as_str).filter(|v| !v.trim().is_empty()) {
+        if let Some(named) = value.and_then(Value::as_str).filter(|v| !v.is_empty()) {
             if named != maker && !required.iter().any(|r| r == named) {
                 required.push(named.to_string());
             }
@@ -207,7 +183,6 @@ pub async fn sign_pending_items(conn: &impl ConnectionTrait, tenant_id: &str) ->
         .await?;
     let read = |e: sea_orm::DbErr| AppError::SyncError(format!("sync_outbox signing: {e}"));
     let mut signed_items = 0_i64;
-    let mut used_cosigners: HashSet<String> = HashSet::new();
     for row in &rows {
         let signatures_json: Option<String> = row.try_get("", "signatures_json").map_err(read)?;
         let item = PendingItem {
@@ -236,41 +211,23 @@ pub async fn sign_pending_items(conn: &impl ConnectionTrait, tenant_id: &str) ->
                 }
             }
         }
-        // A second signer co-signs only the item of their action that names them in an author field.
-        if has(&signatures, &item.maker) {
-            for named in author_values(&item.entity_type, &item.payload_json) {
-                if named == item.maker || has(&signatures, &named) || signatures.len() >= MAX_SIGNATURES {
-                    continue;
-                }
-                // Only the key bound to this very record and maker (the committed action its
-                // password was typed for) co-signs (review F2).
-                let Some((key, grant)) = signing_keys::cosigner_key(&named) else {
-                    continue;
+        // Who else must still sign before the item may be sent (server rule 4, review F3): a
+        // second person named by a set or changed author field, until their signature is there
+        // and their key is enrolled with the server (a co-signature is stored when the action
+        // commits, `cosign_committed`, possibly before the enrolment). A delete names nobody.
+        let mut awaiting: Vec<String> = Vec::new();
+        if item.operation != "delete" {
+            let previous = previous_payload(conn, &item).await?;
+            for named in required_cosigners(&item.entity_type, &item.payload_json, previous.as_deref(), &item.maker) {
+                let ready = match signatures.iter().find(|s| s.user_sync_id == named) {
+                    Some(sig) => key_is_enrolled(conn, &sig.key_id).await?,
+                    None => false,
                 };
-                if grant.entity_type != item.entity_type
-                    || grant.entity_sync_id != item.entity_sync_id
-                    || grant.maker_user_sync_id != item.maker
-                {
-                    continue;
-                }
-                if key_is_enrolled(conn, key.key_id()).await? {
-                    signatures.push(sign_item(&item, tenant_id, &key)?);
-                    used_cosigners.insert(named);
-                    changed = true;
+                if !ready {
+                    awaiting.push(named);
                 }
             }
         }
-        // Who else must still sign before the item may be sent (server rule 4, review F3). A
-        // delete carries no author field to vouch for.
-        let awaiting: Vec<String> = if item.operation == "delete" {
-            Vec::new()
-        } else {
-            let previous = previous_payload(conn, &item).await?;
-            required_cosigners(&item.entity_type, &item.payload_json, previous.as_deref(), &item.maker)
-                .into_iter()
-                .filter(|named| !has(&signatures, named))
-                .collect()
-        };
         let awaiting_json = serde_json::to_string(&awaiting)?;
         let stored_awaiting: Option<String> = row.try_get("", "awaiting_signers_json").map_err(read)?;
         if changed || stored_awaiting.as_deref() != Some(awaiting_json.as_str()) {
@@ -295,10 +252,94 @@ pub async fn sign_pending_items(conn: &impl ConnectionTrait, tenant_id: &str) ->
             signed_items += 1;
         }
     }
-    for user in used_cosigners {
-        signing_keys::release_cosigner_key(&user);
-    }
     Ok(signed_items)
+}
+
+// ── Co-signature of a committed action (review F2, review of 5feb40ade) ─────────────────────
+
+/// The record a second signer's password was typed for, and who made the change.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CosignGrant {
+    pub entity_type: String,
+    pub entity_sync_id: String,
+    pub maker_user_sync_id: String,
+}
+
+/// Right after the action committed: stages its captured changes and signs, with the second
+/// signer's key, exactly the items of that record by that maker staged after the password check
+/// (`after_outbox_id`) whose set or changed author fields name the second signer. The signature is
+/// stored at once (the key is then dropped), so the item no longer depends on the second signer
+/// staying here; it is sent once their key is enrolled. Returns how many items were co-signed.
+pub async fn cosign_committed(
+    db: &DatabaseConnection,
+    key: &UnlockedSigningKey,
+    grant: &CosignGrant,
+    after_outbox_id: i64,
+    tenant_id: &str,
+) -> AppResult<i64> {
+    use sea_orm::TransactionTrait;
+    let txn = db.begin().await?;
+    crate::sync::capture::drain_capture_journal(&txn).await?;
+    let rows = txn
+        .query_all(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "SELECT id, entity_type, entity_sync_id, operation, row_version, base_row_version, payload_json,
+                    maker_user_sync_id, signatures_json
+             FROM sync_outbox
+             WHERE status = 'pending' AND entity_type = ? AND entity_sync_id = ?
+               AND maker_user_sync_id = ? AND id > ?
+             ORDER BY id",
+            [
+                grant.entity_type.clone().into(),
+                grant.entity_sync_id.clone().into(),
+                grant.maker_user_sync_id.clone().into(),
+                after_outbox_id.into(),
+            ],
+        ))
+        .await?;
+    let read = |e: sea_orm::DbErr| AppError::SyncError(format!("sync_outbox co-signing: {e}"));
+    let mut cosigned = 0_i64;
+    for row in &rows {
+        let signatures_json: Option<String> = row.try_get("", "signatures_json").map_err(read)?;
+        let item = PendingItem {
+            id: row.try_get("", "id").map_err(read)?,
+            entity_type: row.try_get("", "entity_type").map_err(read)?,
+            entity_sync_id: row.try_get("", "entity_sync_id").map_err(read)?,
+            operation: row.try_get("", "operation").map_err(read)?,
+            row_version: row.try_get("", "row_version").map_err(read)?,
+            base_row_version: row.try_get("", "base_row_version").map_err(read)?,
+            payload_json: row.try_get("", "payload_json").map_err(read)?,
+            maker: row.try_get("", "maker_user_sync_id").map_err(read)?,
+            signatures: signatures_json
+                .as_deref()
+                .and_then(|s| serde_json::from_str(s).ok())
+                .unwrap_or_default(),
+        };
+        if item.operation == "delete"
+            || item.signatures.len() >= MAX_SIGNATURES
+            || item.signatures.iter().any(|s| s.user_sync_id == key.user_sync_id())
+        {
+            continue;
+        }
+        let previous = previous_payload(&txn, &item).await?;
+        let named = required_cosigners(&item.entity_type, &item.payload_json, previous.as_deref(), &item.maker);
+        if !named.iter().any(|n| n == key.user_sync_id()) {
+            continue;
+        }
+        let mut signatures = item.signatures.clone();
+        signatures.push(sign_item(&item, tenant_id, key)?);
+        txn.execute(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "UPDATE sync_outbox SET signatures_json = ?, awaiting_signers_json = NULL,
+                    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+             WHERE id = ? AND status = 'pending'",
+            [serde_json::to_string(&signatures)?.into(), item.id.into()],
+        ))
+        .await?;
+        cosigned += 1;
+    }
+    txn.commit().await?;
+    Ok(cosigned)
 }
 
 // ── Session end (review F1) ─────────────────────────────────────────────────────────────────

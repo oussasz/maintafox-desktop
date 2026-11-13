@@ -296,9 +296,10 @@ pub fn unwrap_key(
 
 // ── Keys held in memory ────────────────────────────────────────────────────────────────────
 //
-// The signed-in user's key (`Store::Session`), and a second signer's key for the four-eyes step
-// that needed it (`Store::Cosigner`), are held here by user sync id so the sync push can sign the
-// session's own changes. Every key is released when the session is created or cleared
+// The signed-in user's key (`Store::Session`) is held here by user sync id so the sync push can
+// sign the session's own changes. A second signer's key (`Store::Cosigner`) is staged when their
+// password is checked and taken once by `auth::second_signer` when the action commits, to sign
+// that action's item right away (`sync::signing::cosign_committed`). Every key is released when the session is created or cleared
 // (`SessionManager`); dropping the last reference wipes it. Tests keep one store per thread
 // (each `#[tokio::test]` runs on its own thread), so parallel tests never share keys.
 
@@ -308,24 +309,15 @@ pub fn unwrap_key(
 struct HeldKey {
     key: std::sync::Arc<UnlockedSigningKey>,
     deadline: chrono::DateTime<chrono::Utc>,
-    /// Co-signer keys only: the one change it may co-sign, bound once the action committed
-    /// (`bind_cosigner_key`). `None`: verified but not bound, signs nothing (review F2).
-    grant: Option<CosignGrant>,
-}
-
-/// The change a second signer's password was typed for: their key co-signs only the items of this
-/// record made by this maker.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CosignGrant {
-    pub entity_type: String,
-    pub entity_sync_id: String,
-    pub maker_user_sync_id: String,
+    /// Co-signer keys only: the last outbox item id when the password was checked; only items
+    /// staged after it (the action's own) may be co-signed.
+    after_outbox_id: i64,
 }
 
 type KeyMap = std::collections::HashMap<String, HeldKey>;
 
-/// How long a second signer's key stays usable after their password was typed for an action.
-const COSIGNER_WINDOW_MINUTES: i64 = 30;
+/// How long a staged second signer's key waits for its action to commit.
+const COSIGNER_WINDOW_MINUTES: i64 = 5;
 
 #[derive(Clone, Copy)]
 enum Store {
@@ -385,7 +377,7 @@ pub fn hold_session_key(
             HeldKey {
                 key: key.clone(),
                 deadline: session_expires_at,
-                grant: None,
+                after_outbox_id: 0,
             },
         )
     });
@@ -400,10 +392,11 @@ pub fn held_key(user_sync_id: &str) -> Option<std::sync::Arc<UnlockedSigningKey>
     .flatten()
 }
 
-/// Holds a second signer's key after they typed their password for an action of this session
-/// (`auth::second_signer`). It signs nothing until [`bind_cosigner_key`] binds it to the change
-/// that action committed; it is released once it signed, after a short window, or with the session.
-pub fn hold_cosigner_key(key: UnlockedSigningKey) {
+/// Stages a second signer's key after they typed their password for an action of this session
+/// (`auth::second_signer`). It signs nothing by itself: it is taken once when the action commits
+/// ([`take_cosigner_key`]), dropped when it did not, after a short window, or with the session.
+/// `after_outbox_id`: the last outbox item id when the password was checked.
+pub fn hold_cosigner_key(key: UnlockedSigningKey, after_outbox_id: i64) {
     let key = std::sync::Arc::new(key);
     with_store(Store::Cosigner, |keys| {
         keys.insert(
@@ -411,36 +404,20 @@ pub fn hold_cosigner_key(key: UnlockedSigningKey) {
             HeldKey {
                 key,
                 deadline: chrono::Utc::now() + chrono::TimeDelta::minutes(COSIGNER_WINDOW_MINUTES),
-                grant: None,
+                after_outbox_id,
             },
         )
     });
 }
 
-/// Binds the held co-signer key of `user_sync_id` to the one change its password was typed for.
-/// Returns the key when it was held (and still live).
-pub fn bind_cosigner_key(user_sync_id: &str, grant: CosignGrant) -> Option<std::sync::Arc<UnlockedSigningKey>> {
+/// Takes (removes) the staged key of `user_sync_id`, with the outbox id it was staged after.
+pub fn take_cosigner_key(user_sync_id: &str) -> Option<(std::sync::Arc<UnlockedSigningKey>, i64)> {
     with_store(Store::Cosigner, |keys| {
-        live_entry(keys, user_sync_id)?;
-        let held = keys.get_mut(user_sync_id)?;
-        held.grant = Some(grant);
-        Some(held.key.clone())
+        let live = live_entry(keys, user_sync_id).is_some();
+        let held = keys.remove(user_sync_id)?;
+        live.then_some((held.key, held.after_outbox_id))
     })
     .flatten()
-}
-
-/// The co-signer key of `user_sync_id` and the change it is bound to (unbound keys are not returned).
-pub fn cosigner_key(user_sync_id: &str) -> Option<(std::sync::Arc<UnlockedSigningKey>, CosignGrant)> {
-    with_store(Store::Cosigner, |keys| {
-        let held = live_entry(keys, user_sync_id)?;
-        Some((held.key.clone(), held.grant.clone()?))
-    })
-    .flatten()
-}
-
-/// Releases one co-signer key (it signed what it was typed for, or the action did not commit).
-pub fn release_cosigner_key(user_sync_id: &str) {
-    with_store(Store::Cosigner, |keys| keys.remove(user_sync_id));
 }
 
 /// Releases every held key (sign-out, session expiry, tenant change, new session).

@@ -41,6 +41,7 @@ async fn sign_in_until(db: &DatabaseConnection, user_sync_id: &str, expires_at: 
         Some(&CaptureActor {
             user_sync_id,
             user_id,
+            session_id: &format!("session-{user_id}"),
             expires_at,
         }),
     )
@@ -325,27 +326,87 @@ async fn a_key_past_its_session_expiry_does_not_sign() {
     assert!(awaiting(&db, &row.entity_sync_id).await[1]);
 }
 
-/// A second signer's key signs nothing until it is bound to the committed action's record, and
-/// then only items of that record made by that maker (review F2).
+/// When the action commits, the second signer's key signs right away exactly the items of that
+/// record by that maker staged after their password was checked and naming them; the item is
+/// then sent once the maker signed and the second signer's key is enrolled (review F2, review of
+/// 5feb40ade: the co-signature no longer depends on the second signer staying here).
 #[tokio::test]
-async fn a_cosigner_key_is_bound_to_one_record_and_maker() {
-    use crate::auth::signing_keys::{
-        bind_cosigner_key, cosigner_key, hold_cosigner_key, release_session_keys, CosignGrant,
-    };
+async fn a_committed_action_is_cosigned_at_once_and_only_its_item() {
+    use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
     let db = started_device_db().await;
-    let key = user_with_key(&db, "user-b", true).await;
-    hold_cosigner_key(key);
-    assert!(cosigner_key("user-b").is_none(), "an unbound key co-signs nothing");
-    let grant = CosignGrant {
-        entity_type: "work_orders".to_string(),
-        entity_sync_id: "wo-1".to_string(),
+    let v_key = user_with_key(&db, "user-v", true).await;
+    let b_key = user_with_key(&db, "user-b", true).await;
+    let b_local: i64 = db
+        .query_one(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "SELECT id FROM user_accounts WHERE entity_sync_id = 'user-b'",
+            [],
+        ))
+        .await
+        .expect("select")
+        .expect("user")
+        .try_get("", "id")
+        .expect("id");
+    let mut factory = RowFactory::new();
+    let row = factory.create(&db, "user_scope_assignments").await.expect("row");
+    sign_in(&db, "user-v").await;
+    // An earlier change of V, staged before B typed the password: never co-signed by B.
+    set_reference(&db, row.rowid, "before").await;
+    drain_capture_journal(&db).await.expect("drain");
+    let after: i64 = db
+        .query_one(Statement::from_string(
+            DatabaseBackend::Sqlite,
+            "SELECT MAX(id) AS m FROM sync_outbox".to_string(),
+        ))
+        .await
+        .expect("select")
+        .expect("row")
+        .try_get("", "m")
+        .expect("max");
+    // The action: V records B as the approver.
+    exec(
+        &db,
+        "UPDATE user_scope_assignments SET assigned_by_id = ? WHERE id = ?",
+        vec![b_local.into(), row.rowid.into()],
+    )
+    .await;
+    let grant = super::signing::CosignGrant {
+        entity_type: "user_scope_assignments".to_string(),
+        entity_sync_id: row.entity_sync_id.clone(),
         maker_user_sync_id: "user-v".to_string(),
     };
-    assert!(bind_cosigner_key("user-b", grant.clone()).is_some());
-    let (_, bound) = cosigner_key("user-b").expect("bound");
-    assert_eq!(bound, grant);
+    let n = super::signing::cosign_committed(&db, &b_key, &grant, after, "tenant-1")
+        .await
+        .expect("cosign");
+    assert_eq!(n, 1);
+    let sigs = signatures(&db, &row.entity_sync_id).await;
+    assert!(
+        sigs[1].iter().all(|s| s.user_sync_id != "user-b"),
+        "earlier item not co-signed"
+    );
+    assert_eq!(sigs.last().expect("item")[0].user_sync_id, "user-b");
+
+    // The maker signs at the push; B's key is enrolled: nothing waits.
+    crate::auth::signing_keys::hold_session_key(v_key, session_end());
+    super::signing::sign_pending_items(&db, "tenant-1").await.expect("sign");
+    assert!(!*awaiting(&db, &row.entity_sync_id).await.last().expect("item"));
+    crate::auth::signing_keys::release_session_keys();
+}
+
+/// A staged second signer's key is taken once, and never after the session ends.
+#[tokio::test]
+async fn a_staged_cosigner_key_is_taken_once() {
+    use crate::auth::signing_keys::{hold_cosigner_key, release_session_keys, take_cosigner_key};
+    let db = started_device_db().await;
+    let key = user_with_key(&db, "user-b", true).await;
+    hold_cosigner_key(key, 7);
+    let (_, after) = take_cosigner_key("user-b").expect("staged");
+    assert_eq!(after, 7);
+    assert!(take_cosigner_key("user-b").is_none(), "taken once");
+    let again = user_with_key(&db, "user-n", true).await;
+    hold_cosigner_key(again, 0);
     release_session_keys();
-    assert!(cosigner_key("user-b").is_none());
+    assert!(take_cosigner_key("user-n").is_none(), "released with the session");
 }
 
 /// An item that sets or changes an author field naming someone other than its maker is held until

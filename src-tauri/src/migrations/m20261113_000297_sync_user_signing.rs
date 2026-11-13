@@ -5,7 +5,8 @@
 //!   AES-256-GCM under an Argon2id key of the user's password (`auth::signing_keys`). A key is
 //!   bound to the password hash it was made under; a retired key is kept for the record.
 //! - `sync_capture_actor`: one row naming the signed-in session user (design v9.1 §9: set at
-//!   sign-in, cleared at every session end), with the local `user_id` and the session's absolute
+//!   sign-in, cleared at every session end), with the local `user_id`, the stored session id and
+//!   the session's absolute
 //!   expiry; the capture triggers record it only while that session is live
 //!   (`sync::capture::LIVE_CAPTURE_ACTOR_SQL`).
 //! - `sync_capture_journal.captured_session_user_sync_id`: who made the captured change (NULL for
@@ -87,12 +88,8 @@ impl MigrationTrait for Migration {
         txn.execute_unprepared("INSERT OR IGNORE INTO sync_capture_actor (id, user_sync_id) VALUES (1, NULL)")
             .await?;
         add_column(&txn, "sync_capture_actor", "user_id", "TEXT NULL").await?;
+        add_column(&txn, "sync_capture_actor", "session_id", "TEXT NULL").await?;
         add_column(&txn, "sync_capture_actor", "expires_at", "TEXT NULL").await?;
-        // Every captured write checks that the recorded user still has an open session.
-        txn.execute_unprepared(
-            "CREATE INDEX IF NOT EXISTS idx_app_sessions_user_open ON app_sessions(user_id, is_revoked)",
-        )
-        .await?;
         add_column(
             &txn,
             "sync_capture_journal",

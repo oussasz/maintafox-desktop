@@ -956,12 +956,14 @@ pub(crate) async fn restage_current_state(
 }
 
 /// SQL over `sync_capture_actor a`: the recorded session is still live, i.e. not past its absolute
-/// expiry and its user still has an open stored session (`app_sessions`, not revoked). A session
-/// that ended without a sign-out (expiry, deactivation, password reset elsewhere, a failed clear)
-/// therefore never makes anyone the maker of later changes (design v9 §9, review F1).
-pub(crate) const LIVE_CAPTURE_ACTOR_SQL: &str = "a.user_sync_id IS NOT NULL AND a.user_id IS NOT NULL
+/// expiry and its own stored row (`app_sessions`, that exact session) is not closed. A session
+/// that ended without a sign-out (expiry, deactivation, password reset elsewhere, a failed clear
+/// whose stored row was then closed) therefore never makes anyone the maker of later changes
+/// (design v9 §9, review F1).
+pub(crate) const LIVE_CAPTURE_ACTOR_SQL: &str = "a.user_sync_id IS NOT NULL AND a.session_id IS NOT NULL
     AND a.expires_at IS NOT NULL AND a.expires_at > strftime('%Y-%m-%dT%H:%M:%SZ','now')
-    AND EXISTS (SELECT 1 FROM app_sessions s WHERE s.user_id = a.user_id AND s.is_revoked = 0)";
+    AND EXISTS (SELECT 1 FROM app_sessions s
+                WHERE s.id = a.session_id AND s.user_id = a.user_id AND s.is_revoked = 0)";
 
 /// The signed-in session changes are captured for.
 #[derive(Debug, Clone)]
@@ -969,6 +971,8 @@ pub struct CaptureActor<'a> {
     pub user_sync_id: &'a str,
     /// Local `user_accounts.id` (matched against `app_sessions.user_id`).
     pub user_id: i64,
+    /// The stored session (`app_sessions.id`); closing that row makes the actor inert.
+    pub session_id: &'a str,
     /// The session's absolute expiry.
     pub expires_at: chrono::DateTime<chrono::Utc>,
 }
@@ -995,12 +999,14 @@ pub async fn set_capture_actor(db: &DatabaseConnection, actor: Option<&CaptureAc
     drain_capture_journal(&txn).await?;
     txn.execute(Statement::from_sql_and_values(
         DatabaseBackend::Sqlite,
-        "INSERT INTO sync_capture_actor (id, user_sync_id, user_id, expires_at) VALUES (1, ?, ?, ?)
+        "INSERT INTO sync_capture_actor (id, user_sync_id, user_id, session_id, expires_at)
+         VALUES (1, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET user_sync_id = excluded.user_sync_id, user_id = excluded.user_id,
-                                       expires_at = excluded.expires_at",
+                                       session_id = excluded.session_id, expires_at = excluded.expires_at",
         [
             actor.map(|a| a.user_sync_id.to_string()).into(),
             actor.map(|a| a.user_id.to_string()).into(),
+            actor.map(|a| a.session_id.to_string()).into(),
             actor
                 .map(|a| a.expires_at.format("%Y-%m-%dT%H:%M:%SZ").to_string())
                 .into(),
