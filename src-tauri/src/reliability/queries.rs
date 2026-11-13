@@ -137,7 +137,7 @@ pub async fn list_failure_hierarchies(db: &DatabaseConnection) -> AppResult<Vec<
     let domain_name: String = row
         .try_get::<Option<String>>("", "name")
         .map_err(|e| decode_err("name", e))?
-        .unwrap_or_else(|| "Failure modes".to_string());
+        .unwrap_or_else(|| "Modes de défaillance".to_string());
     Ok(vec![FailureHierarchy {
         id: SYNTHETIC_FAILURE_HIERARCHY_ID,
         entity_sync_id: format!("reference_domain:{FAILURE_MODES_DOMAIN_CODE}"),

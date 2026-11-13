@@ -52,6 +52,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { EmptyState } from "@/components/ui/empty-state";
+import { FileInput } from "@/components/ui/file-input";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ReviewMark } from "@/components/ui/review-mark";
@@ -324,13 +325,11 @@ function DocumentUploadDialog({
         <div className="grid gap-4 py-1">
           <div className="grid gap-1.5">
             <Label htmlFor="doc-file">{t("upload.fields.file")}</Label>
-            <input
+            <FileInput
               key={fileInputKey}
               id="doc-file"
-              type="file"
               aria-describedby={fileError ? "doc-file-error" : undefined}
               aria-invalid={fileError ? true : undefined}
-              className="min-h-10 text-sm text-text-secondary file:me-3 file:h-10 file:cursor-pointer file:rounded-md file:border file:border-surface-border file:bg-surface-1 file:px-3 file:text-sm file:font-medium file:text-text-primary hover:file:bg-surface-2"
               disabled={uploading}
               onChange={(e) => pickFile(e.target.files)}
             />

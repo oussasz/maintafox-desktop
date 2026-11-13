@@ -762,7 +762,7 @@ async fn record_actual_usage_in<C: ConnectionTrait>(
                     source_type: Some(source_type),
                     source_id: Some(part.work_order_id),
                     source_ref: Some(wo_code),
-                    notes: Some("WO part usage issue".to_string()),
+                    notes: Some("Sortie de pièces sur OT".to_string()),
                 },
             )
             .await?;

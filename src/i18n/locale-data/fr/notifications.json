@@ -24,7 +24,7 @@
   },
   "page": {
     "title": "Notifications",
-    "description": "Ce qui demande votre attention : travaux affectés et en retard, demandes à examiner, PM et rondes manquées, stock et permis.",
+    "description": "Ce qui demande votre attention : travaux affectés et en retard, demandes à examiner, MP et rondes manquées, stock et permis.",
     "preferences": "Mes préférences"
   },
   "osToast": {
@@ -200,10 +200,10 @@
       "week_unapproved": "Semaine de planning figée sans approbation",
       "schedule": "Programme de planification"
     },
-    "pm_deferred": "PM différée",
-    "pm_due": "PM à réaliser",
-    "pm_follow_up_created": "Suite donnée à une PM",
-    "pm_missed": "PM manquée",
+    "pm_deferred": "MP différée",
+    "pm_due": "MP à réaliser",
+    "pm_follow_up_created": "Suite donnée à une MP",
+    "pm_missed": "MP manquée",
     "ptw_critical": "Permis expiré encore ouvert",
     "ptw_expiring": "Permis bientôt expiré",
     "stock_critical": "Stock au seuil de réapprovisionnement",
@@ -224,8 +224,8 @@
     "stock_to_reconcile": "Stock à rapprocher après synchronisation",
     "stock_count_recount": "Comptage à refaire",
     "stock_count_second_approval": "Comptage retenu pour une seconde approbation",
-    "retired_equipment_work": "OT sur équipement déclassé",
-    "retired_equipment_request": "Demande sur équipement déclassé",
+    "retired_equipment_work": "OT sur équipement réformé",
+    "retired_equipment_request": "Demande sur équipement réformé",
     "wo_part_to_issue": "Pièce d’OT à sortir du magasin",
     "wo_depannage_started": "OT dépannage démarré ou en attente de permis",
     "wo_depannage_permit_needed": "Permis à établir — dépannage"
@@ -312,19 +312,19 @@
       "body": "{{title}} · échéance {{deadline}}"
     },
     "pm_due": {
-      "title": "PM à réaliser — {{code}}",
+      "title": "MP à réaliser — {{code}}",
       "body": "{{title}} · échéance {{due_at}}"
     },
     "pm_missed": {
-      "title": "PM manquée — {{code}}",
+      "title": "MP manquée — {{code}}",
       "body": "{{title}} · échéance {{due_at}}"
     },
     "pm_deferred": {
-      "title": "PM différée — {{code}}",
+      "title": "MP différée — {{code}}",
       "body": "{{title}} · échéance {{due_at}}"
     },
     "pm_follow_up_created": {
-      "title": "Suite donnée à une PM — {{code}}",
+      "title": "Suite donnée à une MP — {{code}}",
       "body": "{{title}} : un constat a créé une demande ou un OT"
     },
     "cert_expiry": {
@@ -475,12 +475,12 @@
       "body": "{{account}} : compte réactivé le {{changed_at}} par {{author}}, qui n’avait pas (ou plus) le droit de gérer les utilisateurs ici. Le compte reste désactivé sur ce poste. Si c’était voulu, un administrateur le réactive de nouveau ; cela corrige aussi les autres postes."
     },
     "retired_equipment_wo": {
-      "title": "OT {{code}} sur équipement déclassé {{asset}}",
-      "body": "{{title}} : OT ouvert alors que l'équipement {{asset}} ({{asset_name}}) est déclassé ou mis au rebut (croisement à la synchronisation). Annulez l'OT avec un motif, ou remettez l'équipement en service."
+      "title": "OT {{code}} sur équipement réformé {{asset}}",
+      "body": "{{title}} : OT ouvert alors que l'équipement {{asset}} ({{asset_name}}) est réformé ou mis au rebut (croisement à la synchronisation). Annulez l'OT avec un motif, ou remettez l'équipement en service."
     },
     "retired_equipment_di": {
-      "title": "Demande {{code}} sur équipement déclassé {{asset}}",
-      "body": "{{title}} : demande ouverte alors que l'équipement {{asset}} ({{asset_name}}) est déclassé ou mis au rebut (croisement à la synchronisation). Rejetez la demande avec un motif, ou remettez l'équipement en service."
+      "title": "Demande {{code}} sur équipement réformé {{asset}}",
+      "body": "{{title}} : demande ouverte alors que l'équipement {{asset}} ({{asset_name}}) est réformé ou mis au rebut (croisement à la synchronisation). Rejetez la demande avec un motif, ou remettez l'équipement en service."
     },
     "wo_part_to_issue": {
       "title": "À sortir pour {{wo}} : {{part}}",
@@ -514,7 +514,7 @@
     "title": "Notifications — destinataires et escalade",
     "companyList": "Réglage de l'entreprise",
     "companyHint": "Les catégories sont fixées par Maintafox ; leurs destinataires, l'acquittement et l'escalade sont propres à votre site.",
-    "hint": "Chaque catégorie est émise par Maintafox quand sa condition survient (OT en retard, demande à examiner, PM manquée…). Choisissez qui la reçoit. Chacun ne voit que les notifications des modules qu'il est autorisé à consulter.",
+    "hint": "Chaque catégorie est émise par Maintafox quand sa condition survient (OT en retard, demande à examiner, MP manquée…). Choisissez qui la reçoit. Chacun ne voit que les notifications des modules qu'il est autorisé à consulter.",
     "readOnly": "Lecture seule : modifier ces réglages demande l'autorisation ref.manage.",
     "loading": "Chargement des réglages de notification…",
     "loadError": "Les réglages de notification n'ont pas pu être chargés",

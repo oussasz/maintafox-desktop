@@ -107,11 +107,11 @@
       "endOfLifeDate": "Date de fin de vie",
       "technicalNotes": "Notes techniques",
       "maintainableBoundary": "Élément maintenable (ISO 14224)",
-      "decommissionedAt": "Déclassé le"
+      "decommissionedAt": "Réformé le"
     },
     "loadingTitle": "Chargement de l’équipement…",
     "noClassification": "Ni classe ni localisation renseignées",
-    "retiredHint": "Un équipement déclassé ou mis au rebut ne peut plus recevoir de travaux.",
+    "retiredHint": "Un équipement réformé ou mis au rebut ne peut plus recevoir de travaux.",
     "close": "Fermer",
     "yes": "Oui",
     "no": "Non",
@@ -148,7 +148,7 @@
   "status": {
     "operational": "En service",
     "maintenance": "En maintenance",
-    "decommissioned": "Déclassé",
+    "decommissioned": "Réformé",
     "standby": "En veille",
     "scrapped": "Mis au rebut",
     "inStock": "En stock",
@@ -185,7 +185,7 @@
       "commissionedMissing": "Date de mise en service non renseignée (Modifier l'actif)",
       "age": "Âge",
       "wo": "OT",
-      "pm": "PM",
+      "pm": "MP",
       "failures": "Pannes",
       "availability": "Disponibilité opérationnelle",
       "ageYm": "{{years}}a {{months}}m",
@@ -203,7 +203,7 @@
     "eventTypes": {
       "asset_created": "Création",
       "asset_updated": "Modification",
-      "decommissioned": "Déclassement",
+      "decommissioned": "Réforme",
       "assignment_changed": "Affectation",
       "location_changed": "Emplacement",
       "org_changed": "Organisation",
@@ -214,8 +214,8 @@
       "wo_closed": "OT fermé",
       "di_created": "DI créée",
       "di_closed": "DI clôturée",
-      "pm_scheduled": "PM planifié",
-      "pm_executed": "PM exécuté",
+      "pm_scheduled": "MP planifié",
+      "pm_executed": "MP exécuté",
       "inspection_recorded": "Inspection",
       "failure_recorded": "Panne",
       "meter_reading": "Compteur",
@@ -228,7 +228,7 @@
         "all": "Tous",
         "ot": "OT",
         "di": "DI",
-        "pm": "PM",
+        "pm": "MP",
         "inspection": "Inspection",
         "documents": "Documents",
         "failures": "Pannes",
@@ -245,7 +245,7 @@
     "titles": {
       "asset_created": "Équipement créé",
       "asset_updated": "Équipement modifié",
-      "decommissioned": "Équipement déclassé",
+      "decommissioned": "Équipement réformé",
       "assignment_changed": "Affectation modifiée",
       "location_changed": "Emplacement modifié",
       "org_changed": "Déplacé vers une autre unité",
@@ -443,8 +443,8 @@
     "unsavedTitle": "Modifications non enregistrées",
     "unsavedDescription": "Vous avez des modifications non enregistrées. Voulez-vous continuer l'édition ou les abandonner ?",
     "keepEditing": "Continuer l'édition",
-    "retireHint": "Pour retirer cet équipement, utilisez Déclasser : le déclassement vérifie les travaux ouverts et enregistre le motif.",
-    "retiredHint": "Cet équipement est retiré : son statut a été fixé par le déclassement.",
+    "retireHint": "Pour retirer cet équipement, utilisez Réformer : la réforme vérifie les travaux ouverts et enregistre le motif.",
+    "retiredHint": "Cet équipement est retiré : son statut a été fixé par la réforme.",
     "photoDeleteTitle": "Supprimer la photo ?",
     "photoDeleteBody_one": "La photo est supprimée immédiatement, même si vous annulez ensuite le formulaire.",
     "photoDeleteBody_other": "Les {{count}} photos sont supprimées immédiatement, même si vous annulez ensuite le formulaire.",
@@ -478,7 +478,7 @@
     "edit": "Modifier",
     "copyCode": "Copier le code",
     "move": "Déplacer",
-    "decommission": "Déclasser"
+    "decommission": "Réformer"
   },
   "qr": {
     "button": "Code QR",
@@ -608,21 +608,21 @@
     },
     "warnings": {
       "reclassification": "La reclassification d'un actif existant nécessite une vérification manuelle.",
-      "decommission": "Le passage au statut déclassé via l'import est interdit. Utilisez le cycle de vie."
+      "decommission": "Le passage au statut réformé via l'import est interdit. Utilisez le cycle de vie."
     }
   },
   "decommission": {
-    "title": "Déclasser l'équipement",
-    "description": "Vérifiez les dépendances avant de déclasser cet actif.",
-    "action": "Déclasser",
-    "confirm": "Confirmer le déclassement",
+    "title": "Réformer l'équipement",
+    "description": "Vérifiez les dépendances avant de réformer cet actif.",
+    "action": "Réformer",
+    "confirm": "Confirmer la réforme",
     "cancel": "Annuler",
-    "success": "Équipement déclassé avec succès.",
+    "success": "Équipement réformé avec succès.",
     "targetStatus": "Statut cible",
     "reasonLabel": "Motif",
-    "reasonPlaceholder": "Expliquez la raison du déclassement…",
-    "blockerBanner": "Impossible de déclasser — {{count}} élément(s) de travail ouvert(s). Fermez-les d'abord.",
-    "blockerDetail": "bloque le déclassement",
+    "reasonPlaceholder": "Expliquez la raison de la réforme…",
+    "blockerBanner": "Impossible de réformer — {{count}} élément(s) de travail ouvert(s). Fermez-les d'abord.",
+    "blockerDetail": "bloque la réforme",
     "openBlockers": "Voir la liste",
     "pmWarning": "seront suspendus",
     "iotWarning": "seront déliés",
@@ -631,7 +631,7 @@
       "decommissioned": "Mis hors service",
       "scrapped": "Mis au rebut"
     },
-    "dependenciesError": "Les travaux ouverts de cet actif n'ont pas pu être vérifiés : le déclassement reste indisponible",
+    "dependenciesError": "Les travaux ouverts de cet actif n'ont pas pu être vérifiés : la réforme reste indisponible",
     "statusesError": "Les statuts d'équipement n'ont pas pu être chargés",
     "targetStatusPlaceholder": "Choisir le statut final"
   },
@@ -1019,9 +1019,9 @@
     "ASSET_SPARE_NOTES_TOO_LONG": "Les notes sont limitées à {{max}} caractères.",
     "ASSET_SPARE_ARTICLE_INACTIVE": "L’article {{code}} est inactif.",
     "ASSET_SPARE_DUPLICATE": "L’article {{code}} est déjà dans les pièces de rechange de cet équipement.",
-    "ASSET_RETIRE_THROUGH_DECOMMISSION": "Un équipement ne se retire qu'avec Déclasser : le déclassement vérifie les travaux ouverts et enregistre le motif. Utilisez Déclasser depuis la fiche de l'équipement.",
+    "ASSET_RETIRE_THROUGH_DECOMMISSION": "Un équipement ne se retire qu'avec Réformer : la réforme vérifie les travaux ouverts et enregistre le motif. Utilisez Réformer depuis la fiche de l'équipement.",
     "ASSET_RECOMMISSION_REQUIRED": "Un équipement retiré revient en service par une remise en service (enregistrée avec l'auteur et le motif), pas en modifiant son statut.",
-    "ASSET_RECOMMISSION_NOT_RETIRED": "Seul un équipement retiré (déclassé ou mis au rebut) peut être remis en service.",
+    "ASSET_RECOMMISSION_NOT_RETIRED": "Seul un équipement retiré (réformé ou mis au rebut) peut être remis en service.",
     "ASSET_RECOMMISSION_REASON_REQUIRED": "Indiquez le motif de la remise en service.",
     "ASSET_RECOMMISSION_TARGET_RETIRED": "Choisissez un statut en service : un statut retiré n'est pas une remise en service.",
     "ASSET_RECOMMISSION_VERSION_REQUIRED": "Rechargez l'équipement avant de le remettre en service."

@@ -140,8 +140,10 @@ export function BudgetCockpitView({
         accessorFn: (r) => `${r.cost_center_code} ${r.cost_center_name}`,
         cell: ({ row }) => (
           <div className="min-w-0">
-            <div className="font-medium text-text-primary">{row.original.cost_center_code}</div>
-            <div className="truncate text-xs text-text-muted">{row.original.cost_center_name}</div>
+            <div className="truncate font-medium text-text-primary">
+              {row.original.cost_center_name}
+            </div>
+            <div className="text-xs text-text-muted">{row.original.cost_center_code}</div>
           </div>
         ),
       },

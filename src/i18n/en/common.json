@@ -1,4 +1,10 @@
 {
+  "fileInput": {
+    "choose": "Choose a file",
+    "chooseMany": "Choose files",
+    "none": "No file chosen",
+    "many": "{{count}} files chosen"
+  },
   "toast": {
     "dismiss": "Dismiss the message"
   },

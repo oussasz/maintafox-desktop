@@ -114,7 +114,7 @@
     "requiredTools": "Outillage requis (séparé par des virgules)",
     "estimatedDurationHours": "Durée estimée (h)",
     "plannedCrewSize": "Effectif prévu (personnes)",
-    "plannedCrewSizeHint": "Reporté sur l'OT généré par ce PM ; le planning réserve durée × effectif.",
+    "plannedCrewSizeHint": "Reporté sur l'OT généré par ce MP ; le planning réserve durée × effectif.",
     "plannedCrewSizeInvalid": "L'effectif est un nombre entier de personnes, de 1 à {{max}}.",
     "estimatedLaborCost": "Coût main-d'œuvre estimé",
     "estimatedPartsCost": "Coût pièces estimé",
@@ -269,15 +269,15 @@
     "dueTodayHint": "Ouvertes, échéance aujourd'hui",
     "next7dHint": "Ouvertes, échéance sous 7 jours",
     "readyHint": "En attente de planification",
-    "compliance": "Conformité PM",
+    "compliance": "Conformité MP",
     "complianceHint": "{{onTime}} à l'heure sur {{due}} dues",
-    "complianceDefinition": "Travaux faits dans leur fenêtre ÷ PM dues",
+    "complianceDefinition": "Travaux faits dans leur fenêtre ÷ MP dues",
     "compliancePeriod": "Période de conformité",
     "lastDays_one": "{{count}} dernier jour",
     "lastDays_other": "{{count}} derniers jours"
   },
   "kpi": {
-    "compliance": "Conformité PM",
+    "compliance": "Conformité MP",
     "overdueRisk": "Risque de retard",
     "firstPass": "Terminées sans constat",
     "followUpRatio": "Constats avec suite",
@@ -319,7 +319,7 @@
   },
   "dialogs": {
     "newPlan": {
-      "title": "Créer un plan PM",
+      "title": "Créer un plan MP",
       "description": "Définir une stratégie préventive gouvernée. Publiez une version après approbation pour générer les échéances."
     },
     "duplicatePlan": {
@@ -343,15 +343,15 @@
       "saving": "Duplication en cours…"
     },
     "editPlan": {
-      "title": "Modifier le plan PM",
+      "title": "Modifier le plan MP",
       "description": "Mettre à jour les informations du plan. Un changement de déclenchement nécessite une nouvelle version."
     },
     "newVersion": {
-      "title": "Créer une version PM",
+      "title": "Créer une version MP",
       "description": "Rédiger les règles de déclenchement et les estimations avant publication."
     },
     "editVersion": {
-      "title": "Modifier la version PM",
+      "title": "Modifier la version MP",
       "description": "Seules les versions brouillon sont modifiables."
     },
     "refreshForecast": {
@@ -365,15 +365,15 @@
       "description": "Faire avancer cette occurrence dans le circuit opérationnel."
     },
     "execution": {
-      "title": "Saisir l'exécution PM",
+      "title": "Saisir l'exécution MP",
       "description": "Enregistrer le résultat, les constats et leurs suites."
     },
     "deletePlan": {
-      "title": "Supprimer le plan PM",
+      "title": "Supprimer le plan MP",
       "description": "Supprimer le plan {{code}} ? Possible uniquement pour un plan brouillon sans version."
     },
     "deleteVersion": {
-      "title": "Supprimer la version PM",
+      "title": "Supprimer la version MP",
       "description": "Supprimer la version v{{version}} ? Possible uniquement pour une version brouillon sans occurrence."
     },
     "meterReading": {
@@ -390,7 +390,7 @@
     "versionEffect": "Publier une nouvelle version remplace la version en cours pour les prochaines échéances générées. Les échéances et OT déjà générés gardent le contenu de leur version ; le plan reste actif pendant la préparation de la nouvelle version."
   },
   "empty": {
-    "noPlans": "Aucun plan PM. Créez un plan pour commencer.",
+    "noPlans": "Aucun plan MP. Créez un plan pour commencer.",
     "noPlansMatch": "Aucun plan ne correspond aux filtres.",
     "noDue": "Aucune échéance active dans cette vue.",
     "noVersions": "Aucune version.",
@@ -478,7 +478,7 @@
     "schedule": "Planification",
     "cronMidnight": "Tous les jours à minuit",
     "cronMorning": "Tous les jours à 06:00",
-    "cronCustom": "Planification personnalisée (cron)",
+    "cronCustom": "Planification personnalisée (avancé)",
     "cronCustomHint": "Six champs : seconde minute heure jour mois jour-de-semaine.",
     "horizonDays": "Horizon (jours)",
     "skippedHint": "Ignorée : échéance déjà existante, couverte par un plan englobant sur la même période, ou équipement sans compteur du type demandé."
@@ -507,7 +507,7 @@
   },
   "tolerance": {
     "title": "Fenêtre de tolérance",
-    "hint": "Le travail fait dans la fenêtre est à l'heure ; avant, il est en avance ; après, en retard (conformité PM).",
+    "hint": "Le travail fait dans la fenêtre est à l'heure ; avant, il est en avance ; après, en retard (conformité MP).",
     "unit": "Unité",
     "none": "Aucune (au plus tard le jour d'échéance)",
     "days": "Jours",

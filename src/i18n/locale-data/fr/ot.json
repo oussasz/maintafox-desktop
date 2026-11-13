@@ -49,7 +49,7 @@
     "badge": "Arrêt nécessaire",
     "required": "Nécessaire",
     "notRequired": "Non nécessaire",
-    "help": "Si coché, la planification vérifie l'OT contre les fenêtres d'arrêt comme un plan de PM : avertissement sans fenêtre d'arrêt, et l'engagement demande une fenêtre d'arrêt ouverte.",
+    "help": "Si coché, la planification vérifie l'OT contre les fenêtres d'arrêt comme un plan de MP : avertissement sans fenêtre d'arrêt, et l'engagement demande une fenêtre d'arrêt ouverte.",
     "frozen": "Ne se modifie que pendant la préparation de l'OT (brouillon, planification ou prêt).",
     "noPermission": "Vous n'avez pas le droit de modifier cet OT.",
     "confirmOnTitle": "Marquer l'OT comme nécessitant un arrêt ?",
@@ -756,7 +756,7 @@
     "badge": {
       "planned": "Planifié",
       "executionAdded": "Ajouté en cours d'exécution",
-      "generated": "Copié du PM"
+      "generated": "Copié du MP"
     },
     "labor": {
       "planned": "Planifié",
@@ -1099,7 +1099,7 @@
       "actualHours": "Heures réelles",
       "conclusion": "Rapport de clôture",
       "sourceDi": "DI source",
-      "sourceRca": "RCA source",
+      "sourceRca": "Analyse des causes d’origine",
       "sourceRcaDiagram": "Diagramme Ishikawa n°{{id}}",
       "sourceRcaCause": "Cause",
       "sourceRcaOpen": "Ouvrir l'analyse des causes (RAMS)"
@@ -1340,8 +1340,8 @@
     "cancelled": "Annulé"
   },
   "retiredEquipment": {
-    "title": "Équipement déclassé — à revoir",
-    "intro": "Ces OT et demandes sont ouverts alors que leur équipement est déclassé ou mis au rebut : les deux se sont croisés à la synchronisation. Annulez l'OT ou rejetez la demande avec un motif, ou remettez l'équipement en service.",
+    "title": "Équipement réformé — à revoir",
+    "intro": "Ces OT et demandes sont ouverts alors que leur équipement est réformé ou mis au rebut : les deux se sont croisés à la synchronisation. Annulez l'OT ou rejetez la demande avec un motif, ou remettez l'équipement en service.",
     "kind": {
       "work_order": "OT",
       "intervention_request": "DI"
@@ -1349,7 +1349,7 @@
     "equipment": "Équipement {{code}} {{name}}",
     "open": "Ouvrir",
     "history": "Historique ({{count}})",
-    "historyLink": "Équipement déclassé : historique ({{count}})",
+    "historyLink": "Équipement réformé : historique ({{count}})",
     "closure": {
       "wo_closed": "Clos par la clôture de l'OT {{code}}",
       "wo_cancelled": "Clos par l'annulation de l'OT {{code}}",
@@ -1357,11 +1357,11 @@
       "di_closed": "Clos par la clôture de la demande {{code}}",
       "di_converted": "Clos par la conversion de la demande {{code}} en OT {{wo}} (l'OT a son propre cas)",
       "recommissioned": "Clos par la remise en service de l'équipement {{equipment}}",
-      "other": "Clos : {{code}} n'est plus ouvert sur un équipement déclassé"
+      "other": "Clos : {{code}} n'est plus ouvert sur un équipement réformé"
     },
     "closedBy": "{{who}}, le {{when}}",
     "closedAt": "Le {{when}}",
     "note": "Motif : {{note}}",
-    "loadFailed": "Impossible de charger les OT et demandes sur équipement déclassé."
+    "loadFailed": "Impossible de charger les OT et demandes sur équipement réformé."
   }
 }

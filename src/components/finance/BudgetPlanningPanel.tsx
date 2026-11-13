@@ -452,7 +452,7 @@ function VersionsSection({
   onChanged: () => Promise<void>;
 }) {
   const { t } = useTranslation("budget");
-  const { currencyCode } = useFormatters();
+  const { currencyCode, currencyLabel } = useFormatters();
   const { can } = usePermissions();
   const { withStepUp, StepUpDialogElement } = useStepUp();
   const [creating, setCreating] = useState(false);
@@ -577,7 +577,8 @@ function VersionsSection({
                 </div>
                 <div className="text-xs text-text-muted">
                   {t(`scenario.${v.scenario_type}`, { defaultValue: v.scenario_type })} ·{" "}
-                  {v.currency_code}
+                  {/* The plant's own symbol ("DA") rather than the ISO code (L6-16). */}
+                  {v.currency_code === currencyCode ? currencyLabel : v.currency_code}
                 </div>
               </button>
               <StatusChip
@@ -788,7 +789,9 @@ function LinesSection({
             <tbody>
               {lines.map((l) => (
                 <tr key={l.id} className="border-t border-surface-border">
-                  <td className="px-3 py-2">{l.cost_center_code}</td>
+                  <td className="px-3 py-2" title={l.cost_center_code}>
+                    {l.cost_center_name}
+                  </td>
                   <td className="px-3 py-2">{categoryLabel(l.budget_bucket)}</td>
                   <td className="px-3 py-2">
                     {l.period_month ? periodLabel(l.period_month) : t("planning.annual")}

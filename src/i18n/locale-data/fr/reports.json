@@ -150,7 +150,7 @@
     "title": "Planifications",
     "cronHint": "Cron (UTC, secondes en premier) : ex. 0 0 8 * * * chaque jour à 08:00.",
     "template": "Modèle",
-    "cron": "Cron",
+    "cron": "Fréquence (expression avancée)",
     "format": "Format",
     "enabled": "Actif",
     "save": "Ajouter",
