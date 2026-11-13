@@ -428,6 +428,7 @@ export function RamsDataQualityPage() {
                             variant="ghost"
                             className="h-10"
                             disabled={busy != null}
+                            title={t("rams.quality.dismissHint")}
                             onClick={() =>
                               setDismissTarget({
                                 equipment_id: i.equipment_id,

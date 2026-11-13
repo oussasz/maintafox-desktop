@@ -305,6 +305,13 @@ export function StudyFmecaStep({
                               tone={toneOf(RELIABILITY_TACTIC_TONE, r.rcm_tactic)}
                               label={t(`rams.rcm.tactic.${r.rcm_tactic}`)}
                             />
+                          ) : r.recommended_action ? (
+                            <span
+                              className="line-clamp-2 max-w-56 text-xs text-text-secondary"
+                              title={r.recommended_action}
+                            >
+                              {r.recommended_action}
+                            </span>
                           ) : (
                             <StatusChip tone="neutral" label={t("rams.fmeca.noAction")} />
                           )}

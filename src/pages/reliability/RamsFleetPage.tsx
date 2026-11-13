@@ -171,6 +171,19 @@ export function RamsFleetPage() {
     setQueryValue("months", m === RAMS_DEFAULT_MONTHS ? null : String(m));
   const setOrgNodeId = (id: number | null) => setQueryValue("site", id == null ? null : String(id));
   const setClassId = (id: number | null) => setQueryValue("class", id == null ? null : String(id));
+  /** Period, site and class back to their defaults in one click (UX L2-31). */
+  const filtersActive = months !== RAMS_DEFAULT_MONTHS || orgNodeId != null || classId != null;
+  const resetFilters = () =>
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete("months");
+        next.delete("site");
+        next.delete("class");
+        return next;
+      },
+      { replace: true },
+    );
   const handedId = Number(searchParams.get("equipment") ?? "");
   const [handed, setHanded] = useState<{ id: number; code: string } | null>(null);
   const [handedError, setHandedError] = useState<unknown>(null);
@@ -343,6 +356,14 @@ export function RamsFleetPage() {
     ]
       .filter((x): x is string => x != null)
       .join(" · ") || t("rams.fleet.scopeFleet");
+  // A class kept from another site that this scope does not have: drop it instead of showing an
+  // empty fleet under a filter the list no longer offers (UX L2-31).
+  const staleClass =
+    classId != null && view != null && !view.equipment_classes.some((c) => c.id === classId);
+  useEffect(() => {
+    if (staleClass) setClassId(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setClassId is rebuilt every render
+  }, [staleClass]);
   const exclusions = fleetText.exclusions;
   /** Hint of a rate figure: its definition, then what was left out, or why it is not given. */
   const rateHint = (definition: string, excluded: string[]) =>
@@ -353,6 +374,7 @@ export function RamsFleetPage() {
       icon={Activity}
       title={t("rams.title")}
       count={view?.total_rows ?? null}
+      countLabel={t("rams.fleet.countLabel", { count: view?.total_rows ?? 0 })}
       actions={
         <>
           <PermissionGate permission={P.RAM_ANALYZE}>
@@ -437,6 +459,11 @@ export function RamsFleetPage() {
               ))}
             </select>
           </label>
+          {filtersActive ? (
+            <Button variant="ghost" className="h-10" onClick={resetFilters}>
+              {t("rams.fleet.resetFilters")}
+            </Button>
+          ) : null}
         </div>
       }
     >
@@ -516,6 +543,7 @@ export function RamsFleetPage() {
           <div className="grid grid-cols-[repeat(auto-fit,minmax(170px,1fr))] gap-3">
             <KpiTile
               label={t("rams.kpi.availabilityOf", { scope: scopeLabel })}
+              formula={t("rams.kpi.formula.availability")}
               value={
                 k?.availability_operational == null
                   ? "—"
@@ -529,6 +557,7 @@ export function RamsFleetPage() {
             />
             <KpiTile
               label={t("rams.kpi.mtbf")}
+              formula={t("rams.kpi.formula.mtbf")}
               value={hours(k?.mtbf_hours)}
               unit="h"
               hint={rateHint(
@@ -541,6 +570,7 @@ export function RamsFleetPage() {
             />
             <KpiTile
               label={t("rams.kpi.mttr")}
+              formula={t("rams.kpi.formula.mttr")}
               value={k?.mttr_hours == null ? "—" : formatDecimal(k.mttr_hours, 1)}
               unit="h"
               hint={rateHint(
@@ -554,6 +584,7 @@ export function RamsFleetPage() {
             />
             <KpiTile
               label={t("rams.kpi.repair")}
+              formula={t("rams.kpi.formula.repair")}
               value={
                 k?.mean_active_repair_hours == null
                   ? "—"
@@ -567,10 +598,11 @@ export function RamsFleetPage() {
             />
             <KpiTile
               label={t("rams.kpi.failures")}
+              formula={t("rams.kpi.formula.failures")}
               value={formatNumber(k?.failure_count ?? 0)}
               hint={t("rams.kpi.failuresHint", {
                 period: periodLabel,
-                hours: formatNumber(Math.round(k?.downtime_hours ?? 0)),
+                hours: formatNumber(Math.max(0, Math.round(k?.downtime_hours ?? 0))),
               })}
               {...(canOpenOts && (k?.failure_count ?? 0) > 0
                 ? { onOpen: () => navigate(failureOtsHref()) }
@@ -578,6 +610,7 @@ export function RamsFleetPage() {
             />
             <KpiTile
               label={t("rams.kpi.dataQuality")}
+              formula={t("rams.kpi.formula.dataQuality")}
               value={k?.data_quality == null ? "—" : formatDecimal(k.data_quality * 100, 0)}
               {...(k?.data_quality == null ? {} : { unit: "%" })}
               {...(k?.data_quality != null && k.data_quality < 0.8
@@ -963,7 +996,7 @@ function FleetRow({
         )}
       </td>
       <td className="px-3 text-end font-mono tabular-nums">
-        {formatNumber(Math.round(row.downtime_hours))}
+        {formatNumber(Math.max(0, Math.round(row.downtime_hours)))}
       </td>
       <td className="px-3">
         <div className="flex items-center gap-2">
