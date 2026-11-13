@@ -528,11 +528,14 @@
   "commandPalette": {
     "title": "Command Palette",
     "open": "Go to a module…",
-    "placeholder": "Module, work order or request number, equipment…",
+    "placeholder": "Module, work order or request number, equipment, person, permit, item…",
     "kind": {
       "workOrder": "Work order",
       "request": "Request",
-      "equipment": "Equipment"
+      "equipment": "Equipment",
+      "person": "Person",
+      "permit": "Work permit",
+      "article": "Stock item"
     },
     "noResults": "No result for \"{{query}}\""
   },
