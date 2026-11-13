@@ -43,7 +43,8 @@
       "equipment": "Equipment",
       "uploaded": "Uploaded",
       "actions": "Actions",
-      "validity": "Validity"
+      "validity": "Validity",
+      "category": "Category"
     },
     "download": "Download",
     "edit": "Edit",
@@ -66,7 +67,9 @@
       "expired": "Expired on {{date}}",
       "soon": "Expires on {{date}}",
       "until": "Until {{date}}"
-    }
+    },
+    "searchAll": "Search the whole library",
+    "noMatch": "No document matches the search."
   },
   "edit": {
     "title": "Edit document",
@@ -77,10 +80,10 @@
     "moved": "Document “{{title}}” moved to “{{category}}”"
   },
   "confirm": {
-    "delete": "\"{{title}}\" will be removed from the library. The file is kept on disk for audit purposes.",
+    "delete": "\"{{title}}\" will be removed from the library and cannot be brought back from this screen. Maintafox keeps a copy of the file for traceability.",
     "deleteTitle": "Delete this document?",
     "deleteAction": "Delete document",
-    "deleteVersion": "Revision {{revision}} of “{{title}}” will be withdrawn; the previous version becomes the current one again. The file stays on disk for the audit."
+    "deleteVersion": "Revision {{revision}} of \"{{title}}\" will be removed; the previous version becomes the current one again. Maintafox keeps a copy of the file for traceability."
   },
   "errors": {
     "fileTooLarge": "File exceeds {{mb}} MB."

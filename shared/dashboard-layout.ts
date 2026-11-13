@@ -63,6 +63,31 @@ export const DEFAULT_DASHBOARD_LAYOUT: DashboardLayoutV1 = {
   metric_cards: DEFAULT_DASHBOARD_METRIC_CARDS.map((c) => ({ ...c })),
 };
 
+/** Ready-made home layouts per role: the blocks shown, in order (the others are hidden). */
+export const DASHBOARD_ROLE_PRESETS = {
+  technician: [DASHBOARD_WIDGET_IDS.MY_WORK],
+  planner: [DASHBOARD_WIDGET_IDS.PLANNING, DASHBOARD_WIDGET_IDS.MY_WORK, DASHBOARD_WIDGET_IDS.KPIS],
+  manager: [
+    DASHBOARD_WIDGET_IDS.KPIS,
+    DASHBOARD_WIDGET_IDS.SUPERVISION,
+    DASHBOARD_WIDGET_IDS.PLANNING,
+    DASHBOARD_WIDGET_IDS.DI_STATUS,
+    DASHBOARD_WIDGET_IDS.WORKLOAD,
+  ],
+} as const satisfies Record<string, readonly DashboardWidgetId[]>;
+
+export type DashboardRolePreset = keyof typeof DASHBOARD_ROLE_PRESETS;
+
+/** The page blocks of a role preset (overview cards are left as they are). */
+export function widgetsForRolePreset(preset: DashboardRolePreset): DashboardWidgetLayoutEntry[] {
+  const shown: readonly DashboardWidgetId[] = DASHBOARD_ROLE_PRESETS[preset];
+  const hidden = Object.values(DASHBOARD_WIDGET_IDS).filter((id) => !shown.includes(id));
+  return [
+    ...shown.map((id, order) => ({ id, order, visible: true })),
+    ...hidden.map((id, i) => ({ id, order: shown.length + i, visible: false })),
+  ];
+}
+
 /**
  * Who sees each widget (not stored in the layout). A widget is offered when the user holds one
  * of its permissions; the server checks each section again.

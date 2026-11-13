@@ -7,7 +7,7 @@
       "dashboards": "Executive Dashboards",
       "templates": "Report Builder",
       "schedules": "Schedules",
-      "history": "History & Audit"
+      "history": "Report history"
     },
     "dashboards": {
       "title": "Executive Dashboards",
@@ -23,7 +23,7 @@
       "pmEmpty": "No open PM due-queue in this scope.",
       "sections": {
         "ops": "Operations",
-        "pm": "PM pipeline",
+        "pm": "PM due",
         "rams": "RAMS fleet",
         "cost": "Cost",
         "health": "Fleet health"
@@ -44,7 +44,7 @@
       },
       "widgets": {
         "opsKpis": "Operational KPIs",
-        "pmDue": "PM due queue",
+        "pmDue": "PM due",
         "reliability": "RAMS reliability",
         "maintenanceCost": "Maintenance cost",
         "workload": "Workload chart",
@@ -104,7 +104,8 @@
         "closed_as_non_executable": "Closed, not executable",
         "closed": "Closed",
         "archived": "Archived"
-      }
+      },
+      "customizeScope": "This layout is yours: it does not change other users' dashboard."
     },
     "customize": {
       "moveUp": "Move {{widget}} up",
@@ -194,7 +195,7 @@
     }
   },
   "runs": {
-    "title": "History & audit",
+    "title": "Report history",
     "status": "Status",
     "format": "Format",
     "started": "Started",
@@ -240,6 +241,13 @@
     "dismiss": "Hide this message"
   },
   "smrp": {
+    "pmBy": {
+      "toggle": "Breakdown by site and trade",
+      "site": "By site",
+      "team": "By trade (plan's team)",
+      "no_site": "No site",
+      "no_team": "No team assigned"
+    },
     "title": "SMRP indicators",
     "subtitle": "Maintenance management indicators in line with SMRP Best Practice metrics, computed from your work orders, schedules, PM and personnel. {{period}}.",
     "definitionAria": "Definition of {{title}}",
@@ -257,16 +265,17 @@
     "unitPercentYear": "Percentage of replacement value per year (%)",
     "schedule": {
       "title": "Schedule compliance",
-      "none": "No frozen week ended in the period: schedule compliance is measured on the frozen baseline.",
+      "none": "No frozen week ended in the period",
       "detail": "{{done}} done of {{total}} planned in the frozen baseline",
-      "formula": "Baseline hours of the frozen weeks that ended in the period whose work was finished by the end of its week ÷ baseline hours. A job later released or cancelled counts as not done; weeks never frozen are not measured."
+      "formula": "Baseline hours of the frozen weeks that ended in the period whose work was finished by the end of its week ÷ baseline hours. A job later released or cancelled counts as not done; weeks never frozen are not measured.",
+      "openWeek": "Open the weekly schedule"
     },
     "mix": {
       "basisHours": "Based on recorded labour hours",
       "basisCount": "Based on work-order counts (no labour hours recorded)",
       "detailHours": "{{part}} of {{total}}",
       "detailCount": "{{part}} of {{total}} work orders",
-      "none": "No work order completed in this period.",
+      "none": "No work order completed in the period",
       "planned": {
         "title": "Planned work",
         "formula": "Labour hours of completed preventive, condition-based, inspection, overhaul and improvement work orders ÷ labour hours of all completed work orders. Work-order counts are used when no labour hours are recorded."
@@ -278,11 +287,13 @@
       "emergency": {
         "title": "Emergency work",
         "formula": "Labour hours of completed emergency work orders ÷ labour hours of all completed work orders."
-      }
+      },
+      "basisHoursShort": "in hours",
+      "basisCountShort": "by work-order count"
     },
     "pm": {
       "title": "PM compliance",
-      "none": "No preventive maintenance was due in this period.",
+      "none": "No PM was due in the period",
       "detail": "{{done}} of {{total}} done within their window",
       "formula": "PM occurrences done within their tolerance window — not before it opens, not after it closes (without tolerance: on the due day) ÷ PM occurrences due in the period that are done or whose window has closed. Cancelled occurrences are excluded; those still inside their window are not counted yet. Same figure as the PM page and the home tile."
     },

@@ -308,6 +308,29 @@ async fn pm_compliance_and_pm_overdue_from_occurrences() {
         (1, 1, 1, 1, 1)
     );
     assert_eq!(page.compliance_pct, r.value_pct);
+    // L7-26: the split by site and by trade counts the same judged occurrences as the total.
+    let split = crate::pm::compliance::compliance_breakdown(
+        &db,
+        now - Duration::days(30),
+        now,
+        now,
+        crate::pm::compliance::ComplianceScope::default(),
+    )
+    .await
+    .unwrap();
+    let sum = |g: &[crate::pm::compliance::PmComplianceGroup]| {
+        g.iter()
+            .fold((0, 0), |(d, o), x| (d + x.due_count, o + x.on_time_count))
+    };
+    assert_eq!(
+        sum(&split.by_site),
+        (4, 1),
+        "every judged occurrence has one site group"
+    );
+    assert_eq!(split.by_team.len(), 1, "the plan has no team: one 'no team' group");
+    assert_eq!(split.by_team[0].id, None);
+    assert_eq!(sum(&split.by_team), (4, 1));
+    assert_eq!(split.by_team[0].compliance_pct, r.value_pct);
     let prev = smrp::pm_compliance(&db, SmrpWindow::last_days(now, 30).previous(), now, None)
         .await
         .unwrap();

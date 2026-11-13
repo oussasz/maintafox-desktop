@@ -33,6 +33,7 @@ const PAGE_SOURCE: Record<string, string> = {
   "/inventory": "src/pages/InventoryPage.tsx",
   "/permits": "src/pages/PermitsPage.tsx",
   "/equipment": "src/pages/assets/AssetRegistryPage.tsx",
+  "/planning": "src/pages/PlanningPage.tsx",
 };
 
 /** How a page names a query parameter it reads (literal, or the constant that holds it). */

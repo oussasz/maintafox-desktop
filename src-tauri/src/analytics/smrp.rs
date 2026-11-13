@@ -165,6 +165,8 @@ pub struct SmrpKpis {
     pub schedule_compliance: Option<SmrpMetric>,
     pub work_mix: Option<SmrpWorkMix>,
     pub pm_compliance: Option<SmrpMetric>,
+    /// PM compliance of the window split by site and by trade (team); with `pm_compliance`.
+    pub pm_breakdown: Option<crate::pm::compliance::PmComplianceBreakdown>,
     pub backlog: Option<SmrpBacklog>,
     pub cost_to_rav: Option<SmrpCostToRav>,
 }
@@ -590,6 +592,23 @@ pub async fn build_smrp_kpis(
     } else {
         None
     };
+    let pm_breakdown = if can_pm {
+        Some(
+            crate::pm::compliance::compliance_breakdown(
+                db,
+                window.from,
+                window.until(now),
+                now,
+                crate::pm::compliance::ComplianceScope {
+                    pm_plan_id: None,
+                    org_node_id: org,
+                },
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
     Ok(SmrpKpis {
         from: instant(window.from),
         to: instant(window.to),
@@ -601,6 +620,7 @@ pub async fn build_smrp_kpis(
             None
         },
         pm_compliance: pm,
+        pm_breakdown,
         backlog: if can_ot {
             Some(backlog(db, window, now, org).await?)
         } else {

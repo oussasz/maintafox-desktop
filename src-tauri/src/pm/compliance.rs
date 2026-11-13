@@ -16,8 +16,11 @@
 //!   only counts from that change. Executions recorded before windows existed carry no timing:
 //!   they are classified on read with the default window (the due day).
 
+use std::collections::BTreeMap;
+
 use chrono::{DateTime, Utc};
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
+use serde::Serialize;
 
 use crate::errors::{AppError, AppResult};
 use crate::pm::domain::{PmComplianceInput, PmComplianceReport};
@@ -77,6 +80,63 @@ pub async fn compliance_between_visible(
     criticality_code: Option<&str>,
     visible: &ScopeSql,
 ) -> AppResult<PmComplianceReport> {
+    let rows = judged_occurrences(db, from, to, now, scope, criticality_code, visible).await?;
+    let (mut on_time, mut early, mut late, mut not_done, mut pending) = (0_i64, 0_i64, 0_i64, 0_i64, 0_i64);
+    for row in &rows {
+        match row.outcome {
+            Outcome::OnTime => on_time += 1,
+            Outcome::Early => early += 1,
+            Outcome::Late => late += 1,
+            Outcome::NotDone => not_done += 1,
+            Outcome::Pending => pending += 1,
+        }
+    }
+    let due_count = on_time + early + late + not_done;
+    Ok(PmComplianceReport {
+        from: rfc3339(from),
+        to: rfc3339(to),
+        pm_plan_id: scope.pm_plan_id,
+        due_count,
+        on_time_count: on_time,
+        early_count: early,
+        late_count: late,
+        not_done_count: not_done,
+        pending_count: pending,
+        compliance_pct: compliance_pct(on_time, due_count),
+    })
+}
+
+/// How one occurrence due in the period is judged (see module docs).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Outcome {
+    OnTime,
+    Early,
+    Late,
+    NotDone,
+    /// Still inside its window: not judged yet, left out of the ratio.
+    Pending,
+}
+
+/// One occurrence due in the period, with what the breakdowns group it by.
+struct JudgedOccurrence {
+    outcome: Outcome,
+    /// Organisation node the asset is installed at (`None`: no asset or not installed).
+    node_id: Option<i64>,
+    /// The plan's assigned team — its trade (`None`: no team).
+    team_id: Option<i64>,
+    team_name: Option<String>,
+}
+
+/// The occurrences due in `[from, to)` matching the filters, each judged at `now`.
+async fn judged_occurrences(
+    db: &impl ConnectionTrait,
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+    now: DateTime<Utc>,
+    scope: ComplianceScope,
+    criticality_code: Option<&str>,
+    visible: &ScopeSql,
+) -> AppResult<Vec<JudgedOccurrence>> {
     let upper = to.min(now);
     // Timestamps are normalised to RFC3339 in SQL (rows written by SQLite defaults use another form).
     let mut sql = String::from(
@@ -87,9 +147,11 @@ pub async fn compliance_between_visible(
                         (SELECT MIN(t.transitioned_at) FROM pm_occurrence_transitions t
                          WHERE t.pm_occurrence_id = po.id AND t.to_status = 'completed'),
                         po.updated_at) END)) AS done_at,
-                done.timing_status, done.meter_reading
+                done.timing_status, done.meter_reading,
+                eq.installed_at_node_id AS node_id, pp.assigned_team_id AS team_id, tm.name AS team_name
          FROM pm_occurrences po
          JOIN pm_plans pp ON pp.id = po.pm_plan_id
+         LEFT JOIN teams tm ON tm.id = pp.assigned_team_id
          LEFT JOIN equipment eq ON eq.id =
              COALESCE(po.equipment_id, CASE WHEN pp.asset_scope_type = 'equipment' THEN pp.asset_scope_id END)
          LEFT JOIN lookup_values lv ON lv.id = pp.criticality_value_id
@@ -121,8 +183,11 @@ pub async fn compliance_between_visible(
         .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, binds))
         .await?;
 
-    let (mut on_time, mut early, mut late, mut not_done, mut pending) = (0_i64, 0_i64, 0_i64, 0_i64, 0_i64);
+    let mut out = Vec::with_capacity(rows.len());
     for row in &rows {
+        let node_id: Option<i64> = row.try_get("", "node_id")?;
+        let team_id: Option<i64> = row.try_get("", "team_id")?;
+        let team_name: Option<String> = row.try_get("", "team_name")?;
         let due_at: String = row.try_get("", "due_at")?;
         let mut window = OccurrenceWindow {
             start_at: row.try_get("", "window_start_at")?,
@@ -143,11 +208,12 @@ pub async fn compliance_between_visible(
                 .map(|e| parse(e, "window_end_at"))
                 .transpose()?
                 .is_some_and(|end| end <= now);
-            if closed {
-                not_done += 1;
-            } else {
-                pending += 1;
-            }
+            out.push(JudgedOccurrence {
+                outcome: if closed { Outcome::NotDone } else { Outcome::Pending },
+                node_id,
+                team_id,
+                team_name,
+            });
             continue;
         };
         let stored: Option<String> = row.try_get("", "timing_status")?;
@@ -158,25 +224,116 @@ pub async fn compliance_between_visible(
                 classify_timing(&window, parse(&done_at, "done_at")?, reading).map(str::to_string)
             }
         };
-        match timing.as_deref() {
-            Some("on_time") => on_time += 1,
-            Some("early") => early += 1,
-            Some("late") => late += 1,
-            _ => not_done += 1,
-        }
+        let outcome = match timing.as_deref() {
+            Some("on_time") => Outcome::OnTime,
+            Some("early") => Outcome::Early,
+            Some("late") => Outcome::Late,
+            _ => Outcome::NotDone,
+        };
+        out.push(JudgedOccurrence {
+            outcome,
+            node_id,
+            team_id,
+            team_name,
+        });
     }
-    let due_count = on_time + early + late + not_done;
-    Ok(PmComplianceReport {
-        from: rfc3339(from),
-        to: rfc3339(to),
-        pm_plan_id: scope.pm_plan_id,
-        due_count,
-        on_time_count: on_time,
-        early_count: early,
-        late_count: late,
-        not_done_count: not_done,
-        pending_count: pending,
-        compliance_pct: compliance_pct(on_time, due_count),
+    Ok(out)
+}
+
+/// PM compliance of one site or one team (trade): the same rule as the total.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct PmComplianceGroup {
+    /// Site (`org_nodes.id`) or team (`teams.id`); `None`: occurrences with no site / no team.
+    pub id: Option<i64>,
+    pub label: Option<String>,
+    pub due_count: i64,
+    pub on_time_count: i64,
+    pub compliance_pct: Option<f64>,
+}
+
+/// PM compliance split by site (planning site of the asset's installation node) and by trade
+/// (the plan's assigned team). Occurrences not judged yet are left out, as in the total.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct PmComplianceBreakdown {
+    pub by_site: Vec<PmComplianceGroup>,
+    pub by_team: Vec<PmComplianceGroup>,
+}
+
+type GroupTally = BTreeMap<Option<i64>, (Option<String>, i64, i64)>;
+
+fn tally(groups: &mut GroupTally, key: Option<i64>, label: Option<String>, outcome: Outcome) {
+    if outcome == Outcome::Pending {
+        return;
+    }
+    let entry = groups.entry(key).or_insert((label, 0, 0));
+    entry.1 += 1;
+    if outcome == Outcome::OnTime {
+        entry.2 += 1;
+    }
+}
+
+fn into_groups(groups: GroupTally) -> Vec<PmComplianceGroup> {
+    let mut out: Vec<PmComplianceGroup> = groups
+        .into_iter()
+        .map(|(id, (label, due, on_time))| PmComplianceGroup {
+            id,
+            label,
+            due_count: due,
+            on_time_count: on_time,
+            compliance_pct: compliance_pct(on_time, due),
+        })
+        .collect();
+    // Named groups by name, the "none" group last.
+    out.sort_by(|a, b| (a.id.is_none(), a.label.as_deref()).cmp(&(b.id.is_none(), b.label.as_deref())));
+    out
+}
+
+/// [`compliance_between`] split by site and by trade (see [`PmComplianceBreakdown`]).
+pub async fn compliance_breakdown(
+    db: &impl ConnectionTrait,
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+    now: DateTime<Utc>,
+    scope: ComplianceScope,
+) -> AppResult<PmComplianceBreakdown> {
+    let rows = judged_occurrences(db, from, to, now, scope, None, &ScopeSql::everywhere()).await?;
+    let mut site_of_node: BTreeMap<i64, Option<(i64, String)>> = BTreeMap::new();
+    for node in rows.iter().filter_map(|r| r.node_id) {
+        if site_of_node.contains_key(&node) {
+            continue;
+        }
+        let site = match crate::planning::weekly_schedule::planning_site_of_node(db, node).await? {
+            Some(site_id) => {
+                let name = db
+                    .query_one(Statement::from_sql_and_values(
+                        DbBackend::Sqlite,
+                        "SELECT name FROM org_nodes WHERE id = ?",
+                        [site_id.into()],
+                    ))
+                    .await?
+                    .map(|r| r.try_get::<String>("", "name"))
+                    .transpose()?
+                    .unwrap_or_default();
+                Some((site_id, name))
+            }
+            None => None,
+        };
+        site_of_node.insert(node, site);
+    }
+    let mut by_site = GroupTally::new();
+    let mut by_team = GroupTally::new();
+    for r in rows {
+        let site = r.node_id.and_then(|n| site_of_node.get(&n).cloned().flatten());
+        let (site_id, site_name) = match site {
+            Some((id, name)) => (Some(id), Some(name)),
+            None => (None, None),
+        };
+        tally(&mut by_site, site_id, site_name, r.outcome);
+        tally(&mut by_team, r.team_id, r.team_name, r.outcome);
+    }
+    Ok(PmComplianceBreakdown {
+        by_site: into_groups(by_site),
+        by_team: into_groups(by_team),
     })
 }
 

@@ -1,6 +1,7 @@
 import * as d3 from "d3";
 import { useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
+import { useNavigate } from "react-router-dom";
 
 import {
   CHART_COLORS,
@@ -13,14 +14,26 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useFormatters } from "@/hooks/use-formatters";
 import type { AnalyticsWorkloadDay } from "@shared/ipc-types";
 
+/** Each series opens its list (the lists have no per-day filter: the bar opens the whole list). */
 const SERIES = [
-  { key: "di_created" as const, color: CHART_COLORS.primary, labelKey: "chart.diCreated" as const },
+  {
+    key: "di_created" as const,
+    color: CHART_COLORS.primary,
+    labelKey: "chart.diCreated" as const,
+    to: "/requests",
+  },
   {
     key: "wo_completed" as const,
     color: CHART_COLORS.success,
     labelKey: "chart.woCompleted" as const,
+    to: "/work-orders",
   },
-  { key: "pm_due" as const, color: CHART_COLORS.warning, labelKey: "chart.pmDue" as const },
+  {
+    key: "pm_due" as const,
+    color: CHART_COLORS.warning,
+    labelKey: "chart.pmDue" as const,
+    to: "/pm",
+  },
 ];
 
 const MARGIN = { ...DEFAULT_MARGIN, bottom: 40 };
@@ -32,6 +45,7 @@ export function AnalyticsWorkloadChart(props: {
 }) {
   const { t } = useTranslation("dashboard");
   const { formatDate, formatNumber } = useFormatters();
+  const navigate = useNavigate();
   const { days, horizonDays, qualityBadge } = props;
   const [containerRef, containerSize] = useContainerSize<HTMLDivElement>();
   const xAxisRef = useRef<SVGGElement | null>(null);
@@ -114,6 +128,8 @@ export function AnalyticsWorkloadChart(props: {
                             width={xScale.bandwidth()}
                             height={Math.max(0, h)}
                             fill={s.color}
+                            className="cursor-pointer"
+                            onClick={() => navigate(s.to)}
                           >
                             <title>{`${formatDate(day.date)} · ${t(s.labelKey)} : ${formatNumber(v)}`}</title>
                           </rect>
@@ -126,13 +142,18 @@ export function AnalyticsWorkloadChart(props: {
             </div>
             <div className="mt-2 flex flex-wrap gap-3 text-xs text-text-muted">
               {SERIES.map((s) => (
-                <span key={s.key} className="inline-flex items-center gap-1.5">
+                <button
+                  key={s.key}
+                  type="button"
+                  className="inline-flex items-center gap-1.5 hover:underline"
+                  onClick={() => navigate(s.to)}
+                >
                   <span
                     className="inline-block h-2.5 w-2.5 rounded-sm"
                     style={{ background: s.color }}
                   />
                   {t(s.labelKey)}
-                </span>
+                </button>
               ))}
             </div>
           </>

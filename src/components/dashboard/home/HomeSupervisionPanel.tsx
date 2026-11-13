@@ -18,6 +18,7 @@ import type { HomeSupervision, HomeSupervisionWorkOrders } from "@shared/ipc-typ
 
 import {
   HomeFigure,
+  HomeMoreLink,
   HomeNote,
   HomePanel,
   HomeRecordList,
@@ -201,12 +202,14 @@ function SupervisionBody({
               label={t("home.supervision.stock.out")}
               value={n(stock.lines_out_of_stock)}
               tone={stock.lines_out_of_stock > 0 ? "danger" : undefined}
+              to={listLinks.inventory({ belowReorder: true })}
             />
           </div>
           <HomeRecordList
             ariaLabel={t("home.supervision.stock.listAria")}
             emptyText={t("home.supervision.stock.empty")}
             total={stock.lines_to_reorder}
+            moreTo={listLinks.inventory({ belowReorder: true })}
             rows={stock.items.map((s) => ({
               key: `${s.article_id}-${s.warehouse_code}`,
               primary: `${s.article_code} — ${s.article_name}`,
@@ -239,7 +242,11 @@ function SupervisionBody({
           openTo={homeLinks.permits}
         >
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            <HomeFigure label={t("home.supervision.safety.open")} value={n(safety.open_permits)} />
+            <HomeFigure
+              label={t("home.supervision.safety.open")}
+              value={n(safety.open_permits)}
+              to={homeLinks.permits}
+            />
             <HomeFigure
               label={t("home.supervision.safety.expiring")}
               value={safety.expiring_rule === "active" ? n(safety.expiring.total) : t("home.none")}
@@ -251,16 +258,19 @@ function SupervisionBody({
                   : t(`home.supervision.safety.rule.${safety.expiring_rule}`)
               }
               tone={safety.expiring.total > 0 ? "warning" : undefined}
+              to={homeLinks.permits}
             />
             <HomeFigure
               label={t("home.supervision.safety.expired")}
               value={n(safety.expired_open.total)}
               tone={safety.expired_open.total > 0 ? "danger" : undefined}
+              to={homeLinks.permits}
             />
             <HomeFigure
               label={t("home.supervision.safety.locks")}
               value={n(safety.locks_in_place)}
               hint={t("home.supervision.safety.locksOn", { count: safety.permits_with_locks })}
+              to={homeLinks.permits}
             />
           </div>
           {[
@@ -289,11 +299,10 @@ function SupervisionBody({
                   }))}
                 />
                 {list.total - list.without_record > list.items.length ? (
-                  <HomeNote>
-                    {t("home.more", {
-                      count: list.total - list.without_record - list.items.length,
-                    })}
-                  </HomeNote>
+                  <HomeMoreLink
+                    count={list.total - list.without_record - list.items.length}
+                    to={homeLinks.permits}
+                  />
                 ) : null}
                 {list.without_record > 0 ? (
                   <HomeNote tone="warning">
@@ -328,11 +337,13 @@ function SupervisionBody({
             label={t("home.supervision.assets.down")}
             value={n(assets.critical_down)}
             tone={assets.critical_down > 0 ? "danger" : undefined}
+            to={homeLinks.equipment}
           />
           <HomeRecordList
             ariaLabel={t("home.supervision.assets.listAria")}
             emptyText={t("home.supervision.assets.empty")}
             total={assets.critical_down}
+            moreTo={homeLinks.equipment}
             rows={assets.items.map((a) => ({
               key: a.id,
               primary: `${a.asset_code} — ${a.name}`,

@@ -38,6 +38,13 @@ const SMRP: SmrpKpis = {
     work_orders: 4,
   },
   pm_compliance: { current: ratio(1, 3, 33.3), previous: ratio(0, 0, null) },
+  pm_breakdown: {
+    by_site: [
+      { id: 2, label: "Sétif", due_count: 2, on_time_count: 1, compliance_pct: 50 },
+      { id: null, label: null, due_count: 1, on_time_count: 0, compliance_pct: 0 },
+    ],
+    by_team: [{ id: 7, label: "Mécanique", due_count: 3, on_time_count: 1, compliance_pct: 33.3 }],
+  },
   backlog: {
     backlog_hours: 20,
     previous_backlog_hours: 0,
@@ -195,6 +202,30 @@ describe("SmrpIndicatorsSection", () => {
     ).toBeInTheDocument();
     fireEvent.click(within(backlog).getAllByRole("button").at(-1) as HTMLElement);
     expect(screen.getByTestId("list-location")).toHaveTextContent("/work-orders?scope=open");
+  });
+
+  it("splits PM compliance by site and by trade (L7-26)", () => {
+    renderSection();
+    const bySite = screen.getByTestId("smrp-pm-by-site");
+    expect(within(bySite).getByText("Sétif")).toBeInTheDocument();
+    expect(within(bySite).getByText("smrp.pmBy.no_site")).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("smrp-pm-by-team")).getByText("Mécanique"),
+    ).toBeInTheDocument();
+  });
+
+  it("shows a dash and one line when nothing is measurable, never 0 h of 0 h (L7-25)", () => {
+    renderSection({
+      ...SMRP,
+      schedule_compliance: { current: ratio(0, 0, null), previous: ratio(0, 0, null) },
+    });
+    const tile = screen.getByTestId("smrp-schedule");
+    expect(within(tile).getByText("—")).toBeInTheDocument();
+    expect(within(tile).getByText("smrp.schedule.none")).toBeInTheDocument();
+    expect(within(tile).queryByText(/smrp.schedule.detail/)).not.toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("smrp-planned")).getByTestId("smrp-planned-basis"),
+    ).toHaveTextContent("smrp.mix.basisHoursShort");
   });
 
   it("renders nothing without data", () => {
