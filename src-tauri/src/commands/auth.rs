@@ -334,6 +334,11 @@ pub(crate) async fn login_impl(
         .await?;
     drop(session_guard);
 
+    // Per-user signing (sync-signing-design.md v9 §3, §9): unlock (or create) this user's key with
+    // the password just verified, and capture this session's changes as theirs. Never blocks the
+    // sign-in: without a key their changes wait in the sync outbox until it can sign them.
+    start_signing_session(&state.db, user_id, &payload.password, &stored_hash).await;
+
     // ── Audit: successful login ───────────────────────────────────────
     crate::audit::emit(
         &state.db,
@@ -353,6 +358,41 @@ pub(crate) async fn login_impl(
     Ok(LoginResponse { session_info: info })
 }
 
+/// Per-user signing at sign-in: the user's key is unlocked (or made) with the password they just
+/// proved and held for the session, and the changes captured from now on are theirs. Failures are
+/// logged, never block the sign-in: the user's changes then wait in the outbox, unsigned.
+async fn start_signing_session(db: &sea_orm::DatabaseConnection, user_id: i32, password: &str, password_hash: &str) {
+    let user_sync_id =
+        match crate::sync::identity::optional_entity_sync_id(db, "user_accounts", i64::from(user_id)).await {
+            Ok(Some(id)) => id,
+            Ok(None) => {
+                tracing::warn!(
+                    user_id,
+                    "auth::signing account has no sync identity; changes stay unsigned"
+                );
+                if let Err(e) = crate::sync::capture::set_capture_actor(db, None).await {
+                    tracing::warn!(error = %e, "auth::signing capture actor not cleared");
+                }
+                return;
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "auth::signing sync identity unreadable");
+                return;
+            }
+        };
+    match crate::auth::signing_keys::unlock_or_create(db, i64::from(user_id), &user_sync_id, password, password_hash)
+        .await
+    {
+        Ok(key) => {
+            crate::auth::signing_keys::hold_session_key(key);
+        }
+        Err(e) => tracing::warn!(error = %e, "auth::signing key not unlocked; changes stay unsigned"),
+    }
+    if let Err(e) = crate::sync::capture::set_capture_actor(db, Some(&user_sync_id)).await {
+        tracing::warn!(error = %e, "auth::signing capture actor not set");
+    }
+}
+
 /// Log the current user out and clear the active session.
 ///
 /// Allowed while an update is being installed (AU-109): ending a session on a shared PC is never
@@ -365,6 +405,11 @@ pub async fn logout(state: State<'_, AppState>) -> AppResult<()> {
 pub(crate) async fn logout_impl(state: &AppState) -> AppResult<()> {
     // Capture actor before clearing the session
     let actor_id = state.session.read().await.current.as_ref().map(|s| s.user.user_id);
+
+    // The user's captured changes are staged as theirs before the session (and their key) ends.
+    if let Err(e) = crate::sync::capture::set_capture_actor(&state.db, None).await {
+        tracing::warn!(error = %e, "auth::logout capture actor not cleared");
+    }
 
     let mut session_guard = state.session.write().await;
     if let Some(session_id) = session_guard.clear_session() {

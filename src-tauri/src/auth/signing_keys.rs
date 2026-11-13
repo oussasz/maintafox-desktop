@@ -285,6 +285,41 @@ pub fn unwrap_key(
     Ok(key)
 }
 
+// ── Keys held in memory ────────────────────────────────────────────────────────────────────
+//
+// The signed-in user's key, and a co-signer's key for the four-eyes step that needed it, are
+// held here (by user sync id) so the sync staging can sign the user's own changes. Every key is
+// released when the session is cleared (`SessionManager::clear_session`); dropping the last
+// reference wipes it.
+
+fn held_keys() -> &'static std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<UnlockedSigningKey>>> {
+    static KEYS: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<UnlockedSigningKey>>>,
+    > = std::sync::OnceLock::new();
+    KEYS.get_or_init(Default::default)
+}
+
+/// Holds `key` for its user until the session ends.
+pub fn hold_session_key(key: UnlockedSigningKey) -> std::sync::Arc<UnlockedSigningKey> {
+    let key = std::sync::Arc::new(key);
+    if let Ok(mut keys) = held_keys().lock() {
+        keys.insert(key.user_sync_id.clone(), key.clone());
+    }
+    key
+}
+
+/// The held key of `user_sync_id`, if that user signed in (or co-signed) in this session.
+pub fn held_key(user_sync_id: &str) -> Option<std::sync::Arc<UnlockedSigningKey>> {
+    held_keys().lock().ok().and_then(|keys| keys.get(user_sync_id).cloned())
+}
+
+/// Releases every held key (sign-out, session expiry, tenant change).
+pub fn release_session_keys() {
+    if let Ok(mut keys) = held_keys().lock() {
+        keys.clear();
+    }
+}
+
 // ── Device-local storage (`user_signing_keys_local`, migration 297) ──────────────────────────
 
 /// One stored key of this PC.

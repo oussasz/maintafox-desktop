@@ -50,6 +50,8 @@ mod registry_tests;
 #[cfg(test)]
 mod row_sync_tests;
 #[cfg(test)]
+mod signing_capture_tests;
+#[cfg(test)]
 mod signing_rules_tests;
 #[cfg(test)]
 pub(crate) mod test_support;

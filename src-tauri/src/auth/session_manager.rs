@@ -284,6 +284,8 @@ impl SessionManager {
             step_up_verified_at: None,
             password_changed_at_seen: None,
         };
+        // A new session never inherits the previous user's keys.
+        crate::auth::signing_keys::release_session_keys();
         self.current = Some(session);
         self.current.as_ref().unwrap()
     }
@@ -329,6 +331,8 @@ impl SessionManager {
     pub fn clear_session(&mut self) -> Option<String> {
         let session_id = self.current.as_ref().map(|s| s.session_db_id.clone());
         self.current = None;
+        // Per-user signing: no key outlives the session that unlocked it.
+        crate::auth::signing_keys::release_session_keys();
         session_id
     }
 

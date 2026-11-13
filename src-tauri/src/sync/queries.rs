@@ -706,24 +706,27 @@ async fn latest_unsent_outbox_item(
 /// - restaging an unchanged payload while the previous change is still unsent returns that change;
 /// - every new envelope gets a fresh UUID idempotency key, unique per tenant forever.
 pub async fn stage_outbox_item(db: &impl ConnectionTrait, input: StageOutboxItemInput) -> AppResult<SyncOutboxItem> {
-    stage_outbox_item_inner(db, input, None).await
+    stage_outbox_item_inner(db, input, None, None).await
 }
 
 /// [`stage_outbox_item`] with the owner of a user-scoped entity given by the caller (the generic
 /// capture knows it from the row, including for a deleted row and for natural-key rows that have
-/// no `entity_sync_id` column to look the owner up by).
+/// no `entity_sync_id` column to look the owner up by). `maker_user_sync_id` is the session user
+/// whose change this is (per-user signing): only that user's key signs the item.
 pub(crate) async fn stage_outbox_item_with_owner(
     db: &impl ConnectionTrait,
     input: StageOutboxItemInput,
     owner_user_sync_id: Option<String>,
+    maker_user_sync_id: Option<String>,
 ) -> AppResult<SyncOutboxItem> {
-    stage_outbox_item_inner(db, input, Some(owner_user_sync_id)).await
+    stage_outbox_item_inner(db, input, Some(owner_user_sync_id), maker_user_sync_id).await
 }
 
 async fn stage_outbox_item_inner(
     db: &impl ConnectionTrait,
     input: StageOutboxItemInput,
     owner_override: Option<Option<String>>,
+    maker_user_sync_id: Option<String>,
 ) -> AppResult<SyncOutboxItem> {
     validate_outbox_input(&input)?;
     let def = registry::require_entity(&input.entity_type)?;
@@ -761,8 +764,8 @@ async fn stage_outbox_item_inner(
         DatabaseBackend::Sqlite,
         "INSERT INTO sync_outbox (
             idempotency_key, entity_type, entity_sync_id, operation, row_version, base_row_version,
-            owner_user_sync_id, payload_json, payload_hash, status, origin_machine_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)",
+            owner_user_sync_id, payload_json, payload_hash, status, origin_machine_id, maker_user_sync_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)",
         [
             idempotency_key.clone().into(),
             input.entity_type.into(),
@@ -774,6 +777,7 @@ async fn stage_outbox_item_inner(
             input.payload_json.into(),
             payload_hash.into(),
             origin_machine_id.into(),
+            maker_user_sync_id.filter(|m| !m.trim().is_empty()).into(),
         ],
     ))
     .await?;

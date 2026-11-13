@@ -245,7 +245,7 @@ fn trigger_sql(layout: &EntityLayout, present: &[String]) -> AppResult<Vec<Strin
     let et = layout.def.entity_type;
     let name = |suffix: &str| quote(&format!("{TRIGGER_PREFIX}{}_{suffix}", layout.table()));
     let journal =
-        "INSERT INTO sync_capture_journal (entity_type, entity_sync_id, natural_key_json, operation, owner_user_sync_id)";
+        "INSERT INTO sync_capture_journal (entity_type, entity_sync_id, natural_key_json, operation, owner_user_sync_id, captured_session_user_sync_id)";
     Ok(if layout.natural_pk.is_none() {
         vec![
             format!(
@@ -253,7 +253,7 @@ fn trigger_sql(layout: &EntityLayout, present: &[String]) -> AppResult<Vec<Strin
                     UPDATE {table} SET entity_sync_id = {UUID_V4_SQL}
                      WHERE id = NEW.id AND (NEW.entity_sync_id IS NULL OR trim(NEW.entity_sync_id) = '');
                     {journal}
-                    SELECT '{et}', r.entity_sync_id, NULL, 'upsert', {owner}
+                    SELECT '{et}', r.entity_sync_id, NULL, 'upsert', {owner}, (SELECT a.user_sync_id FROM sync_capture_actor a WHERE a.id = 1)
                       FROM {table} r
                      WHERE r.id = NEW.id AND {filter} AND {NOT_SUPPRESSED};
                  END",
@@ -266,10 +266,10 @@ fn trigger_sql(layout: &EntityLayout, present: &[String]) -> AppResult<Vec<Strin
                  WHEN OLD.entity_sync_id IS NOT NULL AND trim(OLD.entity_sync_id) <> '' AND {changed} AND {NOT_SUPPRESSED}
                  BEGIN
                     {journal}
-                    SELECT '{et}', NEW.entity_sync_id, NULL, 'upsert', {owner_new}
+                    SELECT '{et}', NEW.entity_sync_id, NULL, 'upsert', {owner_new}, (SELECT a.user_sync_id FROM sync_capture_actor a WHERE a.id = 1)
                      WHERE NEW.entity_sync_id IS NOT NULL AND ({filter_new} OR {filter_old});
                     {journal}
-                    SELECT '{et}', OLD.entity_sync_id, NULL, 'delete', {owner_old}
+                    SELECT '{et}', OLD.entity_sync_id, NULL, 'delete', {owner_old}, (SELECT a.user_sync_id FROM sync_capture_actor a WHERE a.id = 1)
                      WHERE NEW.entity_sync_id IS NOT OLD.entity_sync_id AND {filter_old};
                  END",
                 au = name("au"),
@@ -284,7 +284,7 @@ fn trigger_sql(layout: &EntityLayout, present: &[String]) -> AppResult<Vec<Strin
                  WHEN OLD.entity_sync_id IS NOT NULL AND trim(OLD.entity_sync_id) <> '' AND {filter_old} AND {NOT_SUPPRESSED}
                  BEGIN
                     {journal}
-                    VALUES ('{et}', OLD.entity_sync_id, NULL, 'delete', {owner_old});
+                    VALUES ('{et}', OLD.entity_sync_id, NULL, 'delete', {owner_old}, (SELECT a.user_sync_id FROM sync_capture_actor a WHERE a.id = 1));
                  END",
                 ad = name("ad"),
                 owner_old = owner_sql(layout, "OLD"),
@@ -299,7 +299,7 @@ fn trigger_sql(layout: &EntityLayout, present: &[String]) -> AppResult<Vec<Strin
                 "CREATE TRIGGER {ai} AFTER INSERT ON {table}
                  WHEN {filter_new} AND {NOT_SUPPRESSED}
                  BEGIN
-                    {journal} VALUES ('{et}', NULL, {key_new}, 'upsert', {owner_new});
+                    {journal} VALUES ('{et}', NULL, {key_new}, 'upsert', {owner_new}, (SELECT a.user_sync_id FROM sync_capture_actor a WHERE a.id = 1));
                  END",
                 ai = name("ai"),
                 owner_new = owner_sql(layout, "NEW"),
@@ -310,10 +310,10 @@ fn trigger_sql(layout: &EntityLayout, present: &[String]) -> AppResult<Vec<Strin
                  WHEN {changed} AND {NOT_SUPPRESSED}
                  BEGIN
                     {journal}
-                    SELECT '{et}', NULL, {key_new}, 'upsert', {owner_new}
+                    SELECT '{et}', NULL, {key_new}, 'upsert', {owner_new}, (SELECT a.user_sync_id FROM sync_capture_actor a WHERE a.id = 1)
                      WHERE {filter_new} OR {filter_old};
                     {journal}
-                    SELECT '{et}', NULL, {key_old}, 'delete', {owner_old}
+                    SELECT '{et}', NULL, {key_old}, 'delete', {owner_old}, (SELECT a.user_sync_id FROM sync_capture_actor a WHERE a.id = 1)
                      WHERE {key_new} IS NOT {key_old} AND {filter_old};
                  END",
                 au = name("au"),
@@ -327,7 +327,7 @@ fn trigger_sql(layout: &EntityLayout, present: &[String]) -> AppResult<Vec<Strin
                 "CREATE TRIGGER {ad} AFTER DELETE ON {table}
                  WHEN {filter_old} AND {NOT_SUPPRESSED}
                  BEGIN
-                    {journal} VALUES ('{et}', NULL, {key_old}, 'delete', {owner_old});
+                    {journal} VALUES ('{et}', NULL, {key_old}, 'delete', {owner_old}, (SELECT a.user_sync_id FROM sync_capture_actor a WHERE a.id = 1));
                  END",
                 ad = name("ad"),
                 owner_old = owner_sql(layout, "OLD"),
@@ -492,6 +492,8 @@ struct JournalRow {
     natural_key: Option<Map<String, Value>>,
     operation: String,
     owner_user_sync_id: Option<String>,
+    /// Session user whose change this is (`None`: no one signed in, or captured before migration 297).
+    actor: Option<String>,
 }
 
 #[derive(Debug)]
@@ -501,6 +503,10 @@ struct Group {
     natural_key: Option<Map<String, Value>>,
     ids: Vec<i64>,
     owner_user_sync_id: Option<String>,
+    actor: Option<String>,
+    /// Changes of two different makers were captured for this entity between two drains: nobody
+    /// may sign the merged state (the actor switch drains first, so this only follows a crash).
+    mixed_actors: bool,
 }
 
 fn read_journal_row(row: &sea_orm::QueryResult) -> AppResult<JournalRow> {
@@ -520,6 +526,7 @@ fn read_journal_row(row: &sea_orm::QueryResult) -> AppResult<JournalRow> {
         natural_key,
         operation: row.try_get("", "operation").map_err(read)?,
         owner_user_sync_id: row.try_get("", "owner_user_sync_id").map_err(read)?,
+        actor: row.try_get("", "captured_session_user_sync_id").map_err(read)?,
     })
 }
 
@@ -535,7 +542,8 @@ pub async fn drain_capture_journal(conn: &impl ConnectionTrait) -> AppResult<Cap
         let rows = conn
             .query_all(Statement::from_sql_and_values(
                 DatabaseBackend::Sqlite,
-                "SELECT id, entity_type, entity_sync_id, natural_key_json, operation, owner_user_sync_id
+                "SELECT id, entity_type, entity_sync_id, natural_key_json, operation, owner_user_sync_id,
+                        captured_session_user_sync_id
                  FROM sync_capture_journal WHERE id > ? ORDER BY id LIMIT ?",
                 [after_id.into(), DRAIN_PAGE_SIZE.into()],
             ))
@@ -574,6 +582,9 @@ pub async fn drain_capture_journal(conn: &impl ConnectionTrait) -> AppResult<Cap
                 Some(&i) => {
                     let g = &mut groups[i];
                     g.ids.push(j.id);
+                    if g.actor != j.actor {
+                        g.mixed_actors = true;
+                    }
                     if j.owner_user_sync_id.is_some() {
                         g.owner_user_sync_id = j.owner_user_sync_id;
                     }
@@ -589,6 +600,8 @@ pub async fn drain_capture_journal(conn: &impl ConnectionTrait) -> AppResult<Cap
                         natural_key: j.natural_key,
                         ids: vec![j.id],
                         owner_user_sync_id: j.owner_user_sync_id,
+                        actor: j.actor,
+                        mixed_actors: false,
                     });
                 }
             }
@@ -775,8 +788,22 @@ async fn stage_group(conn: &impl ConnectionTrait, group: &Group) -> AppResult<bo
         &group.entity_sync_id,
         group.natural_key.as_ref(),
         group.owner_user_sync_id.clone(),
+        group_maker(group),
     )
     .await
+}
+
+/// Whose key must sign a group's item: its single session user, else nobody.
+fn group_maker(group: &Group) -> Option<String> {
+    if group.mixed_actors {
+        tracing::warn!(
+            entity_type = %group.entity_type,
+            entity_sync_id = %group.entity_sync_id,
+            "changes of two makers captured together; staged without a maker"
+        );
+        return None;
+    }
+    group.actor.clone()
 }
 
 async fn stage_current_state(
@@ -785,6 +812,7 @@ async fn stage_current_state(
     entity_sync_id: &str,
     natural_key: Option<&Map<String, Value>>,
     delete_owner: Option<String>,
+    maker: Option<String>,
 ) -> AppResult<bool> {
     // A row its capture filter keeps on this device (`row_spec` row filters) is never staged: not
     // by the capture drain, not by "keep mine" on a conflict about it. That includes a row that has
@@ -847,6 +875,7 @@ async fn stage_current_state(
             payload_json: payload,
         },
         owner,
+        maker,
     )
     .await?;
     Ok(true)
@@ -891,6 +920,38 @@ pub(crate) async fn restage_current_state(
             .await?
             .and_then(|r| r.try_get::<Option<String>>("", "v").ok().flatten()),
     };
-    stage_current_state(conn, &layout, entity_sync_id, natural_key.as_ref(), owner).await?;
+    let maker = current_capture_actor(conn).await?;
+    stage_current_state(conn, &layout, entity_sync_id, natural_key.as_ref(), owner, maker).await?;
+    Ok(())
+}
+
+/// The session user changes are captured for (`sync_capture_actor`), if any.
+pub async fn current_capture_actor(conn: &impl ConnectionTrait) -> AppResult<Option<String>> {
+    Ok(conn
+        .query_one(Statement::from_string(
+            DatabaseBackend::Sqlite,
+            "SELECT user_sync_id FROM sync_capture_actor WHERE id = 1".to_string(),
+        ))
+        .await?
+        .and_then(|r| r.try_get::<Option<String>>("", "user_sync_id").ok().flatten())
+        .filter(|v| !v.trim().is_empty()))
+}
+
+/// Switch the session user changes are captured for (per-user signing, design v9 §9): set at
+/// sign-in, cleared at sign-out and at startup. Changes captured so far are staged first, with
+/// their own maker, so the outbox never merges the changes of two makers: only the maker's key
+/// signs an item (at drain), and a change made while nobody is signed in has no maker.
+pub async fn set_capture_actor(db: &DatabaseConnection, user_sync_id: Option<&str>) -> AppResult<()> {
+    // One transaction: no change is captured between the drain and the switch.
+    let txn = db.begin().await?;
+    drain_capture_journal(&txn).await?;
+    txn.execute(Statement::from_sql_and_values(
+        DatabaseBackend::Sqlite,
+        "INSERT INTO sync_capture_actor (id, user_sync_id) VALUES (1, ?)
+         ON CONFLICT(id) DO UPDATE SET user_sync_id = excluded.user_sync_id",
+        [user_sync_id.map(str::to_string).into()],
+    ))
+    .await?;
+    txn.commit().await?;
     Ok(())
 }
