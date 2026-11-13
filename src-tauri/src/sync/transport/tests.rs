@@ -965,8 +965,11 @@ fn outbox_items_carry_owner_and_explicit_base_version() {
         last_error: None,
         created_at: String::new(),
         updated_at: String::new(),
+        signatures_json: None,
     };
     let wire = serde_json::to_value(ExchangeOutboxItem::from(&item)).expect("serialize");
+    // An unsigned item carries no signatures key (an old server never sees an unknown field).
+    assert!(wire.get("signatures").is_none());
     assert_eq!(wire["owner_user_sync_id"], "user-a");
     assert_eq!(wire["base_row_version"], 3);
     assert_eq!(wire["row_version"], 4);

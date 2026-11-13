@@ -22,6 +22,7 @@ pub(crate) mod row_layout;
 pub mod row_spec;
 pub mod row_state;
 pub mod seeded_identity;
+pub mod signing;
 pub mod signing_rules;
 pub mod transport;
 pub mod username_clash;

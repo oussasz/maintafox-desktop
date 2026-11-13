@@ -62,7 +62,37 @@ pub(crate) async fn verify_user_password(
     let Some(hash) = hash else {
         return Ok(false);
     };
-    password::verify_password(password_raw, &hash)
+    let ok = password::verify_password(password_raw, &hash)?;
+    if ok {
+        hold_signer_key(db, user_id, password_raw, &hash).await;
+    }
+    Ok(ok)
+}
+
+/// Passwords of second signers whose key must still be enrolled, by user sync id: taken by
+/// [`record_outcome`] once the action's transaction is over (enrolment needs the network).
+fn pending_enrolments() -> &'static std::sync::Mutex<std::collections::HashMap<String, String>> {
+    static PENDING: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, String>>> =
+        std::sync::OnceLock::new();
+    PENDING.get_or_init(Default::default)
+}
+
+/// Per-user signing (design v9 §9): the second signer's key, unlocked (or made) with the password
+/// they just typed, co-signs this session's change that names them. Never fails the action.
+async fn hold_signer_key(db: &impl ConnectionTrait, user_id: i64, password_raw: &str, hash: &str) {
+    let sync_id = match crate::sync::identity::optional_entity_sync_id(db, "user_accounts", user_id).await {
+        Ok(Some(id)) => id,
+        _ => return,
+    };
+    match crate::auth::signing_keys::unlock_or_create(db, user_id, &sync_id, password_raw, hash).await {
+        Ok(key) => {
+            crate::auth::signing_keys::hold_cosigner_key(key);
+            if let Ok(mut pending) = pending_enrolments().lock() {
+                pending.insert(sync_id, password_raw.to_string());
+            }
+        }
+        Err(e) => tracing::warn!(error = %e, "second signer: signing key not unlocked"),
+    }
 }
 
 /// What an outcome is recorded for: who acted, the action (audit `context`) and its subject.
@@ -93,6 +123,14 @@ pub(crate) async fn record_outcome(
         return Ok(());
     };
     if ok {
+        if let Ok(Some(sync_id)) =
+            crate::sync::identity::optional_entity_sync_id(db, "user_accounts", i64::from(signer)).await
+        {
+            let password = pending_enrolments().lock().ok().and_then(|mut p| p.remove(&sync_id));
+            if let (Some(key), Some(password)) = (crate::auth::signing_keys::cosigner_key(&sync_id), password) {
+                crate::sync::signing::spawn_enrolment_if_needed(db.clone(), key, password);
+            }
+        }
         return crate::auth::lockout::clear_failed_attempts(db, signer).await;
     }
     let policy = crate::auth::lockout::LockoutPolicy::load(db).await;

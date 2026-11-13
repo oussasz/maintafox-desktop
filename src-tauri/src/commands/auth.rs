@@ -384,7 +384,8 @@ async fn start_signing_session(db: &sea_orm::DatabaseConnection, user_id: i32, p
         .await
     {
         Ok(key) => {
-            crate::auth::signing_keys::hold_session_key(key);
+            let key = crate::auth::signing_keys::hold_session_key(key);
+            crate::sync::signing::spawn_enrolment_if_needed(db.clone(), key, password.to_string());
         }
         Err(e) => tracing::warn!(error = %e, "auth::signing key not unlocked; changes stay unsigned"),
     }

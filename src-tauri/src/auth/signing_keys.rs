@@ -287,37 +287,85 @@ pub fn unwrap_key(
 
 // ── Keys held in memory ────────────────────────────────────────────────────────────────────
 //
-// The signed-in user's key, and a co-signer's key for the four-eyes step that needed it, are
-// held here (by user sync id) so the sync staging can sign the user's own changes. Every key is
-// released when the session is cleared (`SessionManager::clear_session`); dropping the last
-// reference wipes it.
+// The signed-in user's key (`Store::Session`), and a second signer's key for the four-eyes step
+// that needed it (`Store::Cosigner`), are held here by user sync id so the sync push can sign the
+// session's own changes. Every key is released when the session is created or cleared
+// (`SessionManager`); dropping the last reference wipes it. Tests keep one store per thread
+// (each `#[tokio::test]` runs on its own thread), so parallel tests never share keys.
 
-fn held_keys() -> &'static std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<UnlockedSigningKey>>> {
-    static KEYS: std::sync::OnceLock<
-        std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<UnlockedSigningKey>>>,
-    > = std::sync::OnceLock::new();
-    KEYS.get_or_init(Default::default)
+type KeyMap = std::collections::HashMap<String, std::sync::Arc<UnlockedSigningKey>>;
+
+#[derive(Clone, Copy)]
+enum Store {
+    Session,
+    Cosigner,
+}
+
+#[cfg(not(test))]
+fn with_store<R>(store: Store, f: impl FnOnce(&mut KeyMap) -> R) -> Option<R> {
+    static SESSION: std::sync::OnceLock<std::sync::Mutex<KeyMap>> = std::sync::OnceLock::new();
+    static COSIGNER: std::sync::OnceLock<std::sync::Mutex<KeyMap>> = std::sync::OnceLock::new();
+    let cell = match store {
+        Store::Session => &SESSION,
+        Store::Cosigner => &COSIGNER,
+    };
+    cell.get_or_init(Default::default)
+        .lock()
+        .ok()
+        .map(|mut keys| f(&mut keys))
+}
+
+#[cfg(test)]
+fn with_store<R>(store: Store, f: impl FnOnce(&mut KeyMap) -> R) -> Option<R> {
+    thread_local! {
+        static SESSION: std::cell::RefCell<KeyMap> = std::cell::RefCell::new(KeyMap::new());
+        static COSIGNER: std::cell::RefCell<KeyMap> = std::cell::RefCell::new(KeyMap::new());
+    }
+    let cell = match store {
+        Store::Session => &SESSION,
+        Store::Cosigner => &COSIGNER,
+    };
+    Some(cell.with(|keys| f(&mut keys.borrow_mut())))
 }
 
 /// Holds `key` for its user until the session ends.
 pub fn hold_session_key(key: UnlockedSigningKey) -> std::sync::Arc<UnlockedSigningKey> {
     let key = std::sync::Arc::new(key);
-    if let Ok(mut keys) = held_keys().lock() {
-        keys.insert(key.user_sync_id.clone(), key.clone());
-    }
+    with_store(Store::Session, |keys| {
+        keys.insert(key.user_sync_id.clone(), key.clone())
+    });
     key
 }
 
-/// The held key of `user_sync_id`, if that user signed in (or co-signed) in this session.
+/// The held key of `user_sync_id`, if that user signed in in this session.
 pub fn held_key(user_sync_id: &str) -> Option<std::sync::Arc<UnlockedSigningKey>> {
-    held_keys().lock().ok().and_then(|keys| keys.get(user_sync_id).cloned())
+    with_store(Store::Session, |keys| keys.get(user_sync_id).cloned()).flatten()
 }
 
-/// Releases every held key (sign-out, session expiry, tenant change).
+/// Holds a second signer's key after they typed their password for an action of this session
+/// (`auth::second_signer`): it co-signs the session's items that name them in an author field,
+/// and is released once it signed (or with the session).
+pub fn hold_cosigner_key(key: UnlockedSigningKey) {
+    let key = std::sync::Arc::new(key);
+    with_store(Store::Cosigner, |keys| {
+        keys.insert(key.user_sync_id.clone(), key.clone())
+    });
+}
+
+/// The held co-signer key of `user_sync_id`.
+pub fn cosigner_key(user_sync_id: &str) -> Option<std::sync::Arc<UnlockedSigningKey>> {
+    with_store(Store::Cosigner, |keys| keys.get(user_sync_id).cloned()).flatten()
+}
+
+/// Releases one co-signer key (it signed what it was typed for).
+pub fn release_cosigner_key(user_sync_id: &str) {
+    with_store(Store::Cosigner, |keys| keys.remove(user_sync_id));
+}
+
+/// Releases every held key (sign-out, session expiry, tenant change, new session).
 pub fn release_session_keys() {
-    if let Ok(mut keys) = held_keys().lock() {
-        keys.clear();
-    }
+    with_store(Store::Session, KeyMap::clear);
+    with_store(Store::Cosigner, KeyMap::clear);
 }
 
 // ── Device-local storage (`user_signing_keys_local`, migration 297) ──────────────────────────
