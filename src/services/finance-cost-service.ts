@@ -285,6 +285,7 @@ const DrilldownActualSchema = z.object({
   equipment_code: z.string().nullable(),
   event_at: z.string().nullable(),
   is_reversal: z.boolean(),
+  row_version: z.number(),
 });
 export type DrilldownActual = z.infer<typeof DrilldownActualSchema>;
 

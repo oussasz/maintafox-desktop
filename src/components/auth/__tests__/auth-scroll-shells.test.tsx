@@ -24,6 +24,9 @@ function expectScrollableCentred(className: string) {
   expect(classes).toContain("before:flex-1");
   expect(classes).toContain("after:flex-1");
   expect(classes).not.toContain("justify-center");
+  // A card with `overflow-hidden` would otherwise shrink to the window height and clip its own
+  // content (continue / revoke buttons out of reach) instead of letting the shell scroll.
+  expect(classes).toContain("[&>*]:shrink-0");
 }
 
 describe("pre-login full-screen shells", () => {
@@ -38,7 +41,12 @@ describe("pre-login full-screen shells", () => {
       </AuthShell>,
     );
     const root = container.firstElementChild as HTMLElement;
-    expectScrollableCentred(root.className);
+    // One flat surface: scrolls when short, no inner card (border / shadow / rounded corners).
+    const classes = root.className.split(/\s+/);
+    expect(classes).toContain("overflow-y-auto");
+    expect(classes).toContain("h-[100dvh]");
+    expect(classes).toContain("[&>*]:shrink-0");
     expect(root.querySelector("main")).not.toBeNull();
+    expect(root.querySelector("main")?.className).not.toMatch(/border|shadow|rounded/);
   });
 });

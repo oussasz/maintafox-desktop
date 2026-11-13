@@ -17,6 +17,8 @@ pub struct FailurePart {
     pub id: i64,
     pub ev_ts: String,
     pub eligible_flags_json: String,
+    /// The record's `is_planned` (0 / 1): what decides whether it counts (`compute::counts_in_mtbf`).
+    pub is_planned: i64,
     pub downtime_duration_hours: f64,
     pub active_repair_hours: f64,
     pub failure_mode_id: Option<i64>,

@@ -1,6 +1,8 @@
 {
   "page": {
-    "title": "Planning"
+    "title": "Planning",
+    "counter": "committed {{committed}} · to commit {{proposed}}",
+    "counterTitle": "{{committed}} work order(s) committed and {{proposed}} planned but not yet committed in the period shown"
   },
   "views": {
     "gantt": "Gantt board",
@@ -54,12 +56,12 @@
   },
   "actions": {
     "refreshBacklog": "Refresh backlog",
-    "freezePeriod": "Freeze period",
+    "lockPeriod": "Lock a period (window / shutdown)",
     "exportPdf": "Export Gantt PDF",
     "commit": "Create commitment",
     "notifyTeams": "Notify teams",
     "plannerTools": "Planner tools",
-    "requiresCommitments": "Available once work is committed on this board"
+    "requiresCommitments": "No work order is committed in the From–To period: commit one from the backlog, or widen the dates, to use this tool."
   },
   "state": {
     "loading": "Loading planning data..."
@@ -70,7 +72,7 @@
     "readinessScore": "Readiness",
     "skillMatch": "Skill match",
     "risk": "Risk",
-    "emptyReady": "No ready candidates.",
+    "emptyReady": "No work order ready to plan. Only work orders at status 'Ready to plan' (or planned, assigned) appear here; a draft or in-progress one does not.",
     "emptyBlocked": "No blocked candidates.",
     "readyHint": "Click a Ready card to commit it to the schedule.",
     "blockedHint": "Open a blocked item to clear its blockers in the work order or request.",
@@ -139,6 +141,7 @@
     "capacityBasis": {
       "roster": "from the schedule classes",
       "rest_day": "rest day",
+      "site_rest_day": "site rest day",
       "holiday": "holiday",
       "no_schedule": "no schedule class",
       "no_members": "no team members"
@@ -236,13 +239,14 @@
     "signatureHint": "The approver signs by typing their password on this PC. An urgent break-in, or one that forces a blocking check (crew capacity, locked window, shutdown window, readiness), must be signed.",
     "noApprovers": "Nobody else holds plan.confirm at this crew's site: an urgent break-in cannot be signed. Emergency work runs as an unscheduled work order.",
     "inserted": "Added to a frozen week:",
-    "syncRefused": "refused (sync)"
-  },
-  "freeze": {
-    "title": "Freeze schedule period",
-    "summary": "Freeze commitments from {{start}} to {{end}}.",
-    "reason": "Freeze reason",
-    "reasonPlaceholder": "Explain why this period must be frozen"
+    "syncRefused": "refused (sync)",
+    "disabled": {
+      "noCommitment": "Choose the commitment to move.",
+      "noReason": "Choose the break-in reason.",
+      "noApprover": "Choose the approver who signs this urgent break-in.",
+      "noPassword": "The approver must type their password to sign.",
+      "saving": "Saving in progress…"
+    }
   },
   "override": {
     "title": "Override double-booking",
@@ -284,6 +288,12 @@
   "dialogs": {
     "cancel": "Cancel",
     "close": "Close"
+  },
+  "proposed": {
+    "label": "To commit",
+    "tooltip": "Work order planned but not yet committed: click to commit it",
+    "tooltipWithTeam": "Work order planned but not yet committed (crew: {{team}}): click to commit it",
+    "noRight": "You do not have the right to commit a work order."
   },
   "deepLink": {
     "woNotInBacklog": "This work order is not in the planning backlog (not ready to plan yet, already committed or filtered out).",
@@ -397,6 +407,8 @@
     "publish": "Publish to crews",
     "requestUnfreeze": "Request unfreeze",
     "freezeDue": "Freezes automatically on {{at}}",
+    "freezeOverdue": "Automatic freeze was due on {{at}}: it applies the next time the application runs, or freeze the week yourself.",
+    "freezeOverdueNoCrews": "Automatic freeze was due on {{at}} but not applied: no crew is attached to this site.",
     "frozenAt": "Frozen on {{at}}",
     "frozenAutomatically": "Frozen automatically on {{at}}",
     "unfreezePending": "Unfreeze requested on {{at}}: {{reason}}. Another planner must decide it.",
@@ -408,7 +420,7 @@
     "crew": "Crew",
     "dayOff": "rest day",
     "frozenJob": "Frozen",
-    "noCrews": "No active crew belongs to this site.",
+    "noCrews": "No active crew belongs to this site (crews without a site are listed in the banner above: attach them to a site).",
     "history": "Week history",
     "system": "System",
     "events": {
@@ -435,7 +447,6 @@
     "breakInRecorded": "Break-in recorded",
     "slotReleased": "Slot released",
     "commitmentCancelled": "Commitment cancelled",
-    "periodFrozen": "Period frozen",
     "teamsNotified": "Crews notified",
     "weekApproved": "Week approved",
     "weekFrozen": "Week frozen",

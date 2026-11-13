@@ -41,7 +41,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { mfAlert } from "@/design-system/tokens";
 import { mfTone } from "@/design-system/tone";
 import { useFormatters } from "@/hooks/use-formatters";
-import { useToast } from "@/hooks/use-toast";
+import { useAppToast } from "@/hooks/use-toast";
 import { useCanReadList } from "@/lib/list-access";
 import { cn } from "@/lib/utils";
 import { listOrgTree } from "@/services/org-node-service";
@@ -71,7 +71,7 @@ export function WeeklySchedulePanel() {
   const [error, setError] = useState<string | null>(null);
   const [unfreezeOpen, setUnfreezeOpen] = useState(false);
   const [unfreezeReason, setUnfreezeReason] = useState("");
-  const { toast } = useToast();
+  const { toast } = useAppToast();
   const currentUserId = useSessionStore((st) => st.info?.user_id ?? null);
 
   useEffect(() => {
@@ -142,7 +142,11 @@ export function WeeklySchedulePanel() {
 
   let freezeLine: string | null = null;
   if (view && (status === "draft" || status === "approved")) {
-    freezeLine = t("weekly.freezeDue", { at: formatDateTime(view.freeze_due_at) });
+    const at = formatDateTime(view.freeze_due_at);
+    const overdue = new Date(view.freeze_due_at).getTime() < Date.now();
+    freezeLine = overdue
+      ? t(view.crews.length === 0 ? "weekly.freezeOverdueNoCrews" : "weekly.freezeOverdue", { at })
+      : t("weekly.freezeDue", { at });
   } else if (schedule?.frozen_at) {
     freezeLine =
       schedule.frozen_by_id == null
@@ -359,7 +363,7 @@ export function WeeklySchedulePanel() {
                     scope="row"
                     className="border border-surface-border p-1 text-left font-medium"
                   >
-                    {crew.team_code} — {crew.team_name}
+                    <span title={crew.team_code}>{crew.team_name}</span>
                   </th>
                   {days.map((d) => (
                     <td

@@ -43,11 +43,25 @@ type Row = (typeof ROWS)[number];
 export function costVariance(
   f: WoCostFigures,
 ): { base: "estimated" | "planned"; amount: number } | null {
+  // Nothing booked yet: no gap to show (not "-<estimate>" before the first entry, L7-23).
+  if (Math.abs(f.actual) < 0.005) return null;
   if (f.estimated != null && f.estimated > 0) {
     return { base: "estimated", amount: f.actual - f.estimated };
   }
   if (f.planned != null && f.planned > 0) return { base: "planned", amount: f.actual - f.planned };
   return null;
+}
+
+/**
+ * A gap under 2 % of its base (rounding, a rate change of a few dinars) is not a drift: it is
+ * shown as "—", never in red (L7-23).
+ */
+export function isNegligibleVariance(
+  variance: { base: "estimated" | "planned"; amount: number },
+  f: WoCostFigures,
+): boolean {
+  const base = (variance.base === "estimated" ? f.estimated : f.planned) ?? 0;
+  return Math.abs(variance.amount) < Math.max(0.005, base * 0.02);
 }
 
 export function WoCostPanel({ woId, status }: WoCostPanelProps) {
@@ -102,8 +116,9 @@ export function WoCostPanel({ woId, status }: WoCostPanelProps) {
   if (!view) return null;
 
   const b = view.breakdown;
+  // A rounding residue is 0, never "-0,00 DA".
   const money = (v: number | null | undefined) =>
-    v == null ? "—" : formatCurrency(v, b.currency_code);
+    v == null ? "—" : formatCurrency(Math.abs(v) < 0.005 ? 0 : v, b.currency_code);
   const figures: Record<Row, WoCostFigures> = {
     labor: b.labor,
     parts: b.parts,
@@ -202,8 +217,10 @@ export function WoCostPanel({ woId, status }: WoCostPanelProps) {
             <tbody>
               {ROWS.map((row) => {
                 const f = figures[row];
-                const variance = costVariance(f);
-                const over = variance != null && variance.amount > 0.005;
+                const gap = costVariance(f);
+                const negligible = gap != null && isNegligibleVariance(gap, f);
+                const variance = negligible ? null : gap;
+                const over = variance != null && variance.amount > 0;
                 return (
                   <tr
                     key={row}
@@ -230,7 +247,13 @@ export function WoCostPanel({ woId, status }: WoCostPanelProps) {
                         "px-2 py-1 text-end font-mono tabular-nums",
                         over ? mfTone.danger.text : "text-text-muted",
                       )}
-                      title={variance ? t(`woCost.varianceBase.${variance.base}`) : undefined}
+                      title={
+                        variance
+                          ? t(`woCost.varianceBase.${variance.base}`)
+                          : negligible
+                            ? t("woCost.varianceNegligible")
+                            : undefined
+                      }
                     >
                       {variance ? `${over ? "+" : ""}${money(variance.amount)}` : "—"}
                     </td>

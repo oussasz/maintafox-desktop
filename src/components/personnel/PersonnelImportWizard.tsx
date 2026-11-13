@@ -15,7 +15,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
+import { FileInput } from "@/components/ui/file-input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -185,9 +185,8 @@ export function PersonnelImportWizard() {
             </div>
 
             <div className="flex items-center gap-2">
-              <Input
+              <FileInput
                 ref={fileRef}
-                type="file"
                 className="max-w-sm"
                 accept=".csv,.xlsx"
                 onChange={(e) => void onFileChange(e)}
@@ -305,7 +304,7 @@ export function PersonnelImportWizard() {
             ) : null}
           </div>
 
-          <DialogFooter>
+          <DialogFooter className="sm:flex-wrap">
             <Button variant="outline" onClick={() => setOpen(false)}>
               {t("import.action.close")}
             </Button>
@@ -313,6 +312,11 @@ export function PersonnelImportWizard() {
               {applying ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
               {t("import.action.apply")}
             </Button>
+            {!canApply ? (
+              <p className="w-full text-xs text-text-muted" data-testid="apply-disabled-reason">
+                {t("import.action.applyDisabled")}
+              </p>
+            ) : null}
           </DialogFooter>
         </DialogContent>
       </Dialog>

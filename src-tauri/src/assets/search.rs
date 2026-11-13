@@ -410,13 +410,18 @@ async fn usage_asset_ids(
 
 // ─── Text matching ────────────────────────────────────────────────────────────
 
+/// The text without spaces, dashes, dots, slashes and underscores (`P-12` and `P 12` read `p12`).
+fn squeeze_separators(text: &str) -> String {
+    text.chars().filter(|c| c.is_alphanumeric()).collect()
+}
+
 /// Ids of the live assets matching a search text, best match first.
 ///
 /// Matching is done here with [`fold_search_text`] rather than in SQL: folding accents in SQL
 /// needs dozens of nested `REPLACE()` calls per column, which overflows the parser stack of the
 /// SQLCipher build ("parser stack overflow"), so every text search failed in the app.
 /// Rank: exact code, then code prefix, then code / name / serial number / external id containing
-/// the text; ties ordered by code.
+/// the whole text, then every word found somewhere (separators ignored); ties ordered by code.
 pub(crate) async fn ranked_text_matches(db: &impl ConnectionTrait, query: &str) -> AppResult<Vec<i64>> {
     #[cfg(test)]
     TEXT_MATCH_SCANS.with(|c| c.set(c.get() + 1));
@@ -438,16 +443,22 @@ pub(crate) async fn ranked_text_matches(db: &impl ConnectionTrait, query: &str) 
             "SELECT asset_id, external_id FROM asset_external_ids WHERE valid_to IS NULL".to_string(),
         ))
         .await?;
-    let mut external_match: std::collections::HashSet<i64> = std::collections::HashSet::new();
+    // Text of the external ids per asset, folded: they take part in the multi-word match.
+    let mut external_text: std::collections::HashMap<i64, String> = std::collections::HashMap::new();
     for row in &external {
         let asset_id: i64 = row.try_get("", "asset_id").map_err(|e| decode_err("asset_id", e))?;
         let ext: String = row
             .try_get("", "external_id")
             .map_err(|e| decode_err("external_id", e))?;
-        if fold_search_text(&ext).contains(&folded) {
-            external_match.insert(asset_id);
-        }
+        let entry = external_text.entry(asset_id).or_default();
+        entry.push(' ');
+        entry.push_str(&fold_search_text(&ext));
     }
+    // Several words all have to be found (in any order, across code / name / serial / external id),
+    // and a word also matches without separators: "P12" finds "P-12", "presse 1800" finds
+    // "Presse hydraulique 1800 T".
+    let words: Vec<&str> = folded.split_whitespace().collect();
+    let words_squeezed: Vec<String> = words.iter().map(|w| squeeze_separators(w)).collect();
     let mut ranked: Vec<(u8, String, i64)> = Vec::new();
     for row in &rows {
         let id: i64 = row.try_get("", "id").map_err(|e| decode_err("id", e))?;
@@ -459,18 +470,33 @@ pub(crate) async fn ranked_text_matches(db: &impl ConnectionTrait, query: &str) 
             .try_get("", "serial_number")
             .map_err(|e| decode_err("serial_number", e))?;
         let code_f = fold_search_text(&code);
+        let name_f = fold_search_text(&name);
+        let serial_f = fold_search_text(&serial);
+        let external_f = external_text.get(&id).map(String::as_str).unwrap_or("");
+        let code_squeezed = squeeze_separators(&code_f);
         let rank = if code_f == folded {
             0
         } else if code_f.starts_with(&folded) {
             1
         } else if code_f.contains(&folded)
-            || fold_search_text(&name).contains(&folded)
-            || fold_search_text(&serial).contains(&folded)
-            || external_match.contains(&id)
+            || name_f.contains(&folded)
+            || serial_f.contains(&folded)
+            || external_f.contains(&folded)
         {
             2
         } else {
-            continue;
+            let haystack = format!("{code_f} {name_f} {serial_f} {external_f}");
+            let haystack_squeezed = squeeze_separators(&haystack);
+            let all_words = !words.is_empty()
+                && words
+                    .iter()
+                    .zip(&words_squeezed)
+                    .all(|(w, sq)| haystack.contains(w) || (!sq.is_empty() && haystack_squeezed.contains(sq.as_str())));
+            if all_words || (!words_squeezed.is_empty() && code_squeezed.contains(&squeeze_separators(&folded))) {
+                3
+            } else {
+                continue;
+            }
         };
         ranked.push((rank, code, id));
     }
@@ -1013,5 +1039,21 @@ mod picker_tests {
             .unwrap();
         assert!(res.complete);
         assert!(PICKER_FULL_LIST_CAP <= 200);
+    }
+
+    #[tokio::test]
+    async fn several_words_and_a_code_without_dash_find_the_asset() {
+        // Names are "Asset <code>": the words are matched anywhere, in any order.
+        let db = plant_with(&["PRESSE-1800", "P-12", "EQ-7"]).await;
+        let ids = |q: &str| {
+            let db = &db;
+            let q = q.to_string();
+            async move { ranked_text_matches(db, &q).await.unwrap().len() }
+        };
+        assert_eq!(ids("asset presse").await, 1, "words in any order");
+        assert_eq!(ids("1800 presse").await, 1, "two words, reversed");
+        assert_eq!(ids("P12").await, 1, "a code typed without its dash");
+        assert_eq!(ids("p 12").await, 1, "a code typed with a space");
+        assert_eq!(ids("presse 9999").await, 0, "every word has to be found");
     }
 }

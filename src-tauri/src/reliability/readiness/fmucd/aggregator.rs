@@ -22,7 +22,7 @@ pub struct AggregatedDataset {
 }
 
 pub fn aggregate_by_asset(load: LoadProgress, config: &FmucdMappingConfig) -> AggregatedDataset {
-    let mut period_start = Utc::now();
+    let mut period_start = crate::clock::now();
     let mut period_end = DateTime::<Utc>::MIN_UTC;
     for events in load.assets.values() {
         for e in events {

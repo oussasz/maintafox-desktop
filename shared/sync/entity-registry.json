@@ -101,6 +101,18 @@
       "sync_status": "synced"
     },
     {
+      "entity_type": "asset_corrective_actions",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 6,
+      "parents": [
+        "equipment",
+        "personnel",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
       "entity_type": "asset_document_links",
       "scope": "tenant",
       "conflict_policy": "operator_review",
@@ -118,6 +130,17 @@
       "apply_priority": 5,
       "parents": [
         "equipment"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "asset_five_why_analyses",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 5,
+      "parents": [
+        "equipment",
+        "user_accounts"
       ],
       "sync_status": "synced"
     },
@@ -480,6 +503,17 @@
       "sync_status": "synced"
     },
     {
+      "entity_type": "equipment_isolation_points",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 5,
+      "parents": [
+        "equipment",
+        "reference_values"
+      ],
+      "sync_status": "synced"
+    },
+    {
       "entity_type": "equipment_lifecycle_events",
       "scope": "tenant",
       "conflict_policy": "append_only",
@@ -559,6 +593,7 @@
         "reference_values",
         "equipment",
         "work_orders",
+        "wo_history_records",
         "user_accounts"
       ],
       "sync_status": "synced"
@@ -760,7 +795,8 @@
         "org_nodes",
         "user_accounts",
         "reference_values",
-        "di_sla_rules"
+        "di_sla_rules",
+        "asset_meter_readings"
       ],
       "sync_status": "synced"
     },
@@ -1215,6 +1251,17 @@
       "sync_status": "synced"
     },
     {
+      "entity_type": "permit_gas_tests",
+      "scope": "tenant",
+      "conflict_policy": "append_only",
+      "apply_priority": 13,
+      "parents": [
+        "work_permits",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
       "entity_type": "permit_handover_logs",
       "scope": "tenant",
       "conflict_policy": "append_only",
@@ -1238,6 +1285,18 @@
       "sync_status": "synced"
     },
     {
+      "entity_type": "permit_personal_locks",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 14,
+      "parents": [
+        "work_permits",
+        "permit_workers",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
       "entity_type": "permit_suspensions",
       "scope": "tenant",
       "conflict_policy": "operator_review",
@@ -1254,6 +1313,19 @@
       "conflict_policy": "operator_review",
       "apply_priority": 1,
       "parents": [
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "permit_workers",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 13,
+      "parents": [
+        "work_permits",
+        "personnel",
+        "external_companies",
         "user_accounts"
       ],
       "sync_status": "synced"
@@ -2199,6 +2271,18 @@
       "sync_status": "synced"
     },
     {
+      "entity_type": "wo_history_records",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 5,
+      "parents": [
+        "equipment",
+        "reference_values",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
       "entity_type": "wo_state_transition_log",
       "scope": "tenant",
       "conflict_policy": "append_only",
@@ -2286,7 +2370,8 @@
         "stock_reservations",
         "work_orders",
         "articles",
-        "stock_locations"
+        "stock_locations",
+        "personnel"
       ],
       "sync_status": "synced"
     },
@@ -2346,7 +2431,8 @@
         "reference_values",
         "work_order_statuses",
         "org_nodes",
-        "schedule_class_versions"
+        "schedule_class_versions",
+        "external_companies"
       ],
       "sync_status": "synced"
     },
@@ -2495,6 +2581,8 @@
     "asset_import_staging": "import_staging",
     "backup_policies": "backup",
     "backup_runs": "backup",
+    "bulk_import_batches": "import_staging",
+    "bulk_import_rows": "import_staging",
     "computation_jobs": "job_queue",
     "connection_profiles": "secrets",
     "entitlement_cache_state": "licensing",

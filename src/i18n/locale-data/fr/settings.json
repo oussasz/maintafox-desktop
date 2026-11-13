@@ -19,7 +19,8 @@
     "reliability": "Fiabilité",
     "documents": "Documents et identité visuelle",
     "work_orders": "Ordres de travail",
-    "inventory": "Inventaire"
+    "inventory": "Inventaire",
+    "permits": "Permis de travail"
   },
   "table": {
     "key": "Clé",
@@ -77,15 +78,26 @@
     "inventory.count_four_eyes_value_threshold": "Tolérance de double validation d'un comptage : valeur de l'écart",
     "inventory.count_four_eyes_percent_threshold": "Tolérance de double validation d'un comptage : part de la quantité théorique",
     "inventory.reconciliation_drift_break": "Écart de rupture du rapprochement de stock",
-    "locale.fiscal_year_start_month": "Début de l'exercice comptable"
+    "locale.fiscal_year_start_month": "Début de l'exercice comptable",
+    "permit.gas_o2_min_percent": "Test atmosphérique : O2 minimal accepté (%)",
+    "permit.gas_o2_max_percent": "Test atmosphérique : O2 maximal accepté (%)",
+    "permit.gas_lel_max_percent": "Test atmosphérique : limite de la LIE (%)",
+    "permit.gas_h2s_max_ppm": "Test atmosphérique : limite de l'H2S (ppm)",
+    "permit.gas_co_max_ppm": "Test atmosphérique : limite du CO (ppm)",
+    "permit.gas_test_validity_hours": "Test atmosphérique : durée de validité (h)",
+    "reliability.repeat_failure_count": "Pannes répétitives : nombre de défaillances",
+    "reliability.repeat_failure_window_days": "Pannes répétitives : période (jours)"
   },
   "documentHeader": {
+    "emptyPrintWarning": "Document imprimé sans en-tête d'entreprise",
+    "emptyPrintWhere": "Aucun logo ni nom d'usine n'est configuré. Un administrateur peut le définir dans Paramètres › Général › Documents et identité visuelle.",
+    "emptySetupPrompt": "L'en-tête des documents est vide : les OT, demandes et bons de commande imprimés sortent sans logo ni nom d'usine. Ajoutez au moins le nom de l'usine et le logo ci-dessous.",
     "removeLogoConfirmTitle": "Retirer le logo ?",
     "removeLogoConfirmBody": "Le logo ne figurera plus dans l'en-tête des documents imprimés (OT, bons de commande…). Vous pourrez en téléverser un autre.",
     "title": "Documents et identité visuelle",
     "description": "Configurez l'en-tête par défaut injecté en haut des ordres de travail, demandes d'intervention et bons de commande imprimés.",
     "logoLabel": "Logo de l'entreprise",
-    "logoHint": "PNG, JPEG, WebP ou GIF. Max 5 Mo. Conservé pour les en-têtes de documents et le chrome applicatif futur.",
+    "logoHint": "PNG, JPEG, WebP ou GIF. Max 5 Mo. Utilisé dans l’en-tête des documents imprimés.",
     "uploadLogo": "Téléverser le logo",
     "replaceLogo": "Remplacer le logo",
     "removeLogo": "Supprimer le logo",
@@ -97,6 +109,8 @@
     "saveSuccess": "En-tête de document enregistré",
     "saveError": "Échec de l'enregistrement de l'en-tête",
     "loadError": "Échec du chargement de l'en-tête",
+    "imageRejectedTitle": "Image non ajoutée à l'en-tête",
+    "imageRejectedBody": "Cette image est trop lourde pour l'en-tête, même réduite (limite : {{max_kb}} Ko par image). Choisissez une image plus petite.",
     "logoUploadError": "Échec du téléversement du logo",
     "logoClearError": "Échec de la suppression du logo",
     "invalidShape": "La valeur d'en-tête stockée est invalide. Réinitialisation vers un modèle vide.",
@@ -147,17 +161,17 @@
       "no": "non"
     },
     "governedTitle": "Paramètre réglementé",
-    "governedDescription": "Ce paramètre utilise le workflow Brouillon → Test → Activation.",
+    "governedDescription": "Paramètre sensible, modifié en trois étapes : vous préparez un brouillon, vous le testez, puis vous l'activez. La version active reste en service tant que le brouillon n'est pas activé.",
     "active": "Actif",
     "activeConfig": "Configuration active",
     "draftConfig": "Configuration brouillon",
-    "noSnapshot": "Aucun snapshot de politique activé.",
+    "noSnapshot": "Aucune version de politique activée.",
     "noDraft": "Aucun brouillon. Cliquez sur \"Modifier le brouillon\" pour en créer un.",
     "version": "Version {{version}}",
     "activatedAt": "Activé le {{date}}",
     "currentValues": "Valeurs actuelles",
     "draftPending": "Brouillon en attente",
-    "requiresStepUp": "Élévation requise",
+    "requiresStepUp": "Mot de passe redemandé à l'activation",
     "editDraft": "Modifier le brouillon",
     "testDraft": "Tester le brouillon",
     "activate": "Activer",
@@ -191,13 +205,22 @@
       "require_digit": "Chiffre requis",
       "max_age_days": "Âge maximum (jours)",
       "history_count": "Historique des mots de passe",
-      "schedule_cron": "Planification (cron)",
+      "schedule_cron": "Fréquence des sauvegardes automatiques",
       "retention_days": "Rétention (jours)",
       "include_photos": "Inclure les photos",
       "compression_level": "Niveau de compression"
     },
     "loadError": "La politique n'a pas pu être chargée.",
-    "unreadable": "La politique enregistrée est illisible : elle ne peut pas être modifiée ici. Contactez le support."
+    "unreadable": "La politique enregistrée est illisible : elle ne peut pas être modifiée ici. Contactez le support.",
+    "schedule": {
+      "none": "Aucune sauvegarde automatique",
+      "daily2": "Chaque nuit à 02:00",
+      "daily12": "Chaque jour à 12:00",
+      "daily20": "Chaque soir à 20:00",
+      "every6h": "Toutes les 6 heures",
+      "weeklyMonday": "Chaque lundi à 02:00",
+      "custom": "Personnalisée ({{expr}})"
+    }
   },
   "permissionDenied": "Vous n'avez pas la permission d'accéder aux paramètres",
   "options": {
@@ -269,7 +292,7 @@
   },
   "backupOps": {
     "title": "Opérations de sauvegarde",
-    "description": "Sauvegarder, valider ou restaurer la base de données, et consulter l'historique. Les sauvegardes planifiées suivent la politique de sauvegarde et sont conservées dans le dossier « backups » de l'application.",
+    "description": "Sauvegarder, valider ou restaurer la base de données, et consulter l'historique. Les sauvegardes automatiques suivent la politique de sauvegarde ; elles sont écrites dans le dossier externe choisi ci-dessous, sinon dans le dossier « backups » de l'application sur ce PC.",
     "loadError": "Impossible de charger l'historique des sauvegardes",
     "chooseTarget": "Choisir la destination de sauvegarde",
     "chooseBackup": "Choisir le fichier de sauvegarde à valider",
@@ -354,8 +377,8 @@
     "showHistory": "Historique des changements",
     "hideHistory": "Masquer l'historique",
     "system": "Système",
-    "whoMayChange": "Modifiable par les rôles : {{roles}} (permission adm.settings)",
-    "nobodyMayChange": "Aucun rôle actif ne détient la permission adm.settings.",
+    "whoMayChange": "Modifiable par les rôles : {{roles}}",
+    "nobodyMayChange": "Aucun rôle actif ne détient le droit de modifier les paramètres.",
     "outOfRange": "Valeur hors limites ({{min}} à {{max}}).",
     "locked": {
       "locale.fiscal_year_start_month": "Verrouillé : des réalisés budgétaires, des périodes clôturées ou des imputations sont déjà enregistrés par période fiscale. Changer le mois de début déplacerait tout le passé.",
@@ -363,7 +386,7 @@
     },
     "help": {
       "locale.primary_language": "Langue de l'interface par défaut pour tous les utilisateurs.",
-      "locale.fallback_language": "Langue utilisée quand un texte manque dans la langue principale.",
+      "locale.fallback_language": "Langue affichée seulement si un texte n'existe pas encore dans la langue principale. Tous les écrans existent en français et en anglais : ce réglage concerne les textes ajoutés par une mise à jour future.",
       "locale.currency_code": "Devise de valorisation du stock, des achats et des coûts (code ISO 4217).",
       "locale.fiscal_year_start_month": "Mois de début de l'exercice : périodes budgétaires, imputations, clôtures.",
       "wo.reopen_window_days": "Nombre de jours après clôture pendant lesquels un OT clôturé peut être rouvert (0 = jamais).",
@@ -373,7 +396,15 @@
       "ram.fmeca_rpn_critical_threshold": "À partir de cet indice de priorité de risque (G × O × D), un mode de défaillance AMDEC est critique.",
       "backup.retention_daily": "Nombre de sauvegardes planifiées quotidiennes conservées (au moins une).",
       "backup.retention_weekly": "Nombre de sauvegardes hebdomadaires conservées en plus.",
-      "backup.retention_monthly": "Nombre de sauvegardes mensuelles conservées en plus."
+      "backup.retention_monthly": "Nombre de sauvegardes mensuelles conservées en plus.",
+      "permit.gas_o2_min_percent": "Un permis qui exige un test atmosphérique n'est délivré que si sa dernière mesure d'oxygène est au moins égale à cette valeur (valeur livrée : 19,5 %).",
+      "permit.gas_o2_max_percent": "… et au plus égale à cette valeur (valeur livrée : 23,5 %).",
+      "permit.gas_lel_max_percent": "La dernière mesure de gaz inflammables (% de la limite inférieure d'explosivité) doit rester inférieure à cette valeur (valeur livrée : 10 %).",
+      "permit.gas_h2s_max_ppm": "La dernière mesure d'hydrogène sulfuré doit rester inférieure à cette valeur (valeur livrée : 10 ppm).",
+      "permit.gas_co_max_ppm": "Quand le monoxyde de carbone est mesuré, la dernière mesure doit rester inférieure à cette valeur (valeur livrée : 25 ppm).",
+      "permit.gas_test_validity_hours": "Un test atmosphérique n'est valable que ce nombre d'heures : au-delà, il faut refaire le test avant de délivrer ou d'activer le permis, de le reprendre après suspension, ou de démarrer ou reprendre le travail (valeur livrée : 4 h).",
+      "reliability.repeat_failure_count": "Un équipement est signalé « pannes répétitives » à partir de ce nombre de défaillances non planifiées dans la période ci-dessous.",
+      "reliability.repeat_failure_window_days": "Période, en jours jusqu'à aujourd'hui, sur laquelle les défaillances non planifiées sont comptées pour le signalement « pannes répétitives »."
     },
     "units": {
       "wo.reopen_window_days_one": "{{count}} jour",
@@ -387,7 +418,17 @@
       "backup.retention_weekly_one": "{{count}} semaine",
       "backup.retention_weekly_other": "{{count}} semaines",
       "backup.retention_monthly_one": "{{count}} mois",
-      "backup.retention_monthly_other": "{{count}} mois"
+      "backup.retention_monthly_other": "{{count}} mois",
+      "permit.gas_o2_min_percent": "{{value, number(maximumFractionDigits: 6)}} %",
+      "permit.gas_o2_max_percent": "{{value, number(maximumFractionDigits: 6)}} %",
+      "permit.gas_lel_max_percent": "{{value, number(maximumFractionDigits: 6)}} % LIE",
+      "permit.gas_h2s_max_ppm": "{{value, number(maximumFractionDigits: 6)}} ppm",
+      "permit.gas_co_max_ppm": "{{value, number(maximumFractionDigits: 6)}} ppm",
+      "permit.gas_test_validity_hours": "{{value, number(maximumFractionDigits: 6)}} h",
+      "reliability.repeat_failure_count_one": "{{count}} défaillance",
+      "reliability.repeat_failure_count_other": "{{count}} défaillances",
+      "reliability.repeat_failure_window_days_one": "{{count}} jour",
+      "reliability.repeat_failure_window_days_other": "{{count}} jours"
     },
     "currencyLoadError": "La liste des devises (Données de référence › Devises) n'a pas pu être chargée : la devise ne peut pas être modifiée.",
     "currencyLoading": "Chargement des devises…",
@@ -527,6 +568,14 @@
     "history": "Historique",
     "historyError": "L'historique n'a pas pu être chargé",
     "noHistory": "Aucun changement sur ce site.",
+    "depannageValidation": {
+      "title": "Validation des dépannages",
+      "label": "Approuver automatiquement les dépannages à leur clôture",
+      "help": "Désactivé (recommandé) : chaque dépannage est validé après coup par un approbateur du site, autre que la personne qui l'a lancé, avant sa clôture. À activer seulement pour un site sans second approbateur : le dépannage est alors marqué « approuvé automatiquement (règle du site) », sans validateur.",
+      "active": "Dépannages approuvés automatiquement sur ce site",
+      "confirmOnBody": "À {{site}}, les dépannages non validés seront approuvés automatiquement à leur clôture, sans validateur. Les autres sites gardent la validation.",
+      "confirmOffBody": "À {{site}}, chaque dépannage devra de nouveau être validé par un approbateur du site avant sa clôture."
+    },
     "selfApproval": {
       "label": "Autoriser l'auto-approbation des décisions de fiabilité et des permis de travail",
       "help": "Désactivé (recommandé) : une deuxième personne approuve chaque décision de fiabilité et chaque permis de travail de ce site (quatre yeux : pas la personne qui a rédigé ou soumis le permis). À activer seulement pour un site où la même personne prépare et approuve ; ces approbations sont signalées « auto-approbation (site sans 4 yeux) » sur le permis et « Auto-approuvée » sur la décision.",
@@ -579,5 +628,32 @@
     "ADMIN_RECOVERY_PASSWORD_MISMATCH": "Les deux mots de passe ne correspondent pas.",
     "ADMIN_RECOVERY_RETRY": "L'administrateur n'a pas pu être enregistré car la base de données est occupée : patientez un instant, puis réessayez.",
     "ADMIN_RECOVERY_NOTICE_NOT_FOUND": "Cet avis ne vous est pas adressé ou a déjà été pris en compte."
+  },
+  "backupDest": {
+    "title": "Copie hors de ce PC",
+    "description": "Si ce PC tombe en panne ou est volé, seules les copies rangées ailleurs permettent de retrouver les données. Choisissez un disque externe (pas une autre partition de ce disque), une clé USB ou un dossier réseau : les sauvegardes automatiques y seront écrites. S'il est inaccessible (disque débranché, réseau coupé), la sauvegarde est faite sur ce PC et l'alerte ci-dessous le signale.",
+    "loadError": "Impossible de lire l'état des sauvegardes",
+    "outsideNone": "Aucune sauvegarde n'a encore été copiée hors de ce PC. Choisissez un dossier externe ou lancez une sauvegarde vers une clé USB.",
+    "outsideOld": "Dernière copie hors de ce PC : {{date}}, il y a plus de {{days}} jours. Vérifiez que le dossier externe est branché ou accessible.",
+    "outsideOk": "Dernière copie hors de ce PC : {{date}}.",
+    "folder": "Dossier des sauvegardes automatiques :",
+    "folderNone": "aucun (sur ce PC seulement)",
+    "unreachable": "Inaccessible pour le moment",
+    "choose": "Choisir un dossier externe…",
+    "change": "Changer de dossier…",
+    "clear": "Ne plus copier hors du PC",
+    "chooseTitle": "Dossier des sauvegardes automatiques",
+    "saved": "Dossier externe enregistré",
+    "cleared": "Les sauvegardes automatiques restent sur ce PC",
+    "saveError": "Dossier refusé",
+    "guideTitle": "Comment restaurer une sauvegarde",
+    "guideSamePcTitle": "Sur ce PC",
+    "guideSamePc": "Cliquez sur « Restaurer une sauvegarde… » et choisissez le fichier. Les données actuelles sont d'abord sauvegardées, puis Maintafox redémarre.",
+    "guideNewPcTitle": "Sur un nouveau PC (panne, remplacement)",
+    "guideNewPc1": "Gardez la clé de récupération hors de ce PC (section « Chiffrement de la base de données ») : sans elle, aucune sauvegarde ne peut être ouverte sur un autre PC.",
+    "guideNewPc2": "Installez sur le nouveau PC la même version de Maintafox (ou une plus récente), ouvrez-la une fois puis fermez-la.",
+    "guideNewPc3": "Copiez la dernière sauvegarde (fichier .db du dossier externe) dans le dossier %APPDATA%\\systems.maintafox.desktop du nouveau PC, à la place du fichier « maintafox.db » (renommez la sauvegarde « maintafox.db »).",
+    "guideNewPc4": "Ouvrez Maintafox : il demande la clé de chiffrement. Saisissez la clé de récupération de l'ancien PC. Si Maintafox demande ensuite l'activation du poste, suivez l'écran d'activation.",
+    "guideNewPc5": "N'utilisez plus l'ancien PC avec ces données : deux PC ne doivent pas travailler sur la même copie."
   }
 }

@@ -766,6 +766,21 @@ pub struct ExternalCompany {
     pub service_domain: Option<String>,
     pub contract_start: Option<String>,
     pub contract_end: Option<String>,
+    pub contract_number: Option<String>,
+    /// Agreed amount of the contract (tenant currency).
+    pub contract_amount: Option<f64>,
+    /// Days before the contract end from which it is flagged as expiring.
+    pub contract_alert_days: i64,
+    /// Service cost of the work orders given to this company (cancelled ones excluded).
+    pub consumed_amount: f64,
+    /// `none`, `active`, `expiring` or `expired` (from the contract end and the alert delay).
+    pub contract_state: String,
+    pub contract_days_left: Option<i64>,
+    /// Performance indicators (UX L3-19): work orders given to the company (cancelled excluded),
+    /// those closed that had a planned end, and those among them closed by the planned end.
+    pub wo_count: i64,
+    pub wo_closed_with_deadline: i64,
+    pub wo_on_time: i64,
     pub onboarding_status: String,
     pub insurance_status: String,
     pub notes: Option<String>,

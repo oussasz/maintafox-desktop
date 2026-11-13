@@ -34,6 +34,10 @@ const KEYRING_DEVICE_SECRET_KEY: &str = "device-installation-secret";
 ///   2. Hostname
 ///   3. OS type ("windows" | "macos" | "linux")
 pub fn derive_device_fingerprint() -> AppResult<String> {
+    // A phone without its installation id must not fall back to a placeholder every phone shares.
+    #[cfg(target_os = "android")]
+    let machine_id = read_machine_id()?;
+    #[cfg(not(target_os = "android"))]
     let machine_id = read_machine_id().unwrap_or_else(|_| "unknown-machine".into());
     let hostname = read_hostname().unwrap_or_else(|_| "unknown-host".into());
     let os_type = std::env::consts::OS.to_string();
@@ -100,7 +104,19 @@ fn read_machine_id() -> AppResult<String> {
         Err(std::io::Error::new(std::io::ErrorKind::NotFound, "IOPlatformUUID not found").into())
     }
 
-    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+    // Android: the app's own installation id (platform::installation_id), never a hardware id.
+    #[cfg(target_os = "android")]
+    {
+        crate::platform::installation_id::get_or_create()
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("android installation id unavailable: {e}")))
+    }
+
+    #[cfg(not(any(
+        target_os = "windows",
+        target_os = "linux",
+        target_os = "macos",
+        target_os = "android"
+    )))]
     {
         Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "unsupported platform for machine ID").into())
     }
@@ -115,7 +131,7 @@ fn read_hostname() -> AppResult<String> {
 /// Retrieve the device installation secret from the OS keyring.
 /// Returns None if not yet initialized â€” call `initialize_device_secret` on first launch.
 pub fn get_device_secret() -> AppResult<Option<Vec<u8>>> {
-    let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_DEVICE_SECRET_KEY)
+    let entry = crate::platform::secret_store::Entry::new(KEYRING_SERVICE, KEYRING_DEVICE_SECRET_KEY)
         .map_err(|e| AppError::Internal(anyhow::anyhow!("keyring open failed: {e}")))?;
     match entry.get_password() {
         Ok(secret_hex) => {
@@ -123,7 +139,7 @@ pub fn get_device_secret() -> AppResult<Option<Vec<u8>>> {
                 .map_err(|e| AppError::Internal(anyhow::anyhow!("keyring decode failed: {e}")))?;
             Ok(Some(bytes))
         }
-        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(crate::platform::secret_store::Error::NoEntry) => Ok(None),
         Err(e) => Err(AppError::Internal(anyhow::anyhow!("keyring read failed: {e}"))),
     }
 }
@@ -137,7 +153,7 @@ pub fn initialize_device_secret() -> AppResult<()> {
     OsRng.fill_bytes(&mut secret);
     let secret_hex = hex::encode(secret);
 
-    let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_DEVICE_SECRET_KEY)
+    let entry = crate::platform::secret_store::Entry::new(KEYRING_SERVICE, KEYRING_DEVICE_SECRET_KEY)
         .map_err(|e| AppError::Internal(anyhow::anyhow!("keyring open failed: {e}")))?;
     entry
         .set_password(&secret_hex)

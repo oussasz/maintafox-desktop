@@ -29,7 +29,6 @@
 //!   org_cost_center_code → nearest org node (self or ancestor) carrying `cost_center_code`
 
 use crate::errors::{issue_params, org_validation_failed, AppError, AppResult};
-use chrono::Utc;
 use sea_orm::{
     ConnectionTrait, DatabaseConnection, DatabaseTransaction, DbBackend, QueryResult, Statement, TransactionTrait,
 };
@@ -361,62 +360,6 @@ pub(crate) async fn resolve_class_code(db: &impl ConnectionTrait, class_code: &s
         .try_get("", "parent_id")
         .map_err(|e| decode_err("class.parent_id", e))?;
     Ok((id, parent_id))
-}
-
-/// Validate that a family_code exists and is the parent of the resolved class.
-/// If the class has no parent (it IS top-level), the family code is optional
-/// and this function returns Ok if family_code matches the class itself.
-pub(crate) async fn validate_family_code(
-    db: &impl ConnectionTrait,
-    family_code: &str,
-    class_id: i64,
-    class_parent_id: Option<i64>,
-) -> AppResult<()> {
-    let expected_parent_id = match class_parent_id {
-        Some(pid) => pid,
-        None => {
-            // Top-level class — family_code should match the class itself
-            let row = db
-                .query_one(Statement::from_sql_and_values(
-                    DbBackend::Sqlite,
-                    "SELECT code FROM equipment_classes WHERE id = ?",
-                    [class_id.into()],
-                ))
-                .await?
-                .ok_or_else(|| AppError::Internal(anyhow::anyhow!("class row missing")))?;
-            let code: String = row.try_get("", "code").map_err(|e| decode_err("code", e))?;
-            if code != family_code {
-                return Err(AppError::ValidationFailed(vec![format!(
-                    "GATE_ASSET_CLASS_NO_FAMILY: La classe '{code}' n'est liée à aucune famille. \
-                     Supprimez la famille sélectionnée ('{family_code}') ou choisissez une classe qui appartient à cette famille."
-                )]));
-            }
-            return Ok(());
-        }
-    };
-
-    // Verify the parent's code matches family_code
-    let row = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT code FROM equipment_classes \
-             WHERE id = ? AND is_active = 1 AND deleted_at IS NULL",
-            [expected_parent_id.into()],
-        ))
-        .await?
-        .ok_or_else(|| {
-            AppError::ValidationFailed(vec![
-                "GATE_ASSET_FAMILY_INACTIVE: La classe parente (famille) est inactive ou supprimée.".into(),
-            ])
-        })?;
-    let parent_code: String = row.try_get("", "code").map_err(|e| decode_err("parent.code", e))?;
-    if parent_code != family_code {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "GATE_ASSET_FAMILY_CLASS_MISMATCH: La famille choisie ('{family_code}') ne correspond pas à la classe sélectionnée. \
-             Famille attendue: '{parent_code}'."
-        )]));
-    }
-    Ok(())
 }
 
 fn canon_to_legacy_criticality_lookup(canon: &str) -> &'static str {
@@ -973,7 +916,7 @@ pub async fn create_asset(db: &DatabaseConnection, payload: CreateAssetPayload, 
 
     // ── Decommission date guard ──────────────────────────────────────────
     let decommissioned_at: Option<String> = if status_code == "DECOMMISSIONED" {
-        Some(Utc::now().to_rfc3339())
+        Some(crate::clock::now().to_rfc3339())
     } else {
         None
     };
@@ -988,7 +931,7 @@ pub async fn create_asset(db: &DatabaseConnection, payload: CreateAssetPayload, 
     // class policy allows it. For now, warn-level validation only.
     // (Full class-policy enforcement deferred to File 04.)
 
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
     let entity_sync_id = crate::sync::identity::new_entity_sync_id();
 
     txn.execute(Statement::from_sql_and_values(
@@ -1100,6 +1043,10 @@ pub(crate) async fn retired_equipment_code<C: ConnectionTrait>(db: &C, equipment
 
 /// Whether `code` is a retired status (tag `retired` in the published `EQUIPMENT.STATUS` list).
 pub(crate) async fn is_retired_status_code<C: ConnectionTrait>(db: &C, code: &str) -> AppResult<bool> {
+    // The statuses decommissioning writes are retired whatever the reference list's tags say.
+    if crate::assets::decommission::TERMINAL_STATUSES.contains(&code) {
+        return Ok(true);
+    }
     Ok(db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -1360,6 +1307,16 @@ pub async fn update_asset_identity(
         crate::assets::lifecycle::move_asset_recorded_in(&txn, asset_id, new_node_id, version_after_edit, actor_id)
             .await?;
     }
+    if payload.criticality_code.is_some() || payload.class_code.is_some() {
+        // A machine that becomes critical (or changes class) gets the plant's permit rule on its
+        // open work orders at once.
+        crate::permit::requirement_rules::stamp_open_work_orders_of_equipment(
+            &txn,
+            asset_id,
+            Some(i64::from(actor_id)),
+        )
+        .await?;
+    }
 
     // Fetch updated asset with resolved codes
     let select_sql = format!("SELECT {ASSET_SELECT} {ASSET_FROM} WHERE e.id = ?");
@@ -1390,7 +1347,7 @@ async fn update_identity_columns(
     mut binds: Vec<sea_orm::Value>,
 ) -> AppResult<()> {
     // Always bump version and timestamp
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
     sets.push("updated_at = ?".to_string());
     binds.push(now.into());
     sets.push("row_version = row_version + 1".to_string());
@@ -1436,7 +1393,7 @@ pub async fn update_asset_commercial(
                 commercial.replacement_value.into(),
                 commercial.cost_center_code.into(),
                 commercial.notes.into(),
-                Utc::now().to_rfc3339().into(),
+                crate::clock::now().to_rfc3339().into(),
                 asset_id.into(),
                 expected_row_version.into(),
             ],

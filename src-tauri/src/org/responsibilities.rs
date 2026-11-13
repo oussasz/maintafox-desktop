@@ -12,7 +12,6 @@
 
 use crate::errors::{AppError, AppResult};
 use crate::org::fail::{fail, fail_params};
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
@@ -223,7 +222,7 @@ pub async fn assign_or_replace_responsibility(
         ))
         .await?;
 
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
 
     let ended = match active_row {
         None => None,
@@ -350,8 +349,8 @@ pub async fn end_responsibility_assignment(
         }
     }
 
-    let end_ts = valid_to.unwrap_or_else(|| Utc::now().to_rfc3339());
-    let now = Utc::now().to_rfc3339();
+    let end_ts = valid_to.unwrap_or_else(|| crate::clock::now().to_rfc3339());
+    let now = crate::clock::now().to_rfc3339();
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,

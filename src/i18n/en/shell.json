@@ -26,6 +26,11 @@
   "user": {
     "menu": "User menu",
     "profile": "My profile",
+    "language": "Language",
+    "theme": "Display",
+    "themeLight": "Light",
+    "themeDark": "Dark",
+    "themeSystem": "Like Windows",
     "settings": "Settings",
     "logout": "Sign out"
   },
@@ -121,6 +126,7 @@
       "DECISION_NOT_DESIGNATED_APPROVER": "A reliability decision approved by someone other than its designated approver. Keep this PC's decision: it is then refused on every PC",
       "DECISION_APPROVER_UNAUTHORISED": "A reliability decision approved by someone without the right to approve (ram.manage, plant-wide) here. The conflict closes by itself if the right arrives; otherwise keep this PC's decision",
       "DECISION_APPLIER_UNAUTHORISED": "A reliability decision applied by someone without the rights to apply it (ram.manage and pm.edit or ot.create) here. The conflict closes by itself if the rights arrive; otherwise keep this PC's decision",
+      "RCM_RUN_TO_FAILURE_CRITICAL": "An RCM decision received from another PC leaves a critical FMECA mode (RPN at or above the plant's critical threshold) to run to failure, which is refused here: check the decision with the reliability analyst before deciding",
       "WO_PART_LINE_HAS_USE": "A planned part line was cancelled on another device, but parts were already used or issued from the store for it here: check the line with the planner and the store before deciding",
       "SITE_SETTING_UNAUDITED": "A site rule changed without its audited change (step-up, reason, settings right)",
       "SITE_SETTING_INVALID": "A site rule with an unreadable value or time",
@@ -162,7 +168,7 @@
       "PERMIT_ISOLATION_CANCEL_APPLIED": "An isolation line cancelled on another PC although it was applied (here or there)",
       "PERMIT_ISOLATION_CANCEL_WRONG_STATUS": "An isolation line cancelled on another PC while its permit is no longer a draft or waiting for review here",
       "PERMIT_ISOLATION_CANCEL_INVALID": "An isolation line cancelled without a readable author or time",
-      "PERMIT_DELETE_REFUSED": "A permit, isolation or suspension still protecting work was deleted elsewhere",
+      "PERMIT_DELETE_REFUSED": "A permit, isolation, suspension, permit worker or personal padlock still protecting work was deleted elsewhere",
       "QUALIFICATION_OVERRIDE_USE_PERSON": "A qualification override on a login that has a personnel record",
       "SYNC_GROUP_REFUSED": "A change arrived with rows it depends on, and one of them breaks a rule",
       "SYNC_TIME_INCONSISTENT": "A received change carries times that do not fit together (or are in the future)",
@@ -173,6 +179,8 @@
       "WO_COMPLETION_GATE": "A work order completed on another PC fails the completion checks here — check, then keep the correct version",
       "WO_CLOSE_GATE": "A work order closed on another PC fails the close-out checks here",
       "WO_CANCEL_PERMIT_GATE": "A work order cancelled on another PC still has an open permit or a fitted lock here",
+      "WO_EXECUTION_UNAUTHORISED": "A work-order execution action (start, hold, resume, task result, completion, close, cancellation) made on another PC by someone who does not carry out this work order, or no longer holds the right here — not applied; if it was intended, an authorised person makes it again",
+      "WO_EXECUTION_AUTHOR_UNKNOWN": "A work-order execution action received without saying who made it — not applied; an authorised person makes it again",
       "PERMIT_ENDED_BEFORE_START": "A permit closed, cancelled or suspended on another PC before its work order's work started here — applied; stop the work, then dismiss with the reason (or escalate)",
       "PERMIT_ENDED_DURING_WORK": "A permit closed, cancelled or suspended on another PC while its work order's work runs here — applied; stop the work, then dismiss with the reason (or escalate)",
       "WO_DOWNTIME_END_LOCKS_FITTED": "A downtime end received while a lock is still fitted here under the work order's permits — not applied; the downtime ends when the removal of the last lock is verified",
@@ -186,6 +194,8 @@
       "WO_MANDATORY_TASK_REMOVED": "Mandatory task deleted or made optional on another PC after planning here",
       "PERMIT_TYPE_REQUIRED_TO_START": "A work order started without a permit of the type a plant rule requires",
       "WO_PERMIT_RULE_CHANGED": "The plant rule that requires a work order's permit was removed or changed elsewhere",
+      "WO_DEPANNAGE_FACTS_INVALID": "A breakdown work order received without its breakdown time or its \"machine stopped\", with a breakdown time later than the moment it was written, or turned back into an ordinary work order: check its facts with the person who reported it",
+      "WO_DEPANNAGE_VALIDATION_INVALID": "A breakdown validation received that does not hold here: validated by the person who started it, by someone without the approval right at the site, after the close, approved automatically at a site that requires the validation, or closed without validation: check it with the site's approver",
       "INSP_ANOMALY_PERMIT_REVIEW_CLEARED": "An inspection finding received with its \"permit review required\" cleared",
       "INSP_ANOMALY_LINK_CHANGED": "An inspection finding received with the request or work order raised from it removed or replaced",
       "INSP_ANOMALY_DECISION_INVALID": "An inspection finding received closed without a decision, or a decided finding changed elsewhere (it is decided by routing it to a request or work order, or deferring it)",
@@ -205,6 +215,9 @@
       "PERMIT_WORKER_INFORMED_UNAUTHORISED": "The worker told of a forced removal, recorded by someone without the permit close right at the permit's site on this PC",
       "PERMIT_WORKER_NOT_INFORMED": "A lock fitted by a worker not yet told of the forced removal of one of their locks",
       "PERMIT_LOCK_REMOVAL_RECORD_CHANGED": "The record of a lock taken off (or of the worker told) held here was changed",
+      "PERMIT_ZERO_ENERGY_PRE_UPGRADE": "An isolation verified before the update, with no zero-energy test recorded: check on site, then resolve",
+      "PERMIT_ZERO_ENERGY_NOTE_REQUIRED": "A verified isolation whose zero-energy test comment is blank or too long",
+      "PERMIT_ZERO_ENERGY_NOTE_CHANGED": "The zero-energy test recorded here when an isolation was verified was changed",
       "PERMIT_HANDOVER_RECEIVER_IS_SIGNER": "A permit hand-over received by the person who signed it",
       "PERMIT_TYPE_THREE_PERSON_UNAUTHORISED": "A permit type's third-person lock-removal rule changed on another PC by someone without the settings and permit-issue rights",
       "PERMIT_TYPE_THREE_PERSON_UNAUDITED": "A permit type's third-person lock-removal rule changed on another PC without who, when or why",
@@ -241,7 +254,27 @@
       "SITE_ASSIGNMENT_NODE_INVALID": "A site given on another PC to a record without one, on a unit deleted here",
       "SITE_ASSIGNMENT_NOT_ALLOWED": "A site given on another PC to a record without one, by someone without the organisation administration right for the whole plant",
       "SITE_SET_WITHOUT_ASSIGNMENT": "A work order or request without a site received with a site, without the site assignment of an organisation administrator",
-      "other": "Needs review"
+      "other": "Needs review",
+      "PERMIT_ISSUE_CONTENT_MISSING": "A permit issued on another PC without its content (work, risk assessment, preventive measures, PPE)",
+      "PERMIT_ISSUE_HSE_APPROVAL_MISSING": "A permit issued on another PC without the HSE approval its type requires",
+      "PERMIT_ISSUE_GAS_TEST_MISSING": "A permit issued on another PC without the atmospheric test it requires",
+      "PERMIT_ISSUE_GAS_TEST_OUT_OF_LIMITS": "A permit issued on another PC on an atmospheric test outside the limits set here",
+      "PERMIT_ISSUE_HSE_SELF_APPROVAL": "A permit issued on another PC whose HSE approval was recorded by its author or submitter, without its site opting out of four-eyes here",
+      "PERMIT_ISSUE_GAS_TEST_EXPIRED": "A permit issued on another PC on an atmospheric test older than the validity set here",
+      "PERMIT_ACTIVE_GAS_TEST_INVALID": "A permit activated on another PC without a valid atmospheric test (missing, out of date or out of limits) when it was activated",
+      "PERMIT_ISSUE_WORKER_INDUCTION_MISSING": "A permit issued on another PC with an external worker without a safety induction",
+      "PERMIT_ISSUE_WORKER_QUALIFICATION": "A permit issued on another PC with a worker lacking the valid qualifications its type requires",
+      "PERMIT_PERSONAL_LOCK_RECORD_CHANGED": "The placement or removal of a personal padlock, or the record of its owner told, held here, was changed",
+      "PERMIT_PERSONAL_LOCK_PLACEMENT_INVALID": "A personal padlock placed without who or when, or at an unreadable or future time",
+      "PERMIT_PERSONAL_LOCK_NOT_OWNER": "A personal padlock placed by someone other than the worker of its line",
+      "PERMIT_PERSONAL_LOCK_PERMIT_NOT_ISSUED": "A personal padlock placed on another PC on a permit not issued here",
+      "PERMIT_WORKER_RECORD_CHANGED": "Who a permit worker is, their induction or their withdrawal, held here, was changed",
+      "PERMIT_WORKER_WITHDRAWN_LOCK_ON": "A worker withdrawn from a permit while their padlock is still on the group lock box here",
+      "PERMIT_ISOLATION_PERSONAL_LOCKS_ON": "An isolation lock taken off while a personal padlock is still on the group lock box here",
+      "PERMIT_CLOSED_PERSONAL_LOCKS_ON": "A permit closed or handed back on another PC while a personal padlock is still on its group lock box here",
+      "PERMIT_WORKER_ADDED_INDUCTION_MISSING": "An external worker added after the issue without a safety induction",
+      "PERMIT_WORKER_ADDED_QUALIFICATION": "A worker added after the issue without the valid qualifications the permit's type requires",
+      "PERMIT_WO_START_GAS_TEST_INVALID": "A work order started or resumed on another PC while its permit's atmospheric test was not valid (missing, out of date or out of limits)"
     },
     "history": {
       "fromOtherDevice": "From another device (recorded before this version): the numbers in this entry are that device's record ids and do not point to records here."
@@ -262,7 +295,7 @@
       "runsInBackground": "Sync keeps running when the window is closed (Maintafox stays in the notification area).",
       "state": {
         "starting": "Starting…",
-        "idle": "Up to date",
+        "idle": "Synchronised",
         "running": "Syncing…",
         "paused": "Paused",
         "offline": "Offline: retried automatically",
@@ -313,16 +346,16 @@
       }
     },
     "indicator": {
-      "idle": "Up to date",
+      "idle": "Synchronised",
       "scheduled": "Sync starting",
       "running": "Syncing",
-      "degraded": "Needs attention",
+      "degraded": "To review",
       "paused": "Paused",
-      "blocked": "Stopped",
+      "blocked": "Sync stopped",
       "error": "Sync error",
       "pausedTitle": "Sync is paused by an operator",
-      "blockedTitle": "Sync is stopped",
-      "degradedTitle": "Sync needs attention (retry scheduled or conflicts to review)",
+      "blockedTitle": "Sync is stopped. Open the sync center (cloud icon) to see why.",
+      "degradedTitle": "Sync needs attention: a retry is scheduled or conflicts need review. Open the sync center (cloud icon) to review them.",
       "statusBar": "Sync: {{state}}"
     },
     "panel": {
@@ -351,7 +384,7 @@
     "inboxLoading": "Loading conflicts…",
     "versionNumber": "version {{version}}",
     "detectedAt": "detected {{date}}",
-    "recordUnidentified": "(number not available)",
+    "recordUnidentified": "(no number: see \"Technical details\")",
     "technicalDetails": "Technical details",
     "noRemoteVersion": "The server sent no version of this record",
     "resolveNeedsRight": "You can view this conflict. Choosing a version requires the right to resolve synchronisation conflicts.",
@@ -381,7 +414,8 @@
       "renumber_local": "The record on this device gets a new number; the received record keeps its own (\"{{record}}\").",
       "dismiss": "The conflict on \"{{record}}\" is dismissed without applying either version.",
       "retry_later": "The conflict on \"{{record}}\" stays open and is reviewed again later; nothing is applied.",
-      "escalate": "The conflict on \"{{record}}\" is marked for review by a supervisor; nothing is applied."
+      "escalate": "The conflict on \"{{record}}\" is marked \"Escalated\" and stays open with your reason, for someone allowed to resolve conflicts to review; no message is sent and nothing is applied.",
+      "dismissWarning": "Warning: the conflict leaves the list and neither version is applied. The two PCs may stay different on this record."
     },
     "reason": {
       "label": "Reason for this choice",
@@ -409,6 +443,7 @@
       "purchase_orders": "Purchase order",
       "procurement_requisitions": "Purchase requisition",
       "goods_receipts": "Goods receipt",
+      "repairable_orders": "Repair order",
       "inventory_suppliers": "Supplier",
       "personnel": "Person",
       "personnel_availability_blocks": "Absence",
@@ -430,13 +465,38 @@
       "budget_lines": "Budget line",
       "training_sessions": "Training session",
       "failure_events": "Failure event",
-      "app_settings": "Setting"
+      "app_settings": "Setting",
+      "permit_gas_tests": "Permit atmospheric test",
+      "permit_workers": "Permit worker",
+      "permit_personal_locks": "Permit personal padlock",
+      "equipment_isolation_points": "Equipment isolation point"
     },
     "negativeStock": "{{count}} stock location(s) below zero after sync, to reconcile by a count (Inventory › Controls).",
     "doubleCount": "{{count}} stock location(s) counted on two PCs without knowing each other: double count to verify (Inventory › Controls).",
     "doublePosting": "{{count}} stock count(s) posted twice (the same count on two PCs, older version): to verify with a new count (Inventory › Controls).",
     "overReserved": "{{count}} stock location(s) with more reserved than in stock (warning).",
-    "openNegativeStock": "Open the stock to reconcile"
+    "openNegativeStock": "Open the stock to reconcile",
+    "compare": {
+      "title": "Values in disagreement",
+      "field": "Field",
+      "local": "This device",
+      "remote": "Server",
+      "empty": "(empty)",
+      "yes": "Yes",
+      "no": "No",
+      "more": "… and {{count}} more field(s) — see \"Technical details\".",
+      "none": "No readable value differs between the two versions: the difference is technical (see \"Technical details\")."
+    },
+    "actionHelp": {
+      "accept_local": "Your version is kept and sent again to the server; the received version is discarded.",
+      "accept_remote": "The server's version replaces this device's; your local changes to this record are lost.",
+      "renumber_local": "Your record gets a new number; the received one keeps its own.",
+      "retry_later": "The conflict stays open and nothing is applied: review it again later.",
+      "escalate": "Marks the conflict as \"Escalated\": it stays open in this list with your reason, for someone allowed to resolve conflicts to handle. No message is sent and nothing is applied.",
+      "dismiss": "Closes the conflict without applying either version. Use only when the matter is already settled."
+    },
+    "actionDisabledRemote": "Unavailable: the server sent no version of this record, so there is nothing to take.",
+    "actionDisabledBusy": "Action in progress…"
   },
   "status": {
     "dbOk": "Database: OK",
@@ -468,8 +528,16 @@
   "commandPalette": {
     "title": "Command Palette",
     "open": "Go to a module…",
-    "placeholder": "Module name (e.g. Work orders)…",
-    "noResults": "No module matches \"{{query}}\""
+    "placeholder": "Module, work order or request number, equipment, person, permit, item…",
+    "kind": {
+      "workOrder": "Work order",
+      "request": "Request",
+      "equipment": "Equipment",
+      "person": "Person",
+      "permit": "Work permit",
+      "article": "Stock item"
+    },
+    "noResults": "No result for \"{{query}}\""
   },
   "session": {
     "timeRemaining": "Session expires in {{minutes}} min",
@@ -482,6 +550,8 @@
   },
   "startup": {
     "loading": "Starting up…",
+    "stalledTitle": "Start-up is taking longer than expected",
+    "stalledBody": "Maintafox has not finished starting yet. A long operation (for example a large synchronisation) may be using the database. Wait a moment, or click “Retry”.",
     "errorTitle": "Startup error",
     "retry": "Retry",
     "dbRecovery": {
@@ -539,25 +609,31 @@
     "pm": "Preventive Maintenance",
     "permits": "Work Permits",
     "inspections": "Inspection Rounds",
-    "inventory": "Spare Parts",
+    "inventory": "Stock & Purchasing",
     "personnel": "Personnel",
     "training": "Training & Habilitation",
     "analytics": "Analytics",
     "reliability": "Reliability (RAMS)",
+    "ramsWeibull": "Life analysis (Weibull)",
+    "ramsFmeca": "FMECA (failures, causes, severity)",
+    "ramsRcm": "RCM (reliability-centred maintenance)",
+    "ramsIshikawa": "Ishikawa (cause tree)",
     "budget": "Budget & Costs",
     "archive": "Archive",
     "lookups": "Reference Data",
+    "imports": "Data imports",
     "notifications": "Notifications",
-    "documentation": "Documentation",
+    "documentation": "Document library",
     "activity": "Activity Log",
     "settings": "Settings",
     "users": "Users & Roles",
     "org": "Organization",
     "diagnostics": "Diagnostics",
     "profile": "My Profile",
-    "help": "Help & Documentation",
+    "help": "Help",
     "reports": "Reports",
-    "admin": "Administration"
+    "admin": "Administration",
+    "myPadlocks": "My padlocks"
   },
   "notFound": {
     "title": "This page does not exist",

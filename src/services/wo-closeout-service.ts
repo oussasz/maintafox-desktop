@@ -396,3 +396,65 @@ export async function fileToNumberArray(file: File): Promise<number[]> {
   const buffer = await file.arrayBuffer();
   return Array.from(new Uint8Array(buffer));
 }
+
+// -- Contractor work on the work order (L3-09, L3-10) --
+
+const WoSubcontractingSchema = z.object({
+  wo_id: z.number(),
+  row_version: z.number(),
+  external_company_id: z.number().nullable(),
+  company_name: z.string().nullable(),
+  service_order_ref: z.string().nullable(),
+  subcontractor_hours: z.number().nullable(),
+  service_cost: z.number(),
+  contract_end: z.string().nullable(),
+  contract_state: z.enum(["none", "active", "expiring", "expired"]),
+  contract_days_left: z.number().nullable(),
+  under_warranty: z.boolean().default(false),
+  warranty_claim_note: z.string().nullable().default(null),
+  asset_warranty_expiry: z.string().nullable().default(null),
+});
+
+export type WoSubcontracting = z.infer<typeof WoSubcontractingSchema>;
+
+const WoContractorOptionSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  contract_number: z.string().nullable(),
+  contract_end: z.string().nullable(),
+  contract_state: z.enum(["none", "active", "expiring", "expired"]),
+});
+
+export type WoContractorOption = z.infer<typeof WoContractorOptionSchema>;
+
+export interface SetWoSubcontractingInput {
+  wo_id: number;
+  expected_row_version: number;
+  external_company_id: number | null;
+  service_order_ref: string | null;
+  subcontractor_hours: number | null;
+  service_cost: number | null;
+  /** Repair covered by a warranty (UX L2-29); omit to keep the saved value. */
+  under_warranty?: boolean;
+  warranty_claim_note?: string | null;
+}
+
+/** Contractor, order reference, hours and cost of one work order. */
+export async function getWoSubcontracting(woId: number): Promise<WoSubcontracting> {
+  const raw = await invoke<unknown>("get_wo_subcontracting", { woId });
+  return WoSubcontractingSchema.parse(raw);
+}
+
+/** Active contractors the work order can be given, with their contract state. */
+export async function listWoContractorOptions(): Promise<WoContractorOption[]> {
+  const raw = await invoke<unknown>("list_wo_contractor_options");
+  return z.array(WoContractorOptionSchema).parse(raw);
+}
+
+/** Saves the contractor facts at the version the screen loaded. */
+export async function setWoSubcontracting(
+  input: SetWoSubcontractingInput,
+): Promise<WoSubcontracting> {
+  const raw = await invoke<unknown>("set_wo_subcontracting", { input });
+  return WoSubcontractingSchema.parse(raw);
+}

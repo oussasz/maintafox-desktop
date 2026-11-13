@@ -3,7 +3,11 @@ import { invoke } from "@/lib/ipc-invoke";
 import { notifyWoCostChanged } from "@/lib/wo-cost-events";
 import type {
   AddWoToolInput,
+  CancelWoPartToIssueInput,
+  CreateWoNonStockPurchaseInput,
   DowntimeType,
+  IssueWoPartToIssueInput,
+  NonStockArticle,
   TaskResultCode,
   WoDelaySegment,
   WoDowntimeSegment,
@@ -11,7 +15,10 @@ import type {
   WoExecTask,
   WoExecutionEvent,
   WoIntervener,
+  WoJoinInput,
   WoMechCompleteInput,
+  WoNonStockPurchase,
+  WoPartToIssue,
   WoPlanAdherence,
   WoTool,
   WorkOrder,
@@ -104,6 +111,14 @@ export async function addLabor(input: AddLaborInput): Promise<WoIntervener> {
   return announceCost(await invoke<WoIntervener>("add_labor", { input }));
 }
 
+/**
+ * "Rejoindre": starts one's own labour now on a work order in progress or on hold (ot.edit at its
+ * site); the assignee is told. The joiner does not become an execution actor.
+ */
+export async function joinWo(input: WoJoinInput): Promise<WoIntervener> {
+  return announceCost(await invoke<WoIntervener>("join_wo", { input }));
+}
+
 /** Labour for a person of the register, login or not (contractor technicians included). */
 export interface AddPersonnelLaborInput {
   wo_id: number;
@@ -132,10 +147,27 @@ export interface WoLaborPerson {
   employment_type: string;
   company_name: string | null;
   availability_status: string;
+  /** The signed-in user's own personnel card. */
+  is_self: boolean;
+  team_id: number | null;
+  team_name: string | null;
 }
 
 export async function listWoLaborPeople(): Promise<WoLaborPerson[]> {
   return invoke<WoLaborPerson[]>("list_wo_labor_people");
+}
+
+/** Hourly rates a labour entry for this person and day will be priced at. */
+export interface WoLaborRatePreview {
+  normal_rate: number | null;
+  overtime_rate: number | null;
+}
+
+export async function previewWoLaborRate(
+  personnelId: number,
+  day: string,
+): Promise<WoLaborRatePreview> {
+  return invoke<WoLaborRatePreview>("preview_wo_labor_rate", { personnelId, day });
 }
 
 export async function closeLabor(
@@ -170,6 +202,31 @@ export async function addPart(input: AddPartInput): Promise<WoExecPart> {
   return announceCost(await invoke<WoExecPart>("add_part", { input }));
 }
 
+/** Hors-stock articles to reuse before creating one (L3-04). */
+export async function searchNonStockArticles(query: string | null): Promise<NonStockArticle[]> {
+  return invoke<NonStockArticle[]>("search_non_stock_articles", { query });
+}
+
+/**
+ * Ask for a hors-stock part on the work order: the article (reused or created "à revoir"), the
+ * work-order line and the purchase request, in one step (L3-04).
+ */
+export async function createWoNonStockPurchase(
+  input: CreateWoNonStockPurchaseInput,
+): Promise<WoNonStockPurchase> {
+  const created = await invoke<WoNonStockPurchase>("create_wo_non_stock_purchase", { input });
+  announceCost(created.part);
+  return created;
+}
+
+/** "Remis à <personne>" on a received hors-stock line (L3-04); `null` clears it. */
+export async function setWoPartHandedTo(
+  woPartId: number,
+  personnelId: number | null,
+): Promise<WoExecPart> {
+  return invoke<WoExecPart>("set_wo_part_handed_to", { woPartId, personnelId });
+}
+
 export async function recordPartUsage(
   woPartId: number,
   quantityUsed: number,
@@ -182,6 +239,21 @@ export async function recordPartUsage(
       unitCost: unitCost ?? null,
     }),
   );
+}
+
+/** Parts "à sortir": used by someone without the stock right, waiting for the storekeeper. */
+export async function listWoPartsToIssue(): Promise<WoPartToIssue[]> {
+  return invoke<WoPartToIssue[]>("list_wo_parts_to_issue");
+}
+
+/** The storekeeper issues a part "à sortir" (stock leaves the store, audited). */
+export async function issueWoPartToIssue(input: IssueWoPartToIssueInput): Promise<WoExecPart> {
+  return announceCost(await invoke<WoExecPart>("issue_wo_part_to_issue", { input }));
+}
+
+/** A quantity "à sortir" withdrawn with a reason (no stock moves, audited). */
+export async function cancelWoPartToIssue(input: CancelWoPartToIssueInput): Promise<WoExecPart> {
+  return announceCost(await invoke<WoExecPart>("cancel_wo_part_to_issue", { input }));
 }
 
 export async function confirmNoParts(woId: number): Promise<void> {

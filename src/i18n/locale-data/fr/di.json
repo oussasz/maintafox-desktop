@@ -20,13 +20,14 @@
       "outsideScope_other": "{{count}} demandes ne sont pas affichées : hors de vos sites.",
       "withoutSite_one": "{{count}} demande n'est pas affichée : elle n'a pas de site.",
       "withoutSite_other": "{{count}} demandes ne sont pas affichées : elles n'ont pas de site.",
-      "allRequests": "Ces nombres portent sur toutes les demandes, quels que soient les filtres ou la recherche.",
+      "allRequests": "Total calculé sur toutes les demandes, sans tenir compte des filtres.",
       "askPlantWide": "Demandez à un utilisateur ayant un rôle valable pour toute l'usine pour les voir."
     },
     "columns": {
       "number": "N°",
       "subject": "Objet",
       "equipment": "Équipement",
+      "criticality": "Criticité",
       "status": "Statut",
       "priority": "Priorité",
       "reportedBy": "Déclarant",
@@ -61,7 +62,7 @@
       "history": "Historique"
     },
     "fields": {
-      "sourceInspectionRound": "Tournée d'inspection",
+      "sourceInspectionRound": "Ronde d'inspection",
       "number": "Numéro",
       "subject": "Objet",
       "description": "Description",
@@ -105,6 +106,9 @@
     "possibleDuplicates_other": "{{count}} autres demandes ouvertes sur cet équipement avec le même symptôme"
   },
   "form": {
+    "createdToast": "Demande {{code}} créée",
+    "savedToast": "Demande {{code}} enregistrée",
+    "openCreated": "Ouvrir la demande",
     "section": {
       "requester": "Déclarant",
       "equipment": "Équipement",
@@ -145,7 +149,8 @@
     "symptom": {
       "label": "Symptôme",
       "placeholder": "Sélectionnez un symptôme",
-      "searchPlaceholder": "Rechercher un symptôme..."
+      "searchPlaceholder": "Rechercher un symptôme...",
+      "optionalHint": "Facultatif : le planificateur le complète si vous ne le connaissez pas."
     },
     "impactLevel": {
       "label": "Niveau d'impact",
@@ -154,7 +159,7 @@
     "pictures": {
       "label": "Photos",
       "empty": "Aucune photo",
-      "hint": "Ajoutez des photos de l'équipement ou du problème. Même sélecteur que la galerie équipement.",
+      "hint": "Ajoutez des photos de l'équipement ou du problème.",
       "primary": "Principale",
       "remove": "Retirer",
       "add": "Ajouter des photos"
@@ -169,16 +174,15 @@
       "partialUploadFailed": "{{failed}} fichier(s) sur {{total}} n'ont pas pu être téléversé(s). Vous pouvez réessayer depuis le détail de la demande."
     },
     "safetyFlag": {
-      "label": "Enjeu sécurité"
+      "label": "Enjeu sécurité",
+      "minUrgencyHint": "Signalement sécurité : urgence au moins Urgente.",
+      "lockedHint": "Un signalement sécurité enregistré ne se retire pas. Seul le valideur peut abaisser l'urgence, avec un motif."
     },
     "environmentalFlag": {
       "label": "Enjeu environnemental"
     },
     "qualityFlag": {
       "label": "Enjeu qualité"
-    },
-    "productionImpact": {
-      "label": "Impact production"
     },
     "origin": {
       "operator": "Opérateur",
@@ -207,7 +211,8 @@
       "symptomRequired": "Le symptôme est requis",
       "urgencyRequired": "La priorité est requise",
       "impactRequired": "Le niveau d'impact est requis",
-      "assetMissingOrgNode": "L'équipement sélectionné n'a pas d'unité organisationnelle. Veuillez en attribuer une d'abord."
+      "assetMissingOrgNode": "L'équipement sélectionné n'a pas d'unité organisationnelle. Veuillez en attribuer une d'abord.",
+      "machineStateRequired": "Indiquez si la machine est à l'arrêt"
     },
     "cancel": "Annuler",
     "submit": "Créer la demande",
@@ -223,6 +228,15 @@
       "sameAsset_one": "{{count}} demande est déjà ouverte sur cet équipement",
       "sameAsset_other": "{{count}} demandes sont déjà ouvertes sur cet équipement",
       "hint": "Vérifiez que votre problème n'est pas déjà signalé avant d'envoyer une nouvelle demande."
+    },
+    "machineStopped": {
+      "label": "Machine à l'arrêt ?",
+      "yes": "Oui, la machine est à l'arrêt",
+      "no": "Non, elle fonctionne encore"
+    },
+    "fullForm": {
+      "open": "Formulaire complet (type, symptôme, urgence, indicateurs)",
+      "hint": "Pour un signalement rapide, l'équipement, la description et l'état de la machine suffisent : le planificateur complète le reste."
     }
   },
   "status": {
@@ -283,11 +297,15 @@
     "title": "Règles SLA",
     "description": "Configurez les délais de réponse et de résolution pour chaque niveau d'urgence.",
     "scaleHint": "Les délais d'un niveau pour toutes les demandes se règlent dans l'échelle d'urgence (Données de référence). Les règles ci-dessous sont les exceptions par origine ou criticité d'équipement.",
+    "scopeAllOrigins": "Toutes origines",
+    "scopeCriticality": "criticité {{code}}",
+    "inactiveHint": "Inactive : les délais de l'échelle d'urgence s'appliquent.",
+    "escalationHint": "Escalade : au seuil d'escalade, la demande passe « À risque » et apparaît dans la file « Délai à risque ou dépassé ». Quand un délai est dépassé, une notification « Dépassement SLA » est envoyée selon sa règle de notification (par défaut : le responsable de l'entité, accusé de lecture demandé).",
     "invalidHours": "Indiquez des heures entières (0 ou plus) dans les trois champs.",
     "loading": "Chargement des règles…",
     "empty": "Aucune règle SLA configurée.",
     "columns": {
-      "name": "Règle",
+      "name": "Portée",
       "urgency": "Urgence",
       "response": "Réponse (h)",
       "resolution": "Résolution (h)",
@@ -298,10 +316,10 @@
     "saving": "Enregistrement…",
     "close": "Fermer",
     "status": {
-      "on_track": "On Track",
-      "at_risk": "At Risk",
-      "breached": "Breached",
-      "completed": "Completed",
+      "on_track": "Dans les délais",
+      "at_risk": "À risque",
+      "breached": "Délai dépassé",
+      "completed": "Terminé",
       "none": "—",
       "paused": "En pause"
     },
@@ -438,7 +456,7 @@
     "title": "Convertir en ordre de travail",
     "description": "La DI <bold>{{code}}</bold> sera convertie en ordre de travail. Cette action est irréversible.",
     "prerequisites": "Prérequis de conversion",
-    "stepUpLabel": "Code de confirmation (step-up)",
+    "stepUpLabel": "Code de confirmation",
     "stepUpPlaceholder": "Saisir votre code PIN",
     "notesLabel": "Notes de conversion (optionnel)",
     "notesPlaceholder": "Commentaires pour la conversion…",
@@ -523,7 +541,13 @@
     "conversionFailed": "La conversion en ordre de travail a échoué.",
     "view": "Voir le détail",
     "returnAction": "Renvoyer",
-    "approvalTitle": "Approuver & Convertir en OT",
+    "approvalTitle": "Approuver la demande",
+    "convertTitle": "Convertir en OT",
+    "approveOnly": "Approuver seulement",
+    "approveAndConvert": "Approuver et créer l'OT",
+    "confirmApproveConvertTitle": "Approuver et créer l'OT ?",
+    "confirmApproveConvertDescription": "{{code}} sera approuvée, puis un OT sera créé avec son urgence validée, son indicateur de sécurité (permis / consignation requis) et son symptôme. Les deux actions sont enregistrées à votre nom dans le journal d'audit.",
+    "selfDecision": "Vous avez déclaré cette demande : une autre personne doit l'approuver et la convertir en OT (séparation des tâches).",
     "confirmApproveTitle": "Approuver cette demande ?",
     "confirmApproveDescription": "{{code}} sera approuvée et prête à être convertie en OT. L'approbation est enregistrée à votre nom dans le journal d'audit.",
     "confirmApproveAction": "Approuver la demande",
@@ -535,7 +559,6 @@
     "approvalNotePlaceholder": "Note optionnelle pour le dossier d'approbation…",
     "approver": "Approbateur",
     "print": "Imprimer",
-    "approveAndConvert": "Approuver & Convertir",
     "convertToWo": "Convertir en OT",
     "reviewerNote": "Note du valideur",
     "rejectionTitle": "Rejeter la demande d'intervention",
@@ -578,15 +601,15 @@
     "periodMonths": "{{months}} derniers mois",
     "now": "Maintenant",
     "openBacklog": "Demandes ouvertes",
-    "slaAtRisk": "SLA à risque",
+    "slaAtRisk": "Délai à risque ou dépassé",
     "overdueHint": "Ouvertes, objectif dépassé",
     "slaComplianceHint": "{{met}} respectés · {{breached}} dépassés",
     "conversionRate": "Converties en OT",
     "conversionHint": "{{converted}} sur {{closed}} demandes clôturées",
     "avgResponse": "Délai moyen de tri",
-    "avgResponseHint": "Soumission → tri",
+    "avgResponseHint": "De la soumission au tri",
     "avgConversion": "Délai moyen jusqu'à l'OT",
-    "avgConversionHint": "Soumission → OT",
+    "avgConversionHint": "De la soumission à l'OT",
     "hoursUnit": "h",
     "backlogByStatus": "Demandes ouvertes par statut et ancienneté",
     "noBacklog": "Aucune demande ouverte.",
@@ -630,6 +653,16 @@
     "return": "Renvoyer pour clarification",
     "actionsFor": "Actions pour {{code}}"
   },
+  "merge": {
+    "action": "Fusionner les doublons dans cette demande",
+    "hint": "Les autres demandes sont clôturées comme doublons, liées à celle-ci.",
+    "confirmTitle": "Fusionner dans {{code}} ?",
+    "confirmDescription": "{{count}} autre(s) demande(s) ouverte(s) sur cet équipement seront clôturées comme doublons de {{code}}. Cette demande continue vers son ordre de travail.",
+    "note": "Doublon fusionné dans {{code}}",
+    "done_one": "{{count}} demande fusionnée.",
+    "done_other": "{{count}} demandes fusionnées.",
+    "partial": "{{merged}} fusionnée(s). Non fusionnée(s) (statut ou droit) : {{failed}}."
+  },
   "close": {
     "title": "Clôturer la demande",
     "disposition": "Disposition",
@@ -640,7 +673,8 @@
     "relatedDiNoResults": "Aucune demande correspondante.",
     "relatedDiResolved": "Liée à {{code}}",
     "relatedDiUseMatch": "Utiliser {{code}}",
-    "notesRequired": "Les notes sont obligatoires pour la disposition « Autre ».",
+    "notesRequired": "Indiquez le motif : il est obligatoire pour « Rejetée » et « Autre ».",
+    "dispositionPlaceholder": "Choisissez : rejet, doublon, aucun travail…",
     "relatedRequired": "Sélectionnez la demande liée pour une disposition « Doublon ».",
     "submit": "Clôturer la demande",
     "saving": "Clôture…",
@@ -663,6 +697,8 @@
     "validatedUrgency": "Urgence retenue",
     "urgencyChanged": "Modifiée par rapport à l'urgence déclarée ({{reported}}).",
     "urgencyAsReported": "Identique à l'urgence déclarée par le demandeur.",
+    "safetyBelowUrgent": "Signalement sécurité : une urgence inférieure à « Urgent » exige le motif de la revue (note ci-dessous). Elle est enregistrée dans l'historique de la demande.",
+    "noteRequired": "Motif de la revue (obligatoire)",
     "classification": "Classification",
     "classificationLoading": "Chargement de la classification…",
     "classificationPlaceholder": "Choisir une classification",
@@ -708,7 +744,7 @@
     "to_approve": "À approuver",
     "approved_not_converted": "Approuvées sans OT",
     "deferred_due": "Report échu",
-    "sla_at_risk": "SLA à risque",
+    "sla_at_risk": "Délai à risque ou dépassé",
     "hint": {
       "all": "Toutes les demandes, les plus récentes d'abord",
       "mine": "Les demandes que vous avez émises, avec leur statut et la prochaine étape",

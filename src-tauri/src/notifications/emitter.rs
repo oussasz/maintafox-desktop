@@ -507,7 +507,7 @@ mod tests {
     async fn emit_event_dedupe_updates_existing_notification() {
         let db = crate::db::test_db::migrated().await;
 
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = crate::clock::now().to_rfc3339();
 
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,

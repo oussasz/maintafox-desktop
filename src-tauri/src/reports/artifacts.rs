@@ -77,7 +77,8 @@ pub async fn persist_run_artifact(
     let byte_size = bytes.len() as i64;
     let created_at = Utc::now().to_rfc3339();
 
-    db.execute(Statement::from_sql_and_values(
+    let inserted = db
+        .execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO report_artifacts (run_id, relative_path, file_name, mime_type, content_sha256, byte_size, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -93,17 +94,7 @@ pub async fn persist_run_artifact(
     ))
     .await?;
 
-    let row = db
-        .query_one(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT last_insert_rowid() AS id".to_string(),
-        ))
-        .await?;
-    let id: i64 = row
-        .as_ref()
-        .ok_or_else(|| AppError::Database(sea_orm::DbErr::Custom("last_insert_rowid".into())))?
-        .try_get("", "id")
-        .map_err(|e| AppError::Database(sea_orm::DbErr::Custom(format!("id: {e}"))))?;
+    let id = crate::db::inserted_id(&inserted)?;
 
     finish_run_success(db, run_id, &relative_path, byte_size).await?;
 

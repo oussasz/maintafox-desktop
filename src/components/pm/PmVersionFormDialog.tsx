@@ -106,13 +106,32 @@ function taskPackageToLines(raw: string | null | undefined): string {
   return raw;
 }
 
-function linesToTaskPackage(raw: string): string | null {
-  const steps = raw
+function linesToTaskPackage(raw: string, original?: string | null): string | null {
+  const lines = raw
     .split("\n")
     .map((l) => l.trim())
     .filter(Boolean);
-  if (steps.length === 0) return null;
-  return JSON.stringify({ steps });
+  if (lines.length === 0) return null;
+  // L1-25: a step written with more than its text (optional, estimated minutes: by a copy or an
+  // import) keeps those when its line is unchanged; a new or edited line is a plain step.
+  const known = new Map<string, unknown>();
+  try {
+    const parsed = original ? (JSON.parse(original) as unknown) : null;
+    const steps: unknown[] = Array.isArray(parsed)
+      ? parsed
+      : parsed && typeof parsed === "object" && Array.isArray((parsed as { steps?: unknown }).steps)
+        ? (parsed as { steps: unknown[] }).steps
+        : [];
+    for (const step of steps) {
+      if (step && typeof step === "object") {
+        const d = (step as Record<string, unknown>)["description"];
+        if (typeof d === "string" && !known.has(d.trim())) known.set(d.trim(), step);
+      }
+    }
+  } catch {
+    // An unreadable package keeps the lines as typed.
+  }
+  return JSON.stringify({ steps: lines.map((line) => known.get(line) ?? line) });
 }
 
 function optionalNumber(raw: string): number | null {
@@ -257,7 +276,10 @@ export function PmVersionFormDialog({
       effective_from: `${effectiveFrom}T00:00:00Z`,
       effective_to: effectiveTo ? `${effectiveTo}T23:59:59Z` : null,
       trigger_definition_json: buildTriggerJson({ ...trigger, strategy }),
-      task_package_json: linesToTaskPackage(taskLines),
+      task_package_json: linesToTaskPackage(
+        taskLines,
+        mode === "edit" ? (version?.task_package_json ?? null) : null,
+      ),
       required_parts_json: requiredPartsJson(parts),
       required_skills_json: skills.length > 0 ? JSON.stringify(skills) : null,
       required_tools_json: csvToJsonArray(toolsCsv),

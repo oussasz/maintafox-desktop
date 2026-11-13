@@ -95,7 +95,19 @@ export function ForcePasswordChangePage({ onComplete }: ForcePasswordChangePageP
 
   return (
     <AuthShell width="sm">
-      <h1 className={mfAuth.title}>{t("session.forcePasswordChange.title")}</h1>
+      <div className="flex items-start justify-between gap-3">
+        <h1 className={mfAuth.title}>{t("session.forcePasswordChange.title")}</h1>
+        {/* Wrong account or shared PC: leave without choosing a password. Kept at the top so it
+            is never below the fold of the compact window (L5-25). */}
+        <button
+          type="button"
+          className="mt-1 shrink-0 text-sm font-medium text-primary underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+          disabled={loading}
+          onClick={() => void signOut()}
+        >
+          {t("session.forcePasswordChange.signOut")}
+        </button>
+      </div>
       <p className={mfAuth.subtitle}>{t("session.forcePasswordChange.message")}</p>
       <BuiltinAdminWarning sessionUserId={sessionUserId} className="mt-4" />
 
@@ -147,10 +159,6 @@ export function ForcePasswordChangePage({ onComplete }: ForcePasswordChangePageP
 
         <AuthButton type="submit" loading={loading} disabled={loading}>
           {loading ? t("login.form.submitting") : t("session.forcePasswordChange.submit")}
-        </AuthButton>
-        {/* Wrong account or shared PC: leave without choosing a password. */}
-        <AuthButton variant="ghost" disabled={loading} onClick={() => void signOut()}>
-          {t("session.forcePasswordChange.signOut")}
         </AuthButton>
       </form>
     </AuthShell>

@@ -5,6 +5,7 @@ import { ipcErrorDetails } from "@/utils/errors";
 import type {
   CreatePmPlanInput,
   CreatePmPlanVersionInput,
+  DuplicatePmPlanInput,
   ExecutePmOccurrenceInput,
   ExecutePmOccurrenceResult,
   GeneratePmOccurrencesInput,
@@ -47,6 +48,11 @@ export type PmPlanRow = PmPlan &
     asset_scope_label?: string | null | undefined;
     /** Current version from a reliability decision refused or not accepted here (AU-76b): to review. */
     source_decision_to_review?: boolean | undefined;
+    /**
+     * Org node the plan's rights are checked at (its equipment's site, or its location); null: a
+     * family / criticality-group plan, or equipment installed nowhere — plant-wide rights only.
+     */
+    access_node_id?: number | null | undefined;
   };
 
 /** `on_time` | `early` | `late` against the occurrence's tolerance window. */
@@ -124,6 +130,8 @@ export interface RecordPmMeterReadingInput {
   reading_value: number;
   reading_at: string | null;
   kind: PmMeterReadingKind | null;
+  /** Set once the person has confirmed a value far above the meter's usual use. */
+  confirm_jump?: boolean;
 }
 
 const PmPlanSchema = z.object({
@@ -154,6 +162,7 @@ const PmPlanSchema = z.object({
   asset_scope_label: z.string().nullable().optional(),
   /** Current version from a reliability decision refused or not accepted here (AU-76b): to review. */
   source_decision_to_review: z.boolean().optional(),
+  access_node_id: z.number().nullable().optional(),
 });
 
 const PmPlanVersionSchema = z.object({
@@ -417,8 +426,8 @@ export function isReportedPmError(err: unknown): boolean {
   return err instanceof PmIpcError && err.reported;
 }
 
-function mapInvokeError(err: unknown): never {
-  if (isIpcError(err)) throw new PmIpcError(err.code, err.message, true, ipcErrorDetails(err));
+function mapInvokeError(err: unknown, reported = true): never {
+  if (isIpcError(err)) throw new PmIpcError(err.code, err.message, reported, ipcErrorDetails(err));
   if (err instanceof Error) throw err;
   throw new Error(String(err));
 }
@@ -427,12 +436,14 @@ async function invokeParsed<T>(
   command: string,
   args: Record<string, unknown> | undefined,
   schema: z.ZodType<T>,
+  options?: { notifyOnError?: boolean },
 ): Promise<T> {
   let raw: unknown;
   try {
-    raw = await invoke<unknown>(command, args);
+    raw = await invoke<unknown>(command, args, options);
   } catch (err) {
-    mapInvokeError(err);
+    // Without the global toast the screen reports the failure itself (reported = false).
+    mapInvokeError(err, options?.notifyOnError !== false);
   }
   try {
     return schema.parse(raw);
@@ -454,6 +465,28 @@ export function getPmPlan(planId: number): Promise<PmPlanRow> {
 
 export function createPmPlan(input: CreatePmPlanInput): Promise<PmPlanRow> {
   return invokeParsed("create_pm_plan", { input }, PmPlanSchema);
+}
+
+const DuplicatePmPlanResultSchema = z.object({
+  plan: PmPlanSchema,
+  version: PmPlanVersionSchema,
+  meter_to_choose: z.boolean(),
+});
+
+export interface DuplicatePmPlanRowResult {
+  plan: PmPlanRow;
+  version: PmPlanVersion;
+  meter_to_choose: boolean;
+}
+
+/**
+ * "Dupliquer ce plan": a new draft plan (version 1) copied onto the chosen asset. A refusal is
+ * not sent to the global toast: the copy dialog says it next to its fields.
+ */
+export function duplicatePmPlan(input: DuplicatePmPlanInput): Promise<DuplicatePmPlanRowResult> {
+  return invokeParsed("duplicate_pm_plan", { input }, DuplicatePmPlanResultSchema, {
+    notifyOnError: false,
+  });
 }
 
 export function updatePmPlan(
@@ -610,9 +643,35 @@ export function listPmAssetMeters(equipmentId: number): Promise<PmAssetMeter[]> 
 }
 
 export function recordPmMeterReading(input: RecordPmMeterReadingInput): Promise<PmAssetMeter> {
-  return invokeParsed("record_pm_meter_reading", { input }, PmAssetMeterSchema);
+  // The dialog shows the refusals itself: an unusual value asks for a confirmation, not a toast.
+  return invokeParsed("record_pm_meter_reading", { input }, PmAssetMeterSchema, {
+    notifyOnError: false,
+  });
 }
 
 export function createPmRevisionFromFinding(findingId: number): Promise<PmPlanVersion> {
   return invokeParsed("create_pm_revision_from_finding", { findingId }, PmPlanVersionSchema);
+}
+
+const PmPlanRefSchema = z.object({ id: z.number(), code: z.string(), title: z.string() });
+const PmPlanCoverageSchema = z.object({
+  plan_id: z.number(),
+  covered_by: PmPlanRefSchema.nullable(),
+  covers: z.array(PmPlanRefSchema),
+});
+
+export type PmPlanCoverage = z.infer<typeof PmPlanCoverageSchema>;
+export type PmPlanRef = z.infer<typeof PmPlanRefSchema>;
+
+/** Nested plans (L1-15): the plan that covers this one, and the plans it covers. */
+export function getPmPlanCoverage(planId: number): Promise<PmPlanCoverage> {
+  return invokeParsed("get_pm_plan_coverage", { planId }, PmPlanCoverageSchema);
+}
+
+/** Sets (or clears, with null) the plan that covers this one. */
+export function setPmPlanCoveredBy(
+  planId: number,
+  coveredByPlanId: number | null,
+): Promise<PmPlanCoverage> {
+  return invokeParsed("set_pm_plan_covered_by", { planId, coveredByPlanId }, PmPlanCoverageSchema);
 }

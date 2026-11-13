@@ -60,7 +60,9 @@ pub(crate) async fn login_impl(
     let username = payload.username.trim().to_string();
 
     if username.is_empty() || payload.password.is_empty() {
-        return Err(AppError::Auth("Identifiant ou mot de passe invalide.".into()));
+        return Err(lockout::LockoutPolicy::load(&state.db)
+            .await
+            .invalid_credentials_error());
     }
 
     // Look up user (a built-in "admin" superseded by another administrator is retired first)
@@ -80,7 +82,9 @@ pub(crate) async fn login_impl(
                 },
             )
             .await;
-            return Err(AppError::Auth("Identifiant ou mot de passe invalide.".into()));
+            return Err(lockout::LockoutPolicy::load(&state.db)
+                .await
+                .invalid_credentials_error());
         }
         Some(r) => r,
     };
@@ -114,7 +118,7 @@ pub(crate) async fn login_impl(
                         .into(),
                 ));
             }
-            return Err(AppError::Auth("Identifiant ou mot de passe invalide.".into()));
+            return Err(lockout_policy.invalid_credentials_error());
         }
         Some(h) => h,
     };
@@ -134,7 +138,7 @@ pub(crate) async fn login_impl(
             },
         )
         .await;
-        return Err(AppError::Auth("Identifiant ou mot de passe invalide.".into()));
+        return Err(lockout_policy.invalid_credentials_error());
     }
 
     // ── Device trust enforcement ─────────────────────────────────────────

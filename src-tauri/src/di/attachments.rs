@@ -13,7 +13,6 @@
 //!   - The `relative_path` column is unique to prevent collision.
 
 use crate::errors::{AppError, AppResult};
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -187,7 +186,7 @@ pub async fn save_di_attachment(
     std::fs::write(&absolute_path, &input.file_bytes)?;
 
     // ── Insert DB record ──────────────────────────────────────────────────
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let size_bytes = input.file_bytes.len() as i64;
     let mime_type = input.mime_type.clone();
     let file_name = sanitized_name.to_string();

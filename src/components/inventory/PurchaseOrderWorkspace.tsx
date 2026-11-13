@@ -9,6 +9,7 @@ import { useTranslation } from "react-i18next";
 import { PermissionGate } from "@/components/PermissionGate";
 import { LinkedEntityBadge } from "@/components/common/LinkedEntityBadge";
 import { printPoFiche } from "@/components/inventory/PoPrintFiche";
+import { ApproverRolesLine, useApprovalBlocker } from "@/components/inventory/ProcurementApproval";
 import { isReceivablePurchaseOrder } from "@/components/inventory/ReceiveGoodsDialog";
 import { StockImpactPreview } from "@/components/inventory/StockImpactPreview";
 import { poLateDays } from "@/components/inventory/po-late";
@@ -296,6 +297,8 @@ export function PurchaseOrderWorkspace({
 
   const order = detail?.order;
   const cancelTarget = order ? purchaseOrderCancelTarget(order.status) : null;
+  /** Why the signed-in user cannot approve this order (null: they may try; limits checked server-side). */
+  const approvalBlocker = useApprovalBlocker(order?.ordered_by_id ?? null);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -331,6 +334,20 @@ export function PurchaseOrderWorkspace({
             <p className="text-sm text-text-muted">{t("procurement.poWorkspace.noSelection")}</p>
           ) : (
             <>
+              {order.status === "SUBMITTED" ? (
+                <div className="mb-3 space-y-1 rounded-md border p-3">
+                  <ApproverRolesLine
+                    documentType="PURCHASE_ORDER"
+                    documentId={order.id}
+                    reloadKey={order.row_version}
+                  />
+                  {approvalBlocker ? (
+                    <p id="po-approval-blocker" className="text-xs text-text-muted">
+                      {approvalBlocker}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
               <Tabs defaultValue="general">
                 <TabsList className="mb-3 flex h-auto flex-wrap gap-1">
                   <TabsTrigger value="general">
@@ -801,20 +818,12 @@ export function PurchaseOrderWorkspace({
                   {order.status === "SUBMITTED" ? (
                     <Button
                       className="h-11"
-                      disabled={saving}
+                      title={approvalBlocker ?? undefined}
+                      aria-describedby={approvalBlocker ? "po-approval-blocker" : undefined}
+                      disabled={saving || approvalBlocker !== null}
                       onClick={() => void runTransition("APPROVED")}
                     >
                       {t("procurement.poWorkspace.actions.approve")}
-                    </Button>
-                  ) : null}
-                  {onReceiveGoods && isReceivablePurchaseOrder(order.status) ? (
-                    <Button
-                      variant="outline"
-                      className="h-11"
-                      disabled={saving}
-                      onClick={() => onReceiveGoods(order.id)}
-                    >
-                      {t("procurement.poWorkspace.actions.receive")}
                     </Button>
                   ) : null}
                   {cancelTarget ? (
@@ -828,6 +837,19 @@ export function PurchaseOrderWorkspace({
                     </Button>
                   ) : null}
                 </>
+              </PermissionGate>
+            ) : null}
+            {/* Receiving is its own right: a storekeeper receives without managing purchases. */}
+            {order && onReceiveGoods && isReceivablePurchaseOrder(order.status) ? (
+              <PermissionGate permission={P.INV_RECEIVE}>
+                <Button
+                  variant="outline"
+                  className="h-11"
+                  disabled={saving}
+                  onClick={() => onReceiveGoods(order.id)}
+                >
+                  {t("procurement.poWorkspace.actions.receive")}
+                </Button>
               </PermissionGate>
             ) : null}
           </div>

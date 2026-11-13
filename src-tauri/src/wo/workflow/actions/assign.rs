@@ -23,7 +23,7 @@ pub struct WoAssignSaveInput {
     pub assigned_team_id: Option<i64>,
     pub primary_responsible_id: Option<i64>,
     pub scheduled_at: Option<String>,
-    /// Required for any non-Planning assignment write.
+    /// Only the emergency override needs a reason; a routine assignment sends none.
     pub override_reason: String,
 }
 
@@ -117,22 +117,27 @@ async fn append_emergency_schedule_log(
     new_team: i64,
     new_personnel: Option<i64>,
     reason: &str,
+    emergency: bool,
 ) -> AppResult<()> {
+    // A routine assignment keeps its own action type: the log never calls it an emergency.
+    let origin = if emergency { "emergency_reassign" } else { "assign" };
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO schedule_change_log
             (commitment_id, action_type, actor_id, field_changed, old_value, new_value,
              reason_code, reason_note, reason, details_json)
-         VALUES (?, 'emergency_reassign', ?, 'assignment', ?, ?, 'emergency_reassign', ?, ?, ?)",
+         VALUES (?, ?, ?, 'assignment', ?, ?, ?, ?, ?, ?)",
         [
             commitment_id.into(),
+            origin.into(),
             actor_id.into(),
             format!("team={old_team};personnel={old_personnel:?}").into(),
             format!("team={new_team};personnel={new_personnel:?}").into(),
+            origin.into(),
             reason.to_string().into(),
             reason.to_string().into(),
             json!({
-                "origin": "emergency_reassign",
+                "origin": origin,
                 "override_reason": reason,
             })
             .to_string()
@@ -152,7 +157,8 @@ pub async fn emergency_reassign(db: &DatabaseConnection, input: WoEmergencyReass
 
 async fn reassign(db: &DatabaseConnection, input: WoEmergencyReassignInput, emergency: bool) -> AppResult<WorkOrder> {
     let reason = input.override_reason.trim().to_string();
-    if reason.is_empty() {
+    // The waiver reason belongs to the emergency override; a routine assignment needs none.
+    if emergency && reason.is_empty() {
         return Err(AppError::ValidationFailed(vec![
             "GATE_WO_REASSIGN_REASON_REQUIRED: override_reason is required for emergency reassign.".to_string(),
         ]));
@@ -183,13 +189,15 @@ async fn reassign(db: &DatabaseConnection, input: WoEmergencyReassignInput, emer
         // receiving the row (`planning::sync_check`): a crew change of a committed slot is a move,
         // an assignee change alone is not, and a released or cancelled slot enters no week.
         if let Some(next_team) = input.assigned_team_id {
+            // A frozen week on the new crew's site is reported first (it names the week and the
+            // break-in), before the general "move it in Planning" refusal below.
             if next_team != cmt.assigned_team_id && cmt.status == crate::planning::lifecycle::STATUS_COMMITTED {
                 if let Some(week) = crate::planning::weekly_schedule::frozen_week_for_slot(
                     &txn,
                     next_team,
                     &cmt.committed_start,
                     &cmt.committed_end,
-                    chrono::Utc::now(),
+                    crate::clock::now(),
                 )
                 .await?
                 {
@@ -202,6 +210,17 @@ async fn reassign(db: &DatabaseConnection, input: WoEmergencyReassignInput, emer
                         std::collections::HashMap::from([("week_start".to_string(), week.week_start.clone())]),
                     ));
                 }
+            }
+            // A routine assignment never moves a committed slot onto another crew: that is a
+            // Planning move (capacity and double-booking are checked there, not skipped here).
+            if !emergency
+                && next_team != cmt.assigned_team_id
+                && cmt.status == crate::planning::lifecycle::STATUS_COMMITTED
+            {
+                return Err(AppError::ValidationFailed(vec![
+                    "GATE_WO_ASSIGN_CREW_VIA_PLANNING: The slot is committed to another crew: move it in Planning, or use the emergency reassignment for a real exception."
+                        .to_string(),
+                ]));
             }
         }
     }
@@ -316,6 +335,7 @@ async fn reassign(db: &DatabaseConnection, input: WoEmergencyReassignInput, emer
             next_team,
             next_personnel,
             &reason,
+            emergency,
         )
         .await?;
     }
@@ -325,7 +345,7 @@ async fn reassign(db: &DatabaseConnection, input: WoEmergencyReassignInput, emer
         "override_reason": reason,
         "assigned_team_id": input.assigned_team_id,
         "primary_responsible_id": input.primary_responsible_id,
-        "skips_planning_gates": true,
+        "skips_planning_gates": emergency,
         "shift_cleared": shift_cleared,
     })
     .to_string();
@@ -333,7 +353,7 @@ async fn reassign(db: &DatabaseConnection, input: WoEmergencyReassignInput, emer
     emit_action_event(
         &txn,
         input.wo_id,
-        "emergency_reassigned",
+        if emergency { "emergency_reassigned" } else { "assigned" },
         Some(input.actor_id),
         Some(&from_code),
         Some(&from_code),
@@ -371,9 +391,10 @@ async fn reassign(db: &DatabaseConnection, input: WoEmergencyReassignInput, emer
     Ok(wo)
 }
 
-/// Assignment (`assign_wo`) — requires override_reason; the same write as an emergency reassign,
-/// except that a shift the new team does not work refuses it (the planner chooses one of the new
-/// team's shifts, or none).
+/// Routine assignment (`assign_wo`, "Affecter") — no waiver reason. The same write as an emergency
+/// reassign, except that a shift the new team does not work refuses it (the planner chooses one
+/// of the new team's shifts, or none) and a committed slot is never moved to another crew
+/// (that is a Planning move).
 pub async fn save_assignment(db: &DatabaseConnection, input: WoAssignSaveInput) -> AppResult<WorkOrder> {
     reassign(
         db,

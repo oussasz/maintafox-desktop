@@ -14,6 +14,7 @@ import {
   EquipmentSearchSelect,
   type EquipmentSearchOption,
 } from "@/components/assets/EquipmentSearchSelect";
+import { assetFormDisabledReasonKey } from "@/components/assets/asset-form-reason";
 import { isRetiredStatus } from "@/components/assets/asset-tones";
 import {
   EntityFormCollapsible,
@@ -25,6 +26,7 @@ import {
   EntityFormSection,
   orderImagesForUpload,
   pickEntityFormImages,
+  revealFirstFormError,
   type EntityFormImageItem,
 } from "@/components/entity-form";
 import { ReferenceCombobox } from "@/components/reference/ReferenceCombobox";
@@ -35,7 +37,8 @@ import { DecimalField } from "@/components/ui/decimal-field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ListAccessNote } from "@/components/ui/list-access-note";
-import { useToast } from "@/hooks/use-toast";
+import { useUnsavedFormGuard } from "@/components/ui/unsaved-changes-guard";
+import { useAppToast } from "@/hooks/use-toast";
 import { appErrorReason } from "@/lib/app-error";
 import { useZodForm } from "@/lib/form-helpers";
 import { useCanReadList } from "@/lib/list-access";
@@ -59,7 +62,7 @@ function translateFieldError(
 export function AssetCreateForm() {
   const { t } = useTranslation("equipment");
   const canReadOrg = useCanReadList("orgNodes");
-  const { toast } = useToast();
+  const { toast } = useAppToast();
   const open = useAssetStore((s) => s.showCreateForm);
   const closeForm = useAssetStore((s) => s.closeCreateForm);
   const submitCreate = useAssetStore((s) => s.createAsset);
@@ -84,6 +87,14 @@ export function AssetCreateForm() {
   const [referenceCatalogError, setReferenceCatalogError] = useState<string | null>(null);
   const [pendingPhotos, setPendingPhotos] = useState<EntityFormImageItem[]>([]);
   const [uploadingPhotos, setUploadingPhotos] = useState(false);
+  // Purchase and warranty typed at creation (UX L2-28), saved with the asset (`commercial`).
+  const [purchaseDate, setPurchaseDate] = useState("");
+  const [warrantyEnd, setWarrantyEnd] = useState("");
+  const [replacementValue, setReplacementValue] = useState<number | null>(null);
+  const warrantyError =
+    purchaseDate && warrantyEnd && warrantyEnd < purchaseDate
+      ? t("commercial.errors.warrantyBeforePurchase")
+      : undefined;
 
   const form = useZodForm(assetCreateSchema, {
     asset_code: "",
@@ -110,7 +121,7 @@ export function AssetCreateForm() {
     setValue,
     watch,
     reset,
-    formState: { errors },
+    formState: { errors, isDirty },
   } = form;
 
   // What the user entered is cleared only when the form opens: a rights reload or a language
@@ -175,6 +186,9 @@ export function AssetCreateForm() {
       rams_schedule_reference_value_id: null,
       rams_utilization_factor: 1.0,
     });
+    setPurchaseDate("");
+    setWarrantyEnd("");
+    setReplacementValue(null);
   }, [open, parentPreFill, reset]);
 
   const orgOptions: EquipmentSearchOption[] = useMemo(
@@ -210,6 +224,12 @@ export function AssetCreateForm() {
     }
   }, [watchedFamilyCode, setValue]);
 
+  // Unsaved input: a field the user changed or a photo chosen (a parent passed in is not input).
+  const { requestCancel, markSaved, guard } = useUnsavedFormGuard({
+    dirty: isDirty || pendingPhotos.length > 0,
+    onCancel: closeForm,
+  });
+
   const onSubmit: Parameters<typeof handleSubmit>[0] = async (values) => {
     setSubmitError(null);
     if (
@@ -218,12 +238,20 @@ export function AssetCreateForm() {
       !values.status_code?.trim()
     ) {
       setSubmitError(t("createForm.validation.referenceRequired"));
+      revealFirstFormError(FORM_ID);
       return;
     }
     if (!values.org_node_id || values.org_node_id === 0) {
       setSubmitError(t("createForm.validation.orgRequired"));
+      revealFirstFormError(FORM_ID);
       return;
     }
+    if (warrantyError) {
+      setSubmitError(warrantyError);
+      revealFirstFormError(FORM_ID);
+      return;
+    }
+    const hasCommercial = purchaseDate !== "" || warrantyEnd !== "" || replacementValue != null;
 
     const payload: CreateAssetPayload = {
       asset_code: values.asset_code.trim(),
@@ -243,6 +271,17 @@ export function AssetCreateForm() {
         ? { rams_schedule_reference_value_id: values.rams_schedule_reference_value_id }
         : {}),
       rams_utilization_factor: values.rams_utilization_factor ?? 1.0,
+      ...(hasCommercial
+        ? {
+            commercial: {
+              purchase_date: purchaseDate || null,
+              warranty_expiry_date: warrantyEnd || null,
+              replacement_value: replacementValue,
+              cost_center_code: null,
+              notes: null,
+            },
+          }
+        : {}),
     };
 
     try {
@@ -283,9 +322,11 @@ export function AssetCreateForm() {
         }
       }
 
+      markSaved();
       closeForm();
     } catch (err) {
       setSubmitError(appErrorReason(err));
+      revealFirstFormError(FORM_ID);
     }
   };
 
@@ -298,6 +339,12 @@ export function AssetCreateForm() {
 
   const watchedOrgNode = watch("org_node_id");
   const busy = saving || uploadingPhotos;
+  const disabledReasonKey = assetFormDisabledReasonKey({
+    saving,
+    photosBusy: uploadingPhotos,
+    catalogReady,
+    catalogFailed: referenceCatalogError != null,
+  });
 
   return (
     <EntityFormDialog
@@ -315,9 +362,10 @@ export function AssetCreateForm() {
               {t("createForm.submit")}
             </>
           }
-          onCancel={() => closeForm()}
+          onCancel={requestCancel}
           cancelDisabled={busy}
           primaryDisabled={!catalogReady}
+          primaryDisabledReason={disabledReasonKey ? t(disabledReasonKey) : undefined}
           primaryLoading={busy}
         />
       }
@@ -329,7 +377,11 @@ export function AssetCreateForm() {
         </div>
       )}
 
-      <form id={FORM_ID} onSubmit={(e) => void handleSubmit(onSubmit)(e)} className="space-y-6">
+      <form
+        id={FORM_ID}
+        onSubmit={(e) => void handleSubmit(onSubmit, () => revealFirstFormError(FORM_ID))(e)}
+        className="space-y-6"
+      >
         <EntityFormSection title={t("createForm.sections.identification")}>
           <FormField
             name="asset_code"
@@ -370,7 +422,9 @@ export function AssetCreateForm() {
                 id="class_code"
                 referenceType="equipment.class"
                 value={watch("class_code") || null}
-                onChange={(v) => setValue("class_code", v ?? "", { shouldValidate: true })}
+                onChange={(v) =>
+                  setValue("class_code", v ?? "", { shouldDirty: true, shouldValidate: true })
+                }
                 placeholder={t("createForm.selectClass")}
                 allowClear={false}
                 aria-invalid={!!errors.class_code}
@@ -381,7 +435,9 @@ export function AssetCreateForm() {
                 id="family_code"
                 referenceType="equipment.family"
                 value={watch("family_code") ?? null}
-                onChange={(v) => setValue("family_code", v, { shouldValidate: true })}
+                onChange={(v) =>
+                  setValue("family_code", v, { shouldDirty: true, shouldValidate: true })
+                }
                 parentCode={watchedClassCode || null}
                 placeholder={t("createForm.selectFamilyOptional")}
                 disabled={!watchedClassCode}
@@ -393,7 +449,9 @@ export function AssetCreateForm() {
                 id="subfamily_code"
                 referenceType="equipment.subfamily"
                 value={watch("subfamily_code") ?? null}
-                onChange={(v) => setValue("subfamily_code", v, { shouldValidate: true })}
+                onChange={(v) =>
+                  setValue("subfamily_code", v, { shouldDirty: true, shouldValidate: true })
+                }
                 parentCode={watchedFamilyCode ?? null}
                 placeholder={t("createForm.selectSubfamilyOptional")}
                 disabled={!watchedFamilyCode}
@@ -411,7 +469,9 @@ export function AssetCreateForm() {
               id="criticality_code"
               referenceType="equipment.criticality"
               value={watch("criticality_code") || null}
-              onChange={(v) => setValue("criticality_code", v ?? "", { shouldValidate: true })}
+              onChange={(v) =>
+                setValue("criticality_code", v ?? "", { shouldDirty: true, shouldValidate: true })
+              }
               placeholder={t("createForm.selectCriticality")}
               allowClear={false}
               aria-invalid={!!errors.criticality_code}
@@ -431,7 +491,9 @@ export function AssetCreateForm() {
                 id="org_node_id"
                 options={orgOptions}
                 value={watchedOrgNode ? String(watchedOrgNode) : ""}
-                onChange={(v) => setValue("org_node_id", Number(v), { shouldValidate: true })}
+                onChange={(v) =>
+                  setValue("org_node_id", Number(v), { shouldDirty: true, shouldValidate: true })
+                }
                 placeholder={t("createForm.selectOrg")}
                 disabled={orgOptions.length === 0}
                 aria-invalid={!!errors.org_node_id}
@@ -444,7 +506,9 @@ export function AssetCreateForm() {
             <EquipmentParentPicker
               id="parent_asset_id"
               value={watch("parent_asset_id") ?? null}
-              onChange={(id) => setValue("parent_asset_id", id, { shouldValidate: true })}
+              onChange={(id) =>
+                setValue("parent_asset_id", id, { shouldDirty: true, shouldValidate: true })
+              }
               rootAssetId={parentPreFill?.id ?? null}
             />
           </FormField>
@@ -464,7 +528,9 @@ export function AssetCreateForm() {
             <Checkbox
               id="maintainable_boundary"
               checked={watch("maintainable_boundary")}
-              onCheckedChange={(c) => setValue("maintainable_boundary", c === true)}
+              onCheckedChange={(c) =>
+                setValue("maintainable_boundary", c === true, { shouldDirty: true })
+              }
             />
             <Label htmlFor="maintainable_boundary" className="text-sm">
               {t("createForm.maintainableBoundary")}
@@ -483,7 +549,9 @@ export function AssetCreateForm() {
               id="status_code"
               referenceType="equipment.status"
               value={watch("status_code") || null}
-              onChange={(v) => setValue("status_code", v ?? "", { shouldValidate: true })}
+              onChange={(v) =>
+                setValue("status_code", v ?? "", { shouldDirty: true, shouldValidate: true })
+              }
               placeholder={t("createForm.selectStatus")}
               allowClear={false}
               excludeCodes={retiredStatusCodes}
@@ -497,6 +565,36 @@ export function AssetCreateForm() {
               onChange={(v) =>
                 setValue("commissioned_at", v || null, { shouldDirty: true, shouldValidate: true })
               }
+            />
+          </FormField>
+          <FormField name="purchase_date" label={t("commercial.purchaseDate")}>
+            <DateField
+              id="purchase_date"
+              value={purchaseDate}
+              onChange={(v) => setPurchaseDate(v)}
+            />
+          </FormField>
+          <FormField
+            name="warranty_expiry_date"
+            label={t("commercial.warrantyExpiry")}
+            error={warrantyError}
+          >
+            <DateField
+              id="warranty_expiry_date"
+              value={warrantyEnd}
+              onChange={(v) => setWarrantyEnd(v)}
+            />
+          </FormField>
+          <FormField
+            name="replacement_value"
+            label={t("commercial.replacementValue")}
+            description={t("commercial.replacementValueHint")}
+          >
+            <DecimalField
+              id="replacement_value"
+              min={0}
+              value={replacementValue}
+              onValueChange={setReplacementValue}
             />
           </FormField>
         </EntityFormSection>
@@ -543,7 +641,7 @@ export function AssetCreateForm() {
                 setValue(
                   "rams_schedule_reference_value_id",
                   v != null && v !== "" ? Number(v) : null,
-                  { shouldValidate: true },
+                  { shouldDirty: true, shouldValidate: true },
                 )
               }
               placeholder={t("createForm.selectScheduleClass")}
@@ -566,7 +664,10 @@ export function AssetCreateForm() {
                   : null
               }
               onValueChange={(v) =>
-                setValue("rams_utilization_factor", v ?? Number.NaN, { shouldValidate: true })
+                setValue("rams_utilization_factor", v ?? Number.NaN, {
+                  shouldDirty: true,
+                  shouldValidate: true,
+                })
               }
             />
             <p className="mt-1 text-[11px] text-text-muted">
@@ -584,6 +685,7 @@ export function AssetCreateForm() {
           </div>
         )}
       </form>
+      {guard}
     </EntityFormDialog>
   );
 }

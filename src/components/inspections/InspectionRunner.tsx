@@ -29,11 +29,14 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 
+import { PersonnelLinkNotice } from "@/components/common/PersonnelLinkNotice";
 import { Button, Input, Label, Textarea } from "@/components/ui";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import { StatusChip } from "@/components/ui/status-chip";
 import { toneOf } from "@/design-system/tone";
 import { useFormatters } from "@/hooks/use-formatters";
+import { useMyPersonnelLink } from "@/hooks/use-my-personnel-link";
 import { usePermissions } from "@/hooks/use-permissions";
 import { cn } from "@/lib/utils";
 import {
@@ -42,6 +45,7 @@ import {
   getInspectionRoundRunner,
   recordInspectionResult,
 } from "@/services/inspection-service";
+import { useSyncOrchestratorStore } from "@/stores/sync-orchestrator-store";
 import type {
   InspectionCheckpointHistoryPoint,
   InspectionRoundRunner,
@@ -56,6 +60,7 @@ import {
   InspectionFollowUpDialog,
 } from "./InspectionFollowUpDialog";
 import { InspectionRoundReview } from "./InspectionRoundReview";
+import { PointTrendToggle } from "./PointTrendChart";
 import {
   MAX_PHOTO_MB,
   NOT_PERFORMED,
@@ -73,11 +78,14 @@ import {
   readingNeedsComment,
   sparklinePoints,
   violatedLimit,
+  teamText,
 } from "./inspection-rules";
 
 interface InspectionRunnerProps {
   roundId: number;
   onClose: () => void;
+  /** True when the round was opened from another screen: "Retour" goes back to that screen. */
+  backToOrigin?: boolean;
   /** Called after any change so lists can refresh their counts. */
   onChanged?: () => void;
 }
@@ -128,11 +136,22 @@ function isTyping(target: EventTarget | null): boolean {
   );
 }
 
-export function InspectionRunner({ roundId, onClose, onChanged }: InspectionRunnerProps) {
+export function InspectionRunner({
+  roundId,
+  onClose,
+  backToOrigin,
+  onChanged,
+}: InspectionRunnerProps) {
   const { t } = useTranslation("inspections");
+  const { t: tc } = useTranslation("common");
   const { formatNumber } = useFormatters();
   const { can, canAny } = usePermissions();
+  // Readings are attributed to the signed-in person's personnel record: without one the server
+  // refuses every answer, so say so before anything is entered.
+  const { linked: personnelLinked } = useMyPersonnelLink();
   const [runner, setRunner] = useState<InspectionRoundRunner | null>(null);
+  // L1-32: finishing a round is final: asked for confirmation first.
+  const [confirmComplete, setConfirmComplete] = useState(false);
   const [loadError, setLoadError] = useState<unknown>(null);
   const [index, setIndex] = useState(0);
   const [draft, setDraft] = useState<Draft>(draftFrom(undefined));
@@ -174,6 +193,15 @@ export function InspectionRunner({ roundId, onClose, onChanged }: InspectionRunn
   }, [currentKey]);
 
   const sync = useMemo(() => pendingSyncCount(runner?.checkpoints ?? []), [runner]);
+  // L1-32: "arrived at the server" only when synchronisation runs here and no photo is still
+  // queued; with synchronisation off (or not set up) the results are only on this computer.
+  const syncWorker = useSyncOrchestratorStore((s) => s.worker);
+  const syncHeld: "localOnly" | "photosWaiting" | null =
+    syncWorker == null || syncWorker.blocker != null
+      ? "localOnly"
+      : syncWorker.media_pending_count > 0
+        ? "photosWaiting"
+        : null;
 
   if (!runner) {
     return loadError != null ? (
@@ -185,7 +213,8 @@ export function InspectionRunner({ roundId, onClose, onChanged }: InspectionRunn
 
   const status = runner.summary.round.status;
   const open = ROUND_OPEN_STATUSES.has(status);
-  const editable = open && can(P.INS_EXECUTE);
+  const noPersonnelRecord = personnelLinked === false;
+  const editable = open && can(P.INS_EXECUTE) && !noPersonnelRecord;
   const canDi = can(P.INS_EXECUTE) && canAny(P.DI_CREATE, P.DI_CREATE_OWN);
   const total = runner.checkpoints.length;
   const answered = runner.checkpoints.filter((c) => c.result).length;
@@ -363,7 +392,7 @@ export function InspectionRunner({ roundId, onClose, onChanged }: InspectionRunn
       <div className="flex flex-wrap items-center gap-3">
         <Button variant="outline" className="h-12" onClick={onClose}>
           <ArrowLeft className="mr-2 h-5 w-5" aria-hidden />
-          {t("runner.back")}
+          {backToOrigin ? tc("action.back") : t("runner.back")}
         </Button>
         <div className="min-w-0 flex-1">
           <h2 className="truncate text-lg font-semibold text-text-primary">
@@ -378,7 +407,9 @@ export function InspectionRunner({ roundId, onClose, onChanged }: InspectionRunn
               <span>{t("rounds.assignedTo", { name: runner.summary.assigned_to_name })}</span>
             ) : null}
             {runner.summary.assigned_team_name ? (
-              <span>{t("rounds.team", { name: runner.summary.assigned_team_name })}</span>
+              <span>
+                {teamText(runner.summary.assigned_team_name, (name) => t("rounds.team", { name }))}
+              </span>
             ) : null}
           </div>
         </div>
@@ -410,14 +441,14 @@ export function InspectionRunner({ roundId, onClose, onChanged }: InspectionRunn
           "flex items-center gap-2 rounded-md border px-3 py-2 text-sm",
           sync.errors > 0
             ? "border-tone-danger-border bg-tone-danger-bg"
-            : sync.waiting > 0
+            : sync.waiting > 0 || syncHeld !== null
               ? "border-tone-warning-border bg-tone-warning-bg"
               : "border-tone-success-border bg-tone-success-bg",
         )}
       >
         {sync.errors > 0 ? (
           <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden />
-        ) : sync.waiting > 0 ? (
+        ) : sync.waiting > 0 || syncHeld !== null ? (
           <CloudOff className="h-4 w-4 shrink-0" aria-hidden />
         ) : (
           <CloudUpload className="h-4 w-4 shrink-0" aria-hidden />
@@ -428,9 +459,17 @@ export function InspectionRunner({ roundId, onClose, onChanged }: InspectionRunn
             ? t("sync.errors", { count: sync.errors })
             : sync.waiting > 0
               ? t("sync.waiting", { count: sync.waiting })
-              : t("sync.allSynced")}
+              : syncHeld === "localOnly"
+                ? t("sync.localOnly")
+                : syncHeld === "photosWaiting"
+                  ? t("sync.photosWaiting", { count: syncWorker?.media_pending_count ?? 0 })
+                  : t("sync.allSynced")}
         </span>
       </div>
+
+      {open && noPersonnelRecord && can(P.INS_EXECUTE) ? (
+        <PersonnelLinkNotice context="rounds" />
+      ) : null}
 
       {!open ? (
         <p className="rounded-md bg-surface-2 px-3 py-2 text-sm text-text-muted">
@@ -704,6 +743,12 @@ export function InspectionRunner({ roundId, onClose, onChanged }: InspectionRunn
             numeric={isNumeric}
             unit={cp.measurement_unit}
           />
+          {isNumeric ? (
+            <PointTrendToggle
+              templateId={runner.summary.round.template_id}
+              checkpointCode={cp.checkpoint_code}
+            />
+          ) : null}
 
           {notice ? (
             <p role="status" className="flex items-center gap-2 text-sm text-tone-success-fg">
@@ -761,7 +806,7 @@ export function InspectionRunner({ roundId, onClose, onChanged }: InspectionRunn
           <Button
             className="h-14"
             disabled={!editable || busy || !completable}
-            onClick={() => void complete()}
+            onClick={() => setConfirmComplete(true)}
           >
             <CheckCircle2 className="mr-2 h-5 w-5" aria-hidden />
             {t("runner.complete")}
@@ -769,6 +814,17 @@ export function InspectionRunner({ roundId, onClose, onChanged }: InspectionRunn
           {!completable ? (
             <span className="text-sm text-text-muted">{t("runner.completeHint")}</span>
           ) : null}
+          <ConfirmDialog
+            open={confirmComplete}
+            onOpenChange={setConfirmComplete}
+            title={t("runner.completeConfirmTitle")}
+            description={t("runner.completeConfirmBody")}
+            confirmLabel={t("runner.complete")}
+            onConfirm={async () => {
+              await complete();
+              setConfirmComplete(false);
+            }}
+          />
         </div>
       ) : null}
 

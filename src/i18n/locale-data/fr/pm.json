@@ -16,12 +16,14 @@
     "refresh": "Actualiser",
     "refreshForecast": "Rafraîchir la prévision",
     "newPlan": "Nouveau plan",
+    "duplicatePlan": "Dupliquer ce plan",
+    "duplicate": "Dupliquer",
     "editPlan": "Modifier le plan",
     "newVersion": "Nouvelle version",
     "editVersion": "Modifier",
     "publish": "Publier",
-    "transition": "Mettre à jour le statut",
-    "transitionOccurrence": "Changer le statut",
+    "transition": "Changer l'état du plan",
+    "transitionOccurrence": "Changer l'état de l'échéance",
     "logExecution": "Saisir l'exécution",
     "viewFindings": "Voir les constats",
     "createFollowUpDi": "Créer une demande d'intervention (DI) de suivi",
@@ -112,7 +114,7 @@
     "requiredTools": "Outillage requis (séparé par des virgules)",
     "estimatedDurationHours": "Durée estimée (h)",
     "plannedCrewSize": "Effectif prévu (personnes)",
-    "plannedCrewSizeHint": "Reporté sur l'OT généré par ce PM ; le planning réserve durée × effectif.",
+    "plannedCrewSizeHint": "Reporté sur l'OT généré par ce MP ; le planning réserve durée × effectif.",
     "plannedCrewSizeInvalid": "L'effectif est un nombre entier de personnes, de 1 à {{max}}.",
     "estimatedLaborCost": "Coût main-d'œuvre estimé",
     "estimatedPartsCost": "Coût pièces estimé",
@@ -267,15 +269,15 @@
     "dueTodayHint": "Ouvertes, échéance aujourd'hui",
     "next7dHint": "Ouvertes, échéance sous 7 jours",
     "readyHint": "En attente de planification",
-    "compliance": "Conformité PM",
+    "compliance": "Conformité MP",
     "complianceHint": "{{onTime}} à l'heure sur {{due}} dues",
-    "complianceDefinition": "Travaux faits dans leur fenêtre ÷ PM dues",
+    "complianceDefinition": "Travaux faits dans leur fenêtre ÷ MP dues",
     "compliancePeriod": "Période de conformité",
     "lastDays_one": "{{count}} dernier jour",
     "lastDays_other": "{{count}} derniers jours"
   },
   "kpi": {
-    "compliance": "Conformité PM",
+    "compliance": "Conformité MP",
     "overdueRisk": "Risque de retard",
     "firstPass": "Terminées sans constat",
     "followUpRatio": "Constats avec suite",
@@ -317,19 +319,39 @@
   },
   "dialogs": {
     "newPlan": {
-      "title": "Créer un plan PM",
+      "title": "Créer un plan MP",
       "description": "Définir une stratégie préventive gouvernée. Publiez une version après approbation pour générer les échéances."
     },
+    "duplicatePlan": {
+      "title": "Dupliquer le plan {{code}}",
+      "description": "Le nouveau plan reprend la version {{version}} : déclenchement, tâches, pièces, durée, équipe et consignes de sécurité. Il est créé en brouillon (version 1) ; publiez-le ensuite comme tout plan.",
+      "prefilledTitle": "Copie de {{title}}",
+      "target": "Équipement visé",
+      "targetScope": "Périmètre visé",
+      "targetCurrent": "Même équipement que le plan d'origine : {{asset}}",
+      "targetHint": "Choisissez une autre machine pour copier le plan sur un équipement semblable.",
+      "meter": "Compteur de l'équipement visé",
+      "meterLater": "Choisir plus tard",
+      "meterHint": "Seuls les compteurs de même unité que le compteur d'origine sont proposés.",
+      "meterNone": "L'équipement visé n'a pas de compteur de même unité : le compteur restera à choisir.",
+      "meterLaterWarning": "Sans compteur, le plan ne pourra pas être publié tant qu'un compteur n'est pas choisi dans sa version.",
+      "notCopied": "Ne sont pas repris : échéances, OT, relevés, coûts, dates de dernière réalisation, historique des versions et approbations.",
+      "noVersion": "Ce plan n'a ni version publiée ni brouillon à copier.",
+      "whyCode": "Indiquez le code du nouveau plan pour pouvoir dupliquer.",
+      "whyTitle": "Indiquez le titre du nouveau plan pour pouvoir dupliquer.",
+      "whyScope": "Choisissez le périmètre visé pour pouvoir dupliquer.",
+      "saving": "Duplication en cours…"
+    },
     "editPlan": {
-      "title": "Modifier le plan PM",
+      "title": "Modifier le plan MP",
       "description": "Mettre à jour les informations du plan. Un changement de déclenchement nécessite une nouvelle version."
     },
     "newVersion": {
-      "title": "Créer une version PM",
+      "title": "Créer une version MP",
       "description": "Rédiger les règles de déclenchement et les estimations avant publication."
     },
     "editVersion": {
-      "title": "Modifier la version PM",
+      "title": "Modifier la version MP",
       "description": "Seules les versions brouillon sont modifiables."
     },
     "refreshForecast": {
@@ -343,15 +365,15 @@
       "description": "Faire avancer cette occurrence dans le circuit opérationnel."
     },
     "execution": {
-      "title": "Saisir l'exécution PM",
+      "title": "Saisir l'exécution MP",
       "description": "Enregistrer le résultat, les constats et leurs suites."
     },
     "deletePlan": {
-      "title": "Supprimer le plan PM",
+      "title": "Supprimer le plan MP",
       "description": "Supprimer le plan {{code}} ? Possible uniquement pour un plan brouillon sans version."
     },
     "deleteVersion": {
-      "title": "Supprimer la version PM",
+      "title": "Supprimer la version MP",
       "description": "Supprimer la version v{{version}} ? Possible uniquement pour une version brouillon sans occurrence."
     },
     "meterReading": {
@@ -364,10 +386,11 @@
     "activationPath": "Ordre du cycle de vie : brouillon → proposé → approuvé → actif. Publiez une version quand le plan est approuvé, actif ou suspendu, puis rafraîchissez la prévision pour créer les échéances.",
     "currentStatus": "Statut actuel : {{status}}",
     "alreadyOperational": "Ce plan est déjà opérationnel ou retiré.",
-    "woCloseOutcome": "À la clôture de l'OT lié, l'occurrence est terminée avec son résultat : les défaillances et les étapes de gamme non conformes deviennent des constats."
+    "woCloseOutcome": "À la clôture de l'OT lié, l'occurrence est terminée avec son résultat : les défaillances et les étapes de gamme non conformes deviennent des constats.",
+    "versionEffect": "Publier une nouvelle version remplace la version en cours pour les prochaines échéances générées. Les échéances et OT déjà générés gardent le contenu de leur version ; le plan reste actif pendant la préparation de la nouvelle version."
   },
   "empty": {
-    "noPlans": "Aucun plan PM. Créez un plan pour commencer.",
+    "noPlans": "Aucun plan MP. Créez un plan pour commencer.",
     "noPlansMatch": "Aucun plan ne correspond aux filtres.",
     "noDue": "Aucune échéance active dans cette vue.",
     "noVersions": "Aucune version.",
@@ -380,6 +403,13 @@
     "noParts": "Aucune pièce requise.",
     "noSkills": "Aucune compétence au catalogue."
   },
+  "coverage": {
+    "title": "Plan englobant",
+    "hint": "Une révision annuelle peut remplacer le contrôle hebdomadaire du même équipement : tant que le plan englobant a une occurrence dans la période, ce plan n'en génère pas.",
+    "coveredBy": "Couvert par le plan",
+    "none": "Aucun (ce plan est autonome)",
+    "covers": "Ce plan englobe : {{plans}}."
+  },
   "hints": {
     "partNecessityMissing": "Indiquez pour chaque pièce si elle est obligatoire ou optionnelle : {{codes}}.",
     "publishBlockedByLifecycle": "Pour publier, passez le plan en approuvé, actif ou suspendu.",
@@ -387,6 +417,9 @@
     "editVersionDraftOnly": "La modification est réservée aux versions brouillon.",
     "deletePlanDraftOnly": "La suppression est réservée aux plans brouillon.",
     "deleteVersionDraftOnly": "La suppression est réservée aux versions brouillon.",
+    "siteScopeOtherSite": "Vous n'avez ce droit que sur votre site : ce plan est sur un autre site.",
+    "siteScopePlantWidePlan": "Plan pour plusieurs sites : réservé aux droits sur toute l'usine.",
+    "siteScopeNoSite": "Plan sans site (son équipement n'est installé nulle part) : réservé aux droits sur toute l'usine.",
     "generationNeedLifecycle": "La prévision exige un plan actif ou suspendu, marqué actif.",
     "generationNeedVersion": "Publiez au moins une version avant de rafraîchir la prévision.",
     "generationReady": "Prêt à rafraîchir la prévision.",
@@ -417,6 +450,9 @@
     "executionLogged": "Exécution enregistrée.",
     "versionPublished": "Version v{{version}} publiée.",
     "revisionCreated": "Version brouillon v{{version}} créée à partir du constat.",
+    "planDuplicated": "Plan {{code}} créé en brouillon à partir du plan d'origine.",
+    "planDuplicatedMeterToChoose": "Plan {{code}} créé en brouillon. Choisissez son compteur dans la version avant de la publier.",
+    "planDuplicatedRefreshFailed": "Le plan {{code}} est bien créé, mais l'écran n'a pas pu être actualisé. Actualisez la liste pour l'ouvrir.",
     "readingRecorded": "Relevé enregistré ; la prévision de l'équipement a été mise à jour."
   },
   "archive": {
@@ -442,9 +478,10 @@
     "schedule": "Planification",
     "cronMidnight": "Tous les jours à minuit",
     "cronMorning": "Tous les jours à 06:00",
-    "cronCustom": "Planification personnalisée (cron)",
+    "cronCustom": "Planification personnalisée (avancé)",
     "cronCustomHint": "Six champs : seconde minute heure jour mois jour-de-semaine.",
-    "horizonDays": "Horizon (jours)"
+    "horizonDays": "Horizon (jours)",
+    "skippedHint": "Ignorée : échéance déjà existante, couverte par un plan englobant sur la même période, ou équipement sans compteur du type demandé."
   },
   "errors": {
     "listLoad": "La liste de choix n'a pas pu être chargée.",
@@ -462,11 +499,15 @@
     "scopeRequired": "Choisissez ce que couvre le plan.",
     "readingRequired": "Saisissez un relevé positif ou nul pour un compteur.",
     "readingLower": "Le relevé est inférieur au précédent : indiquez s'il s'agit d'un retour à zéro du compteur ou d'un remplacement du compteur.",
+    "jumpTitle": "Valeur inhabituelle",
+    "jumpBody": "Ce relevé dépasse très largement l'usage habituel de ce compteur depuis le relevé précédent. Vérifiez la valeur saisie (une erreur de frappe déclencherait des maintenances à tort), puis confirmez si elle est exacte.",
+    "jumpBack": "Corriger la valeur",
+    "jumpConfirm": "Oui, la valeur est exacte",
     "PM_CODE_NOT_IN_LIST": "« {{code}} » n'est pas une valeur active de la liste de référence concernée."
   },
   "tolerance": {
     "title": "Fenêtre de tolérance",
-    "hint": "Le travail fait dans la fenêtre est à l'heure ; avant, il est en avance ; après, en retard (conformité PM).",
+    "hint": "Le travail fait dans la fenêtre est à l'heure ; avant, il est en avance ; après, en retard (conformité MP).",
     "unit": "Unité",
     "none": "Aucune (au plus tard le jour d'échéance)",
     "days": "Jours",
@@ -491,5 +532,13 @@
   "sourceDecision": {
     "toReview": "Issue d'une décision refusée / en attente — à revoir",
     "toReviewHint": "La version en vigueur provient d'une décision de fiabilité refusée à la synchronisation ou pas encore acceptée sur ce poste. Revoyez-la ; publier une autre version retire ce signal."
+  },
+  "lifecycleAction": {
+    "draft": "Repasser en brouillon",
+    "proposed": "Proposer",
+    "approved": "Approuver",
+    "active": "Réactiver le plan",
+    "suspended": "Suspendre le plan",
+    "retired": "Retirer le plan"
   }
 }

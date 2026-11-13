@@ -63,9 +63,10 @@
     "submitted": "Soumettre",
     "approved": "Approuver",
     "frozen": "Figer",
-    "closed": "Clôturer"
+    "closed": "Clôturer la version"
   },
   "scenario": {
+    "baseline": "Référence",
     "original": "Budget initial",
     "approved": "Budget approuvé",
     "reforecast": "Révision",
@@ -86,7 +87,7 @@
     "in_review": "Prendre en charge",
     "actioned": "Action engagée",
     "accepted": "Accepter l'écart",
-    "closed": "Clôturer",
+    "closed": "Clôturer l'analyse",
     "open": "Rouvrir"
   },
   "settlement": {
@@ -117,6 +118,7 @@
     }
   },
   "woCost": {
+    "varianceNegligible": "Écart négligeable (moins de 2 % de la référence).",
     "title": "Coûts de l'OT",
     "loading": "Chargement des coûts…",
     "loadError": "Les coûts de l'OT n'ont pas pu être chargés.",
@@ -212,19 +214,20 @@
   },
   "kpi": {
     "budget": "Budget",
-    "budgetHint": "Exercice {{year}}",
+    "budgetHint": "Budget annuel, exercice {{year}}",
     "committed": "Engagé",
-    "committedHint": "Commandes ouvertes",
+    "committedHint": "Commandes et demandes d'achat ouvertes liées aux OT",
     "actual": "Réel",
     "actualHint": "OT imputés et saisies",
     "forecast": "Prévision fin d'exercice",
-    "forecastHint": "Réel + engagé + budget restant",
-    "variance": "Écart",
-    "overrun": "Dépassement prévu",
-    "underrun": "Marge prévue",
+    "forecastHint": "Réel + engagé + budget des mois restants",
+    "forecastHintShare": "Réel + engagé + budget des mois restants : {{pct}} du budget annuel",
+    "variance": "Écart prévu (budget − prévision)",
+    "overrun": "Dépassement : la prévision dépasse le budget",
+    "underrun": "Marge : la prévision reste sous le budget",
     "consumed": "Consommation",
     "consumedHint": "Réel / budget",
-    "consumedHintMonth": "Réel / budget annuel, fin {{month}}"
+    "consumedHintToDate": "Réel / budget de {{from}} à {{to}} ; {{annual}} du budget annuel"
   },
   "cockpit": {
     "loading": "Chargement du pilotage…",
@@ -269,11 +272,12 @@
     }
   },
   "burn": {
-    "title": "Budget et réel par mois",
+    "title": "Budget et réel par mois ({{currency}})",
     "budget": "Budget",
     "actual": "Réel",
     "monthAria": "{{month}} : budget {{budget}}, réel {{actual}}",
-    "cumulative": "Cumul à date : réel {{actual}} pour un budget de {{budget}}."
+    "cumulativeToDate": "De {{from}} à {{to}} : réel {{actual}} pour un budget de {{budget}} sur ces mois (budget annuel {{annual}}).",
+    "cumulativeYear": "Sur l'exercice : réel {{actual}} pour un budget de {{budget}}."
   },
   "drill": {
     "actualsTotal_one": "Total de {{count}} écriture : {{amount}}",
@@ -312,10 +316,17 @@
       "wo_settlement": "Imputation d'OT",
       "reversal": "Contre-passation",
       "manual": "Saisie manuelle"
+    },
+    "reverse": {
+      "action": "Contre-passer",
+      "title": "Contre-passer cette écriture ?",
+      "description": "Une écriture inverse de {{amount}} est ajoutée au réel ; l'écriture d'origine est conservée et marquée contre-passée. Les écritures issues d'un OT se corrigent en rouvrant l'OT.",
+      "confirm": "Contre-passer l'écriture",
+      "reason": "Motif de la contre-passation (obligatoire)"
     }
   },
   "settlements": {
-    "intro": "Chaque OT clôturé — ou annulé après avoir consommé de la main-d'œuvre, des pièces ou des prestations — est imputé une seule fois au centre de coût et à la période de sa clôture. Si le coût d'un OT imputé change ensuite (réception, sortie, retour ou temps arrivés après la clôture, même saisis hors ligne avant elle), seule la différence avec ce qui est déjà imputé est ajoutée. Une imputation en attente indique ce qu'il faut corriger ; une réouverture d'OT annule l'imputation.",
+    "intro": "Chaque OT clôturé est imputé une seule fois au centre de coût et au mois de sa clôture.",
     "filter": "Afficher",
     "filters": {
       "pending": "En attente",
@@ -348,7 +359,27 @@
     "lateHint": "Impute la différence de coût des OT déjà imputés (par exemple après une synchronisation).",
     "lateBooked_one": "Coûts tardifs imputés sur {{count}} OT.",
     "lateBooked_other": "Coûts tardifs imputés sur {{count}} OT.",
-    "lateNone": "Aucun coût tardif à imputer."
+    "lateNone": "Aucun coût tardif à imputer.",
+    "howTitle": "Comment fonctionne l'imputation ?",
+    "how": {
+      "once": "Un OT annulé est aussi imputé s'il a consommé de la main-d'œuvre, des pièces ou des prestations.",
+      "late": "Si le coût d'un OT imputé change ensuite (réception, sortie, retour ou temps saisi après la clôture, même hors ligne), seule la différence est ajoutée.",
+      "pending": "Une imputation en attente indique ce qu'il faut corriger.",
+      "reopen": "Rouvrir un OT annule son imputation."
+    }
+  },
+  "compare": {
+    "title": "Comparer deux versions",
+    "hint": "Choisissez deux versions de l'année : les montants sont additionnés par centre de coûts et catégorie.",
+    "versionA": "Version A",
+    "versionB": "Version B",
+    "choose": "Choisir une version",
+    "gap": "Écart (B − A)",
+    "total": "Total",
+    "loading": "Chargement des versions…",
+    "sameVersion": "Choisissez deux versions différentes pour les comparer.",
+    "differentCurrencies": "Les deux versions n'ont pas la même devise : les montants sont affichés dans leur devise, les écarts ne sont pas calculés.",
+    "noLines": "Aucune ligne de budget dans ces deux versions."
   },
   "planning": {
     "sameScenarioExists": "{{count}} version « {{scenario}} » est déjà ouverte pour {{year}}. Une seconde est rarement voulue : vérifiez avant de créer.",
@@ -374,6 +405,7 @@
     "active": "Actif",
     "inactive": "Inactif",
     "versions": "Versions budgétaires {{year}}",
+    "notReference": "« {{title}} » n'est pas la version affichée dans Pilotage : l'ouvrir ou la modifier ici ne change pas le budget de référence.",
     "versionsHint": "Brouillon → soumise → approuvée → figée. Seule une version approuvée ou figée reçoit les coûts des OT.",
     "newVersion": "Nouvelle version",
     "newVersionHint": "Exercice {{year}}, en {{currency}} (devise de l'entreprise).",
@@ -407,7 +439,9 @@
       "period": "Période",
       "amount": "Montant",
       "justification": "Justification"
-    }
+    },
+    "groupTotal_one": "{{count}} ligne · {{amount}}",
+    "groupTotal_other": "{{count}} lignes · {{amount}}"
   },
   "reviews": {
     "intro": "Une analyse d'écart documente la cause d'un dépassement, l'action décidée et son acceptation.",
@@ -415,7 +449,8 @@
     "noVersionBody": "Les analyses d'écart portent sur une version du budget.",
     "loadError": "Les analyses n'ont pas pu être chargées.",
     "empty": "Aucune analyse d'écart",
-    "emptyBody": "Ouvrez une analyse depuis le pilotage, sur une ligne en dépassement.",
+    "emptyBody": "Une analyse se lance depuis l'onglet Pilotage : le bouton « Analyser l'écart » apparaît sur chaque ligne dont la prévision dépasse le budget (droit de gestion du budget requis).",
+    "openCockpit": "Ouvrir le pilotage",
     "opened": "Ouverte le {{date}}",
     "reopenReason": "Rouverte : {{reason}}",
     "moved": "Analyse passée à « {{status}} ».",
@@ -464,17 +499,34 @@
       "cost12m": "Coût de maintenance",
       "cost12mHint": "12 mois, équipements valorisés",
       "costRav": "Coût / valeur de remplacement",
-      "costRavHint": "Indicateur SMRP",
+      "costRavHint": "Indicateur standard de maintenance",
       "withoutRav": "Sans valeur de remplacement",
       "withoutRavHint": "À renseigner sur la fiche équipement"
+    },
+    "lineFilter": "Ligne de production (centre de coût)",
+    "allLines": "Toutes les lignes",
+    "export": {
+      "name": "Désignation",
+      "line": "Ligne / centre de coût",
+      "preventive": "Préventif",
+      "other": "Autres types"
+    },
+    "breakdown": {
+      "title": "Coût par ligne de production et par type de travail",
+      "hint": "Regroupé par centre de coût de l'équipement. Correctif, préventif et autres types (amélioration, inspection…) sur les OT clôturés.",
+      "line": "Ligne / centre de coût",
+      "noLine": "Sans centre de coût",
+      "total": "Total"
     }
   },
   "periods": {
     "intro": "Clôturer un mois fige son réel : aucune écriture n'y est plus acceptée et les OT clôturés ensuite sont imputés au mois ouvert suivant. Un mois se clôture une fois terminé et quand tous ses OT sont imputés.",
     "caption": "Périodes budgétaires {{year}}",
     "loadError": "Les périodes n'ont pas pu être chargées.",
-    "close": "Clôturer",
-    "reopen": "Rouvrir",
+    "close": "Clôturer le mois",
+    "reopen": "Rouvrir le mois",
+    "endedOpen_one": "{{count}} mois terminé est encore ouvert : son réel peut encore changer. Clôturez-le une fois ses OT imputés.",
+    "endedOpen_other": "{{count}} mois terminés sont encore ouverts : leur réel peut encore changer. Clôturez-les une fois leurs OT imputés.",
     "closeTitle": "Clôturer {{month}}",
     "closeDescription": "Le réel du mois sera figé. Les écritures ultérieures iront au mois ouvert suivant.",
     "reopenTitle": "Rouvrir {{month}}",

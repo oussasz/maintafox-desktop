@@ -19,7 +19,6 @@
 //! a draft set. The publish lifecycle (File 01/02) gates promotion to active use.
 
 use crate::errors::{AppError, AppResult};
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
@@ -274,7 +273,7 @@ pub async fn create_import_batch(
     let domain = domains::get_reference_domain(db, domain_id).await?;
     crate::reference::audience::assert_domain_editable(&domain)?;
 
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -366,7 +365,7 @@ pub async fn stage_import_rows(
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE reference_import_batches SET total_rows = ?, updated_at = ? WHERE id = ?",
-        [total.into(), Utc::now().to_rfc3339().into(), batch_id.into()],
+        [total.into(), crate::clock::now().to_rfc3339().into(), batch_id.into()],
     ))
     .await?;
 
@@ -669,7 +668,7 @@ pub async fn validate_import_batch(
         }
     }
 
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
 
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -916,7 +915,7 @@ pub async fn apply_import_batch(
             }
         } else {
             // Create new value.
-            let _now = Utc::now().to_rfc3339();
+            let _now = crate::clock::now().to_rfc3339();
             match txn
                 .execute(Statement::from_sql_and_values(
                     DbBackend::Sqlite,
@@ -976,7 +975,7 @@ pub async fn apply_import_batch(
     let total_eligible = rows.len() as i64;
     let total_skipped = batch.total_rows - total_eligible + skipped;
 
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE reference_import_batches SET status = 'applied', updated_at = ? WHERE id = ?",

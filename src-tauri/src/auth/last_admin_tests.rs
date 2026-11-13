@@ -140,6 +140,7 @@ fn readonly_at_tenant(user_id: i64, role_id: i64) -> AssignRoleScopeInput {
         scope_reference: None,
         valid_from: None,
         valid_to: None,
+        end_plant_wide_assignment_ids: Vec::new(),
     }
 }
 

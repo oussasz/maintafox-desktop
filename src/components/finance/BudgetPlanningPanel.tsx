@@ -4,10 +4,11 @@
  * budget lines of a version (cost centre × category × month or whole year). Only a draft version
  * can be edited; a reforecast is created as a successor that copies the lines.
  */
-import { Pencil, Plus } from "lucide-react";
+import { ChevronDown, ChevronRight, Pencil, Plus } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { BudgetVersionCompare } from "@/components/finance/BudgetVersionCompare";
 import { parseAmount } from "@/components/finance/WoCostEstimateDialog";
 import { VERSION_STATUS_TONE } from "@/components/finance/finance-tone";
 import { useFinanceCatalogs } from "@/components/finance/use-finance-catalogs";
@@ -75,8 +76,10 @@ const TH = "px-3 py-2 text-start font-semibold";
 
 export interface BudgetPlanningPanelProps {
   fiscalYear: number;
-  /** Version shown in the cockpit, selected by default. */
+  /** Version opened for editing in this tab (not necessarily the one the cockpit shows). */
   selectedVersionId: number | null;
+  /** Version the cockpit and the OT costs use (approved), so a draft can say it does not replace it. */
+  referenceVersionId?: number | null;
   onSelectVersion: (id: number | null) => void;
   onChanged: () => void;
   /** Bumped by the page's Refresh button: reloads cost centres and versions. */
@@ -86,6 +89,7 @@ export interface BudgetPlanningPanelProps {
 export function BudgetPlanningPanel({
   fiscalYear,
   selectedVersionId,
+  referenceVersionId = null,
   onSelectVersion,
   onChanged,
   reloadToken = 0,
@@ -143,6 +147,17 @@ export function BudgetPlanningPanel({
         canEdit={canBudget}
         onChanged={refresh}
       />
+      {versions.length >= 2 ? (
+        <BudgetVersionCompare versions={versions} referenceVersionId={referenceVersionId} />
+      ) : null}
+      {version && version.id !== referenceVersionId ? (
+        <p
+          role="status"
+          className="rounded-md border border-surface-border bg-surface-2 px-3 py-2 text-sm text-text-secondary"
+        >
+          {t("planning.notReference", { title: version.title ?? `v${version.version_no}` })}
+        </p>
+      ) : null}
       {version ? (
         <LinesSection
           version={version}
@@ -437,7 +452,7 @@ function VersionsSection({
   onChanged: () => Promise<void>;
 }) {
   const { t } = useTranslation("budget");
-  const { currencyCode } = useFormatters();
+  const { currencyCode, currencyLabel } = useFormatters();
   const { can } = usePermissions();
   const { withStepUp, StepUpDialogElement } = useStepUp();
   const [creating, setCreating] = useState(false);
@@ -562,7 +577,8 @@ function VersionsSection({
                 </div>
                 <div className="text-xs text-text-muted">
                   {t(`scenario.${v.scenario_type}`, { defaultValue: v.scenario_type })} ·{" "}
-                  {v.currency_code}
+                  {/* The plant's own symbol ("DA") rather than the ISO code (L6-16). */}
+                  {v.currency_code === currencyCode ? currencyLabel : v.currency_code}
                 </div>
               </button>
               <StatusChip
@@ -683,6 +699,43 @@ function VersionsSection({
 
 // ── Lines ───────────────────────────────────────────────────────────────────────────────
 
+export interface BudgetLineGroup {
+  id: number;
+  name: string;
+  code: string;
+  lines: BudgetLine[];
+  subtotal: number;
+}
+
+/**
+ * One group per cost centre (by name) with its subtotal; inside, the whole-year lines first and
+ * then the periods in order (L7-24): a year of lines for 8 centres is ~96 rows, unreadable flat.
+ */
+export function groupBudgetLines(lines: BudgetLine[]): BudgetLineGroup[] {
+  const byCenter = new Map<number, BudgetLineGroup>();
+  for (const l of lines) {
+    const g = byCenter.get(l.cost_center_id) ?? {
+      id: l.cost_center_id,
+      name: l.cost_center_name,
+      code: l.cost_center_code,
+      lines: [],
+      subtotal: 0,
+    };
+    g.lines.push(l);
+    g.subtotal += l.planned_amount;
+    byCenter.set(l.cost_center_id, g);
+  }
+  const groups = [...byCenter.values()].sort((a, b) => a.name.localeCompare(b.name));
+  for (const g of groups) {
+    g.lines.sort(
+      (a, b) =>
+        (a.period_month ?? 0) - (b.period_month ?? 0) ||
+        a.budget_bucket.localeCompare(b.budget_bucket),
+    );
+  }
+  return groups;
+}
+
 function LinesSection({
   version,
   centers,
@@ -714,6 +767,19 @@ function LinesSection({
   }, [load]);
 
   const total = useMemo(() => lines.reduce((s, l) => s + l.planned_amount, 0), [lines]);
+
+  const groups = useMemo(() => groupBudgetLines(lines), [lines]);
+  // Long budgets open folded so the centres and their subtotals fit on one screen.
+  const [folded, setFolded] = useState<Set<number> | null>(null);
+  const foldedSet =
+    folded ??
+    (groups.length > 1 && lines.length > 24 ? new Set(groups.map((g) => g.id)) : new Set());
+  const toggle = (id: number) => {
+    const next = new Set(foldedSet);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setFolded(next);
+  };
 
   return (
     <section aria-labelledby="lines-title" className="space-y-2">
@@ -751,9 +817,6 @@ function LinesSection({
             <thead className="bg-surface-2 text-xs uppercase tracking-wide text-text-secondary">
               <tr>
                 <th scope="col" className={TH}>
-                  {t("planning.col.costCenter")}
-                </th>
-                <th scope="col" className={TH}>
                   {t("planning.col.category")}
                 </th>
                 <th scope="col" className={TH}>
@@ -770,39 +833,68 @@ function LinesSection({
                 </th>
               </tr>
             </thead>
-            <tbody>
-              {lines.map((l) => (
-                <tr key={l.id} className="border-t border-surface-border">
-                  <td className="px-3 py-2">{l.cost_center_code}</td>
-                  <td className="px-3 py-2">{categoryLabel(l.budget_bucket)}</td>
-                  <td className="px-3 py-2">
-                    {l.period_month ? periodLabel(l.period_month) : t("planning.annual")}
-                  </td>
-                  <td className="px-3 py-2 text-end font-mono tabular-nums">
-                    {formatCurrency(l.planned_amount, version.currency_code)}
-                  </td>
-                  <td className="max-w-xs truncate px-3 py-2 text-text-secondary">
-                    {l.justification_note ?? "—"}
-                  </td>
-                  <td className="px-3 py-2 text-end">
-                    {canEdit ? (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="h-7 w-7 p-0"
-                        aria-label={t("planning.editLine")}
-                        onClick={() => setEditing(l)}
+            {groups.map((g) => {
+              const open = !foldedSet.has(g.id);
+              return (
+                <tbody key={g.id} data-testid="budget-line-group">
+                  <tr className="border-t border-surface-border bg-surface-1">
+                    <th scope="rowgroup" colSpan={5} className="p-0 text-start">
+                      <button
+                        type="button"
+                        className="flex w-full items-center gap-2 px-3 py-2 text-sm font-semibold text-text-primary hover:bg-surface-2"
+                        aria-expanded={open}
+                        onClick={() => toggle(g.id)}
                       >
-                        <Pencil className="h-3.5 w-3.5" aria-hidden />
-                      </Button>
-                    ) : null}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
+                        {open ? (
+                          <ChevronDown className="h-3.5 w-3.5" aria-hidden />
+                        ) : (
+                          <ChevronRight className="h-3.5 w-3.5" aria-hidden />
+                        )}
+                        <span title={g.code}>{g.name}</span>
+                        <span className="ms-auto font-mono text-xs font-normal tabular-nums text-text-secondary">
+                          {t("planning.groupTotal", {
+                            count: g.lines.length,
+                            amount: formatCurrency(g.subtotal, version.currency_code),
+                          })}
+                        </span>
+                      </button>
+                    </th>
+                  </tr>
+                  {open
+                    ? g.lines.map((l) => (
+                        <tr key={l.id} className="border-t border-surface-border">
+                          <td className="px-3 py-2 ps-8">{categoryLabel(l.budget_bucket)}</td>
+                          <td className="px-3 py-2">
+                            {l.period_month ? periodLabel(l.period_month) : t("planning.annual")}
+                          </td>
+                          <td className="px-3 py-2 text-end font-mono tabular-nums">
+                            {formatCurrency(l.planned_amount, version.currency_code)}
+                          </td>
+                          <td className="max-w-xs truncate px-3 py-2 text-text-secondary">
+                            {l.justification_note ?? "—"}
+                          </td>
+                          <td className="px-3 py-2 text-end">
+                            {canEdit ? (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-7 w-7 p-0"
+                                aria-label={t("planning.editLine")}
+                                onClick={() => setEditing(l)}
+                              >
+                                <Pencil className="h-3.5 w-3.5" aria-hidden />
+                              </Button>
+                            ) : null}
+                          </td>
+                        </tr>
+                      ))
+                    : null}
+                </tbody>
+              );
+            })}
             <tfoot>
               <tr className="border-t border-surface-border font-semibold">
-                <td className="px-3 py-2" colSpan={3}>
+                <td className="px-3 py-2" colSpan={2}>
                   {t("planning.total")}
                 </td>
                 <td className="px-3 py-2 text-end font-mono tabular-nums">
@@ -846,6 +938,7 @@ function LineDialog({
 }) {
   const { t } = useTranslation("budget");
   const { categories, categoryLabel, periodLabel } = useFinanceCatalogs();
+  const { currencyCode, currencyLabel } = useFormatters();
   const [cc, setCc] = useState(line ? String(line.cost_center_id) : String(centers[0]?.id ?? ""));
   const [bucket, setBucket] = useState(line?.budget_bucket ?? "");
   // A new line starts on the first category of the reference catalog once it is loaded.
@@ -903,7 +996,10 @@ function LineDialog({
         <DialogHeader>
           <DialogTitle>{line ? t("planning.editLine") : t("planning.newLine")}</DialogTitle>
           <DialogDescription>
-            {t("planning.lineHint", { currency: version.currency_code })}
+            {t("planning.lineHint", {
+              currency:
+                version.currency_code === currencyCode ? currencyLabel : version.currency_code,
+            })}
           </DialogDescription>
         </DialogHeader>
         <form

@@ -23,7 +23,7 @@
 
 use std::collections::HashMap;
 
-use chrono::{Datelike, Utc};
+use chrono::Datelike;
 use sea_orm::{ConnectionTrait, DbBackend, QueryResult, Statement};
 use serde::{Deserialize, Serialize};
 
@@ -347,7 +347,7 @@ async fn place<C: ConnectionTrait>(db: &C, wo_id: i64, currency: &str, year: i64
 }
 
 fn now_text() -> String {
-    Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
+    crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
 
 /// Cost columns on `work_orders` follow the settlement figures.
@@ -520,7 +520,7 @@ fn posting_period(at: Option<&str>, fiscal_start: i64) -> (i64, i64) {
     let date = at
         .and_then(|c| chrono::DateTime::parse_from_rfc3339(c).ok())
         .map(|d| d.with_timezone(&chrono::Local))
-        .unwrap_or_else(chrono::Local::now);
+        .unwrap_or_else(crate::clock::now_local);
     fiscal::fiscal_period(i64::from(date.year()), i64::from(date.month()), fiscal_start)
 }
 

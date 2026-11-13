@@ -407,8 +407,8 @@
     "dashboard": {
       "title": "Procurement overview",
       "openRequisitions": "Open requisitions",
-      "openPos": "Open POs",
-      "latePos": "Late POs",
+      "openPos": "Open purchase orders",
+      "latePos": "Late purchase orders",
       "receivingToday": "Receiving today",
       "pendingApprovals": "Pending approvals",
       "pendingReceipts": "Pending receipts",
@@ -425,7 +425,7 @@
       "title": "Alerts",
       "kinds": {
         "CRITICAL_STOCK": "Critical stock",
-        "LATE_PO": "Late PO",
+        "LATE_PO": "Late purchase order",
         "SUPPLIER_DELAY": "Supplier risk",
         "REPAIRABLE_OVERDUE": "Repair overdue",
         "other": "Alert"
@@ -441,12 +441,14 @@
       "title": "Replenishment recommendations",
       "refresh": "Refresh",
       "loading": "Loading…",
+      "tabTitle": "To order",
+      "store": "Store:",
       "transfer": "Transfer",
       "purchase": "Purchase",
       "suggestedQty": "Suggested qty",
       "available": "Available",
       "supplier": "Preferred supplier",
-      "lead": "ETA",
+      "lead": "Expected arrival",
       "cost": "Est. cost",
       "surplusFrom": "Surplus from",
       "transferHint": "Prefer internal transfer",
@@ -602,6 +604,7 @@
       "searchPlaceholder": "Search order, article or serial number",
       "empty": "No repairable orders yet.",
       "emptyDescription": "Send a repairable part to a vendor to start tracking its repair cycle.",
+      "noRightHint": "Creating a repair order needs the “Manage purchasing” right. Ask your administrator.",
       "create": "New repairable order",
       "columns": {
         "order": "Order",
@@ -705,8 +708,22 @@
           "received": "Received",
           "accepted": "Accepted",
           "rejected": "Rejected",
-          "reason": "Rejection reason"
+          "reason": "Rejection reason",
+          "returned": "Returned",
+          "actions": "Actions"
         }
+      },
+      "return": {
+        "action": "Return to supplier",
+        "title": "Return goods to the supplier",
+        "description": "{{article}} — up to {{max}} can still be returned (accepted quantity not yet returned). The part leaves the stock.",
+        "quantity": "Quantity returned",
+        "quantityInvalid": "Enter a quantity between 0 and {{max}}.",
+        "lot": "Lot or serial number sent back",
+        "lotPlaceholder": "Choose the lot or serial number",
+        "reason": "Why does it go back? (non-conformity)",
+        "cancel": "Cancel",
+        "confirm": "Return to supplier"
       }
     },
     "posting": {
@@ -757,8 +774,8 @@
         "avgLeadTime": "Avg lead time (d)",
         "deliveryAccuracy": "Delivery accuracy",
         "avgPrice": "Avg price",
-        "openPos": "Open POs",
-        "completedPos": "Completed POs",
+        "openPos": "Open purchase orders",
+        "completedPos": "Closed purchase orders",
         "lastPurchase": "Last purchase",
         "rejectedPct": "Rejected quantity",
         "risk": "Risk level",
@@ -982,6 +999,16 @@
       "inStockUnit": "In the stock unit: {{received}} {{unit}} received, {{rejected}} {{unit}} of them rejected.",
       "converting": "Converting to the stock unit…"
     },
+    "approval": {
+      "approvers": "To be approved by: {{roles}}",
+      "approversNone": "No role may approve this amount. The administrator must set a high enough limit in \"Approval limits\".",
+      "approversLoading": "Looking up the approvers…",
+      "approversUnavailable": "The approvers could not be shown.",
+      "amountUnknown": "The amount is not known (missing price or exchange rate): only a role without a limit may approve.",
+      "noRight": "You do not have the \"Approve purchasing\" right.",
+      "noProcure": "You do not have the \"Manage purchasing\" right, needed to decide on a purchase.",
+      "ownDocument": "You created this document: another person must approve it."
+    },
     "poWorkspace": {
       "title": "Purchase order",
       "loading": "Loading purchase order…",
@@ -1159,6 +1186,20 @@
     },
     "loadError": "Purchasing data could not be loaded",
     "sectionsLabel": "Purchasing sections",
+    "disabled": {
+      "saving": "Saving in progress…",
+      "rejectReason": "Enter the rejection reason.",
+      "poRequisition": "Choose an approved purchase request.",
+      "repairArticle": "Choose the article to repair.",
+      "repairSource": "Choose the article's source location.",
+      "repairQty": "Enter a quantity greater than zero.",
+      "supplierCode": "Enter the supplier code.",
+      "supplierName": "Enter the supplier name.",
+      "priceArticle": "Choose the article this price applies to.",
+      "priceUnit": "Enter the unit price.",
+      "docRef": "Enter the document reference.",
+      "docPurpose": "Choose what the document is used for."
+    },
     "requisitionForm": {
       "title": "New purchase requisition",
       "article": "Article",
@@ -1233,7 +1274,7 @@
     "current": "Current stock",
     "currentOnHand": "On hand",
     "available": "Available",
-    "incoming": "Incoming PO",
+    "incoming": "On order",
     "delta": "This delta",
     "projected": "Projected"
   },
@@ -1259,6 +1300,7 @@
       "equivalents": "Equivalents",
       "repairableHistory": "Repairable history",
       "purchaseHistory": "Purchase history",
+      "usedOn": "Used on",
       "documents": "Documents"
     },
     "consumption": {
@@ -1298,6 +1340,16 @@
       "addEquivalent": "Add equivalent",
       "addDocumentLink": "Add document link",
       "createRequisitionForShortage": "Create purchase requisition"
+    },
+    "usedOn": {
+      "empty": "This part is not in any equipment's parts list.",
+      "hint": "Equipment whose parts list contains this item.",
+      "columns": {
+        "equipment": "Equipment",
+        "quantity": "Quantity per equipment",
+        "critical": "Critical spare"
+      },
+      "critical": "Critical"
     },
     "equivalents": {
       "empty": "No equivalents configured.",
@@ -1405,6 +1457,25 @@
       "xyzDone_one": "XYZ class recalculated for {{count}} article",
       "xyzDone_other": "XYZ class recalculated for {{count}} articles",
       "noMovement": "No movement in the last 12 months: no class was changed."
+    },
+    "priceHistory": {
+      "title": "Price history by supplier",
+      "supplier": "Supplier (last purchase)",
+      "last": "Last price",
+      "previous": "Previous price",
+      "change": "Change",
+      "range": "Lowest – highest",
+      "purchases": "Purchases",
+      "noSupplier": "No supplier"
+    },
+    "hints": {
+      "oemPartNumber": "Part number at the machine builder (often different from the part maker's number).",
+      "eoq": "Quantity to order at once that keeps the total cost (ordering + holding) lowest. Leave empty if unknown.",
+      "moq": "Smallest quantity the supplier accepts to deliver.",
+      "orderMultiple": "The ordered quantity is rounded to a multiple of this number (e.g. boxes of 10).",
+      "reviewPeriodDays": "How often, in days, the stock of this item is reviewed to decide on an order.",
+      "abcClass": "A: the few items that weigh most in the consumed value; B: medium share; C: many low-value items. Calculated automatically from the issues of the last 12 months.",
+      "xyzClass": "X: steady, easy-to-forecast use; Y: variable use; Z: irregular, hard-to-forecast use. Calculated automatically from the issues of the last 12 months."
     }
   },
   "wo": {
@@ -1458,6 +1529,27 @@
       "locationCode": "e.g. A-01-02",
       "locationName": "e.g. Aisle A, rack 1, shelf 2"
     }
+  },
+  "nonStock": {
+    "tab": "Non-stock parts",
+    "title": "Non-stock parts",
+    "description": "Parts bought for a work order, never in the store: out of stock lists, counts, replenishment and valuation. Those created from a work order are to review.",
+    "toReviewOnly": "To review only",
+    "loading": "Loading non-stock parts…",
+    "loadFailed": "The non-stock parts could not be loaded.",
+    "empty": "No non-stock part to show.",
+    "fromWorkOrder": "Created from work order {{code}}",
+    "state": {
+      "toReview": "To review",
+      "reviewed": "Reviewed",
+      "duplicate": "Duplicate"
+    },
+    "keep": "Keep non-stock",
+    "promote": "Move to stock",
+    "duplicateOf": "Duplicate of…",
+    "markDuplicate": "Mark duplicate",
+    "chooseDuplicate": "Choose the article this one duplicates.",
+    "reviewFailed": "The review could not be saved."
   },
   "unitConversions": {
     "loadError": "The unit conversions could not be loaded",
@@ -1740,6 +1832,16 @@
       "unitRefused": "This unit does not convert to the article's stock unit (no conversion, other dimension or unit to review).",
       "converting": "Converting to the stock unit…"
     },
+    "return": {
+      "title": "Return unused parts from this work order",
+      "hint": "Already issued for {{wo}}: {{qty}} {{unit}}. Enter the quantity to give back: it returns to stock at the issue location.",
+      "select": "Issue to return",
+      "option": "{{qty}} {{unit}} issued from {{location}}",
+      "submit": "Return to stock",
+      "submitting": "Returning…",
+      "tooMuch": "You can only return {{qty}} {{unit}} (the quantity already issued for this work order).",
+      "toast": "{{qty}} {{unit}} of {{code}} put back in stock (return from {{wo}})"
+    },
     "outcome": {
       "title": "{{code}} issued to {{wo}}",
       "line": "{{qty}} {{unit}}{{lot}} at {{cost}} each",
@@ -1766,6 +1868,50 @@
         "quantity": "Quantity",
         "expiry": "Expiry"
       }
+    },
+    "toIssue": {
+      "title": "Parts to regularise (to issue from stock)",
+      "description": "Parts taken from the store without a storekeeper (at night, at the weekend or by someone without the stock right) and recorded on a work order. Nothing has moved in stock: regularise them the next day by issuing them (confirming or correcting the quantity) or cancel them with a reason. A work order cannot be closed while any remain.",
+      "empty": "No part to issue.",
+      "loadFailed": "The list of parts to issue could not be loaded.",
+      "workOrder": "WO",
+      "part": "Part",
+      "quantity": "To issue",
+      "location": "Location",
+      "noLocation": "To choose",
+      "issue": "Issue",
+      "cancel": "Cancel",
+      "close": "Close",
+      "issueTitle": "Issue {{part}} for {{wo}}",
+      "issueQuantity": "Issued quantity",
+      "requested": "Requested: {{qty}} {{unit}}",
+      "correctionReason": "Reason for the correction",
+      "correctionHint": "The quantity differs from the requested quantity: the reason is recorded in the work order history. A lower quantity becomes the work order’s use; the rest is not issued.",
+      "chooseLocation": "Location issued from",
+      "locationPlaceholder": "Choose the location",
+      "available": "{{location}} — available {{qty}}",
+      "confirmIssue": "Issue from stock",
+      "cancelTitle": "Cancel the part to issue {{part}}",
+      "cancelHint": "No quantity leaves the stock. The use recorded on the work order is withdrawn and the reason is recorded in the work order history.",
+      "cancelReason": "Reason",
+      "confirmCancel": "Cancel the part",
+      "issued": "{{part}} issued from stock for {{wo}}.",
+      "cancelled": "Part to issue cancelled for {{wo}}.",
+      "actionFailed": "The action did not go through."
+    },
+    "slip": {
+      "print": "Print the issue slip",
+      "title": "Store issue slip",
+      "workOrder": "Work order",
+      "location": "Location",
+      "date": "Date",
+      "article": "Item",
+      "lot": "Lot / serial",
+      "quantity": "Quantity",
+      "unitCost": "Unit cost",
+      "total": "Total cost",
+      "issuedBy": "Issued by (storekeeper) — name and signature",
+      "receivedBy": "Received by — name and signature"
     }
   },
   "valuation": {
@@ -1875,15 +2021,15 @@
     },
     "limits": {
       "title": "Approval limits",
-      "description": "Highest amount (in {{currency}}) each role may approve. While no limit is set for a document type, any user with the purchasing permission may approve it. Once one is set, only roles with a limit may approve, up to that limit.",
+      "description": "Highest amount (in {{currency}}) each role may approve. Only roles with the \"Approve purchasing\" right and a limit may approve, up to that limit. A role without a limit cannot approve.",
+      "firstUse": "No limit is set: only the administrator can approve. Set the limits per role, in {{currency}}.",
       "sod": "Whatever the limits, the person who created a requisition or a purchase order can never approve it.",
       "loadError": "Approval limits could not be loaded",
       "rolesUnavailable": "The role list needs role administration rights; only roles that already have a limit are shown.",
       "empty": "No role to show.",
       "saved": "Approval limit saved.",
       "unlimited": "Unlimited",
-      "notAllowed": "Not allowed",
-      "noRule": "No limit set",
+      "notAllowed": "Cannot approve",
       "edit": "Edit",
       "editFor": "Edit the {{doc}} limit of {{role}}",
       "docTypes": {
@@ -1919,5 +2065,28 @@
     "COUNT_ALREADY_POSTED": "Count {{session}} has already moved the stock of this article at this location (posted or reversed on another PC): refresh the session; nothing was moved twice.",
     "NEGATIVE_STOCK_COUNT_NOT_PENDING": "This count is no longer waiting for its approval (approved, replaced by a new count or cancelled): refresh the list.",
     "NEGATIVE_STOCK_COUNT_STALE": "The stock of this location moved since count {{session}} was made: approving it would no longer give the counted quantity. Count the location again."
+  },
+  "dormant": {
+    "title": "Dormant stock",
+    "description": "Items still in stock with no issue during the chosen period (or never issued), most valuable first. Click a row to open the item.",
+    "period": {
+      "label": "No issue for",
+      "months_one": "{{count}} month",
+      "months_other": "{{count}} months"
+    },
+    "columns": {
+      "code": "Code",
+      "name": "Item",
+      "quantity": "On hand",
+      "value": "Value",
+      "lastIssue": "Last issue",
+      "lastMovement": "Last movement"
+    },
+    "neverIssued": "Never issued",
+    "count": "Dormant items",
+    "total": "Tied-up value",
+    "empty_one": "No item in stock without an issue for {{count}} month.",
+    "empty_other": "No item in stock without an issue for {{count}} months.",
+    "loadError": "Could not load dormant stock"
   }
 }

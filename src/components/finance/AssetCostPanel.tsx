@@ -14,6 +14,7 @@ import { LinkedEntityBadge } from "@/components/common/LinkedEntityBadge";
 import { DataTable } from "@/components/data/DataTable";
 import { useFinanceCatalogs } from "@/components/finance/use-finance-catalogs";
 import { KpiTile } from "@/components/metrics/KpiTile";
+import { ExportCsvButton } from "@/components/ui/ExportCsvButton";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
@@ -27,6 +28,7 @@ import {
   type AssetCostRow,
   listAssetCostHistory,
 } from "@/services/finance-cost-service";
+import { P } from "@shared/rbac/permissions.generated";
 
 export interface AssetCostPanelProps {
   reloadToken?: number;
@@ -34,10 +36,16 @@ export interface AssetCostPanelProps {
 
 export function AssetCostPanel({ reloadToken = 0 }: AssetCostPanelProps) {
   const { t } = useTranslation("budget");
-  const { formatCurrency, formatPercent, formatDate } = useFormatters();
+  const { formatCurrency, formatPercent: percent, formatDate } = useFormatters();
+  // A ratio rounded to one decimal would read "0 %" for a real cost: say it is under 0,1 %.
+  const formatPercent = useCallback(
+    (v: number) => (v > 0 && v < 0.05 ? `< ${percent(0.1)}` : percent(v)),
+    [percent],
+  );
   const { categoryLabel } = useFinanceCatalogs();
   const [search, setSearch] = useState("");
   const debounced = useDebouncedValue(search, 300);
+  const [centre, setCentre] = useState("");
   const [data, setData] = useState<AssetCostHistory | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
@@ -63,6 +71,80 @@ export function AssetCostPanel({ reloadToken = 0 }: AssetCostPanelProps) {
   const money = useCallback(
     (v: number | null) => (v == null ? "—" : formatCurrency(v, currency)),
     [formatCurrency, currency],
+  );
+
+  const centres = useMemo(
+    () =>
+      [
+        ...new Set(
+          (data?.rows ?? []).map((r) => r.cost_center_code).filter((c): c is string => !!c),
+        ),
+      ].sort(),
+    [data],
+  );
+  // A centre that a new search no longer returns must not leave an empty, unexplained table.
+  const activeCentre = centres.includes(centre) ? centre : "";
+  const rows = useMemo(
+    () => (data?.rows ?? []).filter((r) => !activeCentre || r.cost_center_code === activeCentre),
+    [data, activeCentre],
+  );
+  // Cost per production line (cost centre of the equipment) and per work type, from the same rows.
+  const byCentre = useMemo(() => {
+    const acc = new Map<string, { life: number; m12: number; corr: number; prev: number }>();
+    for (const r of rows) {
+      const key = r.cost_center_code ?? "";
+      const e = acc.get(key) ?? { life: 0, m12: 0, corr: 0, prev: 0 };
+      e.life += r.lifetime_cost;
+      e.m12 += r.cost_12m;
+      e.corr += r.corrective_cost;
+      e.prev += r.preventive_cost;
+      acc.set(key, e);
+    }
+    return [...acc.entries()].sort((a, b) => b[1].life - a[1].life);
+  }, [rows]);
+  const totals = useMemo(
+    () =>
+      rows.reduce(
+        (a, r) => ({
+          life: a.life + r.lifetime_cost,
+          m12: a.m12 + r.cost_12m,
+          corr: a.corr + r.corrective_cost,
+          prev: a.prev + r.preventive_cost,
+        }),
+        { life: 0, m12: 0, corr: 0, prev: 0 },
+      ),
+    [rows],
+  );
+  const exportHeader = useMemo(
+    () => [
+      t("assets.col.asset"),
+      t("assets.export.name"),
+      t("assets.export.line"),
+      t("assets.col.rav"),
+      t("assets.col.lifetime"),
+      t("assets.col.cost12m"),
+      t("assets.col.corrective"),
+      t("assets.export.preventive"),
+      t("assets.export.other"),
+      t("assets.col.lastClosed"),
+    ],
+    [t],
+  );
+  const getExportRows = useCallback(
+    () =>
+      rows.map((r) => [
+        r.equipment_code,
+        r.equipment_name,
+        r.cost_center_code ?? "",
+        r.replacement_value,
+        r.lifetime_cost,
+        r.cost_12m,
+        r.corrective_cost,
+        r.preventive_cost,
+        Math.max(0, r.lifetime_cost - r.corrective_cost - r.preventive_cost),
+        r.last_closed_at ? formatDate(r.last_closed_at) : "",
+      ]),
+    [rows, formatDate],
   );
 
   const columns = useMemo<ColumnDef<AssetCostRow>[]>(
@@ -220,6 +302,85 @@ export function AssetCostPanel({ reloadToken = 0 }: AssetCostPanelProps) {
           onChange={(e) => setSearch(e.target.value)}
         />
       </div>
+      {data && data.rows.length > 0 ? (
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="flex items-center gap-2 text-sm text-text-secondary">
+            {t("assets.lineFilter")}
+            <select
+              className="h-10 rounded-md border border-surface-border bg-surface-1 px-2 text-sm"
+              value={activeCentre}
+              onChange={(e) => setCentre(e.target.value)}
+            >
+              <option value="">{t("assets.allLines")}</option>
+              {centres.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+          </label>
+          <ExportCsvButton
+            fileName="cout-par-equipement.csv"
+            header={exportHeader}
+            getRows={getExportRows}
+            permission={P.FIN_VIEW}
+          />
+        </div>
+      ) : null}
+      {data && rows.length > 0 ? (
+        <section className="space-y-2" aria-label={t("assets.breakdown.title")}>
+          <h3 className="text-sm font-medium text-text-primary">{t("assets.breakdown.title")}</h3>
+          <p className="text-xs text-text-muted">{t("assets.breakdown.hint")}</p>
+          <div className="overflow-x-auto rounded-md border border-surface-border">
+            <table className="w-full text-sm">
+              <thead className="bg-surface-2 text-xs text-text-muted">
+                <tr>
+                  <th className="px-3 py-1.5 text-start">{t("assets.breakdown.line")}</th>
+                  <th className="px-3 py-1.5 text-end">{t("assets.col.lifetime")}</th>
+                  <th className="px-3 py-1.5 text-end">{t("assets.col.cost12m")}</th>
+                  <th className="px-3 py-1.5 text-end">{t("assets.col.corrective")}</th>
+                  <th className="px-3 py-1.5 text-end">{t("assets.export.preventive")}</th>
+                  <th className="px-3 py-1.5 text-end">{t("assets.export.other")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {byCentre.map(([code, v]) => (
+                  <tr key={code || "none"} className="border-t border-surface-border">
+                    <td className="px-3 py-1.5">{code || t("assets.breakdown.noLine")}</td>
+                    <td className="px-3 py-1.5 text-end font-mono tabular-nums">{money(v.life)}</td>
+                    <td className="px-3 py-1.5 text-end font-mono tabular-nums">{money(v.m12)}</td>
+                    <td className="px-3 py-1.5 text-end font-mono tabular-nums">{money(v.corr)}</td>
+                    <td className="px-3 py-1.5 text-end font-mono tabular-nums">{money(v.prev)}</td>
+                    <td className="px-3 py-1.5 text-end font-mono tabular-nums">
+                      {money(Math.max(0, v.life - v.corr - v.prev))}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot className="border-t border-surface-border bg-surface-2 text-xs font-medium">
+                <tr>
+                  <td className="px-3 py-1.5">{t("assets.breakdown.total")}</td>
+                  <td className="px-3 py-1.5 text-end font-mono tabular-nums">
+                    {money(totals.life)}
+                  </td>
+                  <td className="px-3 py-1.5 text-end font-mono tabular-nums">
+                    {money(totals.m12)}
+                  </td>
+                  <td className="px-3 py-1.5 text-end font-mono tabular-nums">
+                    {money(totals.corr)}
+                  </td>
+                  <td className="px-3 py-1.5 text-end font-mono tabular-nums">
+                    {money(totals.prev)}
+                  </td>
+                  <td className="px-3 py-1.5 text-end font-mono tabular-nums">
+                    {money(Math.max(0, totals.life - totals.corr - totals.prev))}
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </section>
+      ) : null}
       {loading && !data ? <LoadingState /> : null}
       {error ? (
         <ErrorState error={error} title={t("assets.loadError")} onRetry={() => void load()} />
@@ -227,9 +388,7 @@ export function AssetCostPanel({ reloadToken = 0 }: AssetCostPanelProps) {
       {data && data.rows.length === 0 ? (
         <EmptyState title={t("assets.emptyTitle")} description={t("assets.emptyBody")} />
       ) : null}
-      {data && data.rows.length > 0 ? (
-        <DataTable columns={columns} data={data.rows} pageSize={50} />
-      ) : null}
+      {data && rows.length > 0 ? <DataTable columns={columns} data={rows} pageSize={50} /> : null}
     </div>
   );
 }

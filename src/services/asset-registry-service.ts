@@ -43,6 +43,7 @@ const MaintenanceProfileSchema = z.object({
   downtime_hours: z.number(),
   last_failure_at: z.string().nullable(),
   cost_lifetime: CostBreakdownSchema,
+  cost_since: z.string().nullable(),
   cost_recent: CostBreakdownSchema,
   recent_window_months: z.number(),
   cost_by_year: z.array(

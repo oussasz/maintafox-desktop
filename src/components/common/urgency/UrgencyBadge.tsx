@@ -28,7 +28,8 @@ export function UrgencyBadge({ code, size = "sm", className }: UrgencyBadgeProps
       : undefined;
   return (
     <StatusChip
-      label={labelOf(code)}
+      // L1-29: the rank says the order of the scale ("P1 Urgence" before "P2 Urgent").
+      label={level?.rank != null ? `P${level.rank} · ${labelOf(code)}` : labelOf(code)}
       tone={urgencyTone(code)}
       size={size}
       dot

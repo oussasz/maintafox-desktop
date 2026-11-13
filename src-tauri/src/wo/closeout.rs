@@ -21,7 +21,7 @@ use crate::reliability::queries as reliability_queries;
 use crate::wo::queries;
 use crate::wo::time::{now_utc_second, now_utc_z, stamp};
 use crate::wo::workflow::state_machine::status_i18n_key;
-use chrono::{Duration, Utc};
+use chrono::Duration;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
@@ -1213,7 +1213,8 @@ pub(crate) async fn close_preflight(
             DbBackend::Sqlite,
             "SELECT \
                 COALESCE(wo.active_labor_hours, 0.0) AS alh, \
-                (SELECT COUNT(*) FROM work_order_interveners WHERE work_order_id = wo.id) AS labor_cnt \
+                (SELECT COUNT(*) FROM work_order_interveners \
+                  WHERE work_order_id = wo.id AND COALESCE(hours_worked, 0) > 0) AS labor_cnt \
              FROM work_orders wo WHERE wo.id = ?",
             [wo_id.into()],
         ))
@@ -1251,6 +1252,37 @@ pub(crate) async fn close_preflight(
         .map_err(|e| decode_err("parts_cnt", e))?;
     if pac == 0 && parts_cnt == 0 {
         preflight.add("GATE_CLOSEOUT_PARTS_REQUIRED: Consommation de pieces requise. (Parts actuals required.)");
+    }
+
+    // (b2) No part "à sortir" left (L3-21): the storekeeper issues it, or cancels it with a reason,
+    // so the parts used on the work order are the parts that left the store.
+    let to_issue = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT COUNT(*) AS cnt FROM work_order_parts \
+             WHERE work_order_id = ? AND pending_issue_qty > 0 AND consumption_status <> 'cancelled'",
+            [wo_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("parts to issue count")))?
+        .try_get::<i64>("", "cnt")
+        .map_err(|e| decode_err("parts to issue cnt", e))?;
+    if to_issue > 0 {
+        preflight.add(format!(
+            "GATE_CLOSEOUT_PARTS_TO_ISSUE:count={to_issue}: Clôture bloquée : {to_issue} pièce(s) à sortir du magasin. \
+             Le magasinier les sort ou les annule avec un motif. ({to_issue} part(s) still to issue from the store.)"
+        ));
+    }
+
+    // (b3) No hors-stock purchase still open (L3-04): receive it, or cancel the request or order
+    // with a reason, so the parts actual of the work order is complete.
+    let open_purchases = crate::inventory::non_stock::open_purchase_line_count(conn, wo_id).await?;
+    if open_purchases > 0 {
+        preflight.add(format!(
+            "GATE_CLOSEOUT_NON_STOCK_OPEN:count={open_purchases}: Clôture bloquée : {open_purchases} \
+             achat(s) hors stock encore ouvert(s). Réceptionnez-les ou annulez la demande ou la \
+             commande avec un motif. ({open_purchases} hors-stock purchase(s) still open.)"
+        ));
     }
 
     // (c) Failure coding + RCA for corrective/emergency (ISO 14224 close-out)
@@ -1551,6 +1583,14 @@ pub(crate) async fn close_preflight(
         ));
     }
 
+    // A dépannage is validated after the fact before its close, unless its site opted out
+    // (`wo::depannage_validation`, CMMS Advisor decision 2026-11-04).
+    if let crate::wo::depannage_validation::CloseValidation::Refused(msg) =
+        crate::wo::depannage_validation::close_validation(conn, wo_id).await?
+    {
+        preflight.add(msg);
+    }
+
     Ok((preflight.errors, profile_id, signer_password_checked))
 }
 
@@ -1589,6 +1629,9 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
     };
 
     let txn = db.begin().await?;
+    // The work order as it was, read in the close's transaction, for the fields the close changes
+    // (audit event `wo.closed`).
+    let before_close = queries::get_work_order(&txn, input.wo_id).await?;
 
     // ── Guard: completed → closed ─────────────────────────────────────────
     let (from_code, current_status, _rv) = load_wo_status(&txn, input.wo_id).await?;
@@ -1747,6 +1790,14 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
         .await?;
     check_concurrency(result.rows_affected())?;
 
+    // A dépannage of a site that opted out of the validation is approved automatically at its close
+    // (flagged, no validator recorded).
+    if crate::wo::depannage_validation::close_validation(&txn, input.wo_id).await?
+        == crate::wo::depannage_validation::CloseValidation::AutoApproved
+    {
+        crate::wo::depannage_validation::mark_auto_approved(&txn, input.wo_id).await?;
+    }
+
     log_transition(
         &txn,
         input.wo_id,
@@ -1789,7 +1840,7 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
     // Optimistic immediate RAMS KPI refresh for the impacted equipment.
     if let Ok(Some(wo)) = queries::get_work_order(db, input.wo_id).await {
         if let Some(equipment_id) = wo.equipment_id {
-            let period_end = Utc::now();
+            let period_end = crate::clock::now();
             let period_start = period_end - Duration::days(365);
             let refresh_input = RefreshReliabilityKpiSnapshotInput {
                 equipment_id,
@@ -1807,6 +1858,22 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
     let wo_id_str = input.wo_id.to_string();
     let _ = emitter::emit_wo_event(db, input.wo_id, "wo.closed", Some(input.actor_id), None, None).await;
 
+    let closed = queries::get_work_order(db, input.wo_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "WorkOrder".into(),
+            id: input.wo_id.to_string(),
+        })?;
+    // The fields the close changed (status, closing date…), old → new, for the audit trail; only
+    // when the close was the only write since it read the work order (`sole_write_changes`).
+    let detail_json = before_close.as_ref().map(|before| {
+        match crate::wo::audit::sole_write_changes(before, &closed) {
+            Some(changes) => serde_json::json!({ "changes": changes }),
+            None => serde_json::json!({ "changes_unavailable": true }),
+        }
+        .to_string()
+    });
+
     let actor_i32 = i32::try_from(input.actor_id).unwrap_or(0);
     audit::emit(
         db,
@@ -1815,18 +1882,14 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
             actor_id: Some(actor_i32),
             entity_type: Some("work_order"),
             entity_id: Some(wo_id_str.as_str()),
-            summary: "Work order closed",
+            summary: "OT clôturé",
+            detail_json,
             ..Default::default()
         },
     )
     .await;
 
-    queries::get_work_order(db, input.wo_id)
-        .await?
-        .ok_or_else(|| AppError::NotFound {
-            entity: "WorkOrder".into(),
-            id: input.wo_id.to_string(),
-        })
+    Ok(closed)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -2003,7 +2066,7 @@ async fn ensure_within_reopen_window(txn: &impl ConnectionTrait, wo_id: i64) -> 
                     .into(),
             ])
         })?;
-    let age_days = (chrono::Utc::now() - closed.with_timezone(&chrono::Utc)).num_seconds() as f64 / 86_400.0;
+    let age_days = (crate::clock::now() - closed.with_timezone(&chrono::Utc)).num_seconds() as f64 / 86_400.0;
     if age_days > window as f64 {
         return Err(AppError::ValidationFailed(vec![format!(
             "GATE_REOPEN_WINDOW_EXPIRED:days={window}: This work order was closed more than {window} day(s) ago (reopen window); create a new work order instead."

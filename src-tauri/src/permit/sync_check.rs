@@ -8,6 +8,13 @@
 //!   the work (activation or last reinstatement), and, when its type requires energy isolation, at
 //!   least one isolation; every isolation verified by a second person and no lock removed before that
 //!   moment;
+//! - a permit `closed` or `handed_back` has no personal padlock left on its group lock box (L4-18,
+//!   with the padlock removals received with it: `PERMIT_CLOSED_PERSONAL_LOCKS_ON`); an isolation
+//!   lock is not taken off while one is on (`PERMIT_ISOLATION_PERSONAL_LOCKS_ON`); the workers and
+//!   padlocks themselves are re-checked by `permit::workers_sync`;
+//! - a work order started or resumed while its permit needs a gas test has, at that moment, a
+//!   counting gas test within the limits and the re-test interval (`PERMIT_WO_START_GAS_TEST_INVALID`,
+//!   as `permit::wo_gate::activation_ready` locally);
 //! - a permit `closed` or `handed_back` has every lock removal verified; `handed_back` has a handover
 //!   log that keeps the hand-over rule; `suspended` / `revalidation_required` has an open suspension;
 //! - a handover log (`handover_rule_breach`): the person receiving the permit is not the person who
@@ -15,6 +22,17 @@
 //!   recorded send none); a log naming a person not applied here yet waits for that person (the
 //!   generic apply);
 //! - a permit never changes its permit type (as no local edit does);
+//! - a permit held here before its issue (draft, waiting for review, approved) and received issued
+//!   or later (`issue_check`, L4-03 / L4-04, migration 290): its content (work, risks, preventive
+//!   measures, PPE) is complete, its HSE approval is recorded when its type here requires one, by a
+//!   person other than its author and submitter (or flagged a self-approval on a site that opted out
+//!   of four-eyes here), and, when it needs a gas test, its latest counting gas test at the issue
+//!   (with those received with it; measured after the permit was raised or last reset, not after
+//!   this PC's future bound) is within the limits and the re-test interval set here; its workers
+//!   (migration 294, L4-05 / L4-06) are inducted when external and hold, on the issue day, the
+//!   qualifications its type requires here;
+//! - a permit becoming `active` that needs a gas test has, at the moment it protects the work, a
+//!   counting gas test within the limits and the re-test interval (`PERMIT_ACTIVE_GAS_TEST_INVALID`);
 //! - four-eyes on its approval (`four_eyes_check`, migration 244): the approver is neither the
 //!   author nor the submitter written on the row, unless it is flagged a self-approval and the
 //!   permit's site opted out of four-eyes here; a permit past review names who approved it; the
@@ -63,7 +81,8 @@
 //!   changed it, when (later than the change recorded here) and why, and that person holds the
 //!   settings and permit-issue rights here; the shipped LOTO type's energy-isolation rule is never
 //!   switched off, and a type's code never changes (`inbound_permit_type_check`);
-//! - deletes (this device never deletes them): a permit, its isolations and suspensions only while
+//! - deletes (this device never deletes them): a permit's workers and personal padlocks never; a
+//!   permit, its isolations and suspensions only while
 //!   the permit is a draft (the LOTO history of any other permit is kept); a permit type or a
 //!   qualification requirement never (they are deactivated or edited).
 //!
@@ -114,6 +133,243 @@ const ISOLATION_SETUP: &[&str] = &[
 ];
 /// Permit statuses whose arrival is judged (and applied with the children it was judged on).
 const JUDGED_STATUSES: &[&str] = &["active", "closed", "handed_back", "suspended", "revalidation_required"];
+/// Statuses before the issue (`approved → issued` is the issue, `permit::queries`).
+const PRE_ISSUE: &[&str] = &["draft", "pending_review", "approved"];
+/// Statuses a permit reaches only through its issue.
+const ISSUED_ON: &[&str] = &[
+    "issued",
+    "active",
+    "suspended",
+    "revalidation_required",
+    "closed",
+    "handed_back",
+];
+
+/// The received row issues a permit held here before its issue (L4-03 / L4-04): its issue was made
+/// on another PC and is judged here on the issue gate (`issue_check`). A permit not held here is
+/// judged where it was issued (and its plant history is not judged again).
+fn issue_crossed(from: Option<&str>, to: &str) -> bool {
+    from.is_some_and(|f| PRE_ISSUE.contains(&f)) && ISSUED_ON.contains(&to)
+}
+
+/// A number of a payload (a JSON number, or numeric text as SQLite's REAL affinity keeps it).
+fn num(p: &Payload, key: &str) -> Option<f64> {
+    match p.get(key) {
+        Some(Value::Number(n)) => n.as_f64(),
+        Some(Value::String(s)) => s.trim().parse().ok(),
+        _ => None,
+    }
+}
+
+/// The issue gate of a permit issued on another PC (`permit::safety_content`, the same rules as the
+/// local issue): its content complete, its HSE approval recorded when its type (here) requires one,
+/// and, when it needs a gas test, its latest gas test (with the ones received with it) within the
+/// limits set here.
+async fn issue_check(
+    conn: &impl ConnectionTrait,
+    permit: &Payload,
+    code: &str,
+    gas_tests: &[&Payload],
+    workers: &[&Payload],
+) -> AppResult<Option<InboundVerdict>> {
+    use crate::permit::safety_content::content_blockers;
+    let missing = content_blockers(
+        code,
+        field(permit, "work_description"),
+        field(permit, "risk_assessment"),
+        field(permit, "preventive_measures"),
+        field(permit, "ppe_required"),
+    );
+    if !missing.is_empty() {
+        let what: Vec<&str> = missing.iter().map(|b| b.code.as_str()).collect();
+        return conflict(
+            "PERMIT_ISSUE_CONTENT_MISSING",
+            format!("permit {code} was issued without its content ({})", what.join(", ")),
+        );
+    }
+    let Some(type_sync) = field(permit, "permit_type_sync_id") else {
+        return wait(format!("permit {code}: its permit type is not applied yet"));
+    };
+    let Some(row) = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT COALESCE(requires_hse_approval, 0) AS hse, COALESCE(requires_atmospheric_test, 0) AS gas, code FROM permit_types WHERE entity_sync_id = ?",
+            [type_sync.into()],
+        ))
+        .await?
+    else {
+        return wait(format!("permit {code}: its permit type is not applied yet"));
+    };
+    let hse: i64 = row.try_get("", "hse").map_err(sync_err)?;
+    let gas: i64 = row.try_get("", "gas").map_err(sync_err)?;
+    let type_code: String = row.try_get("", "code").map_err(sync_err)?;
+    let Some(hse_approver) =
+        field(permit, "hse_approved_by_sync_id").filter(|_| field(permit, "hse_approved_at").is_some())
+    else {
+        if hse != 0 {
+            return conflict(
+                "PERMIT_ISSUE_HSE_APPROVAL_MISSING",
+                format!("permit {code} was issued without the HSE approval its type requires"),
+            );
+        }
+        return issue_gas_and_workers(conn, permit, code, type_sync, &type_code, gas != 0, gas_tests, workers).await;
+    };
+    // Four-eyes on the HSE approval (CMMS Advisor 2026-11-11), as `safety_content::hse_four_eyes`.
+    let second = crate::permit::queries::approver_is_second_person(
+        field(permit, "created_by_sync_id").as_ref(),
+        field(permit, "submitted_by_sync_id").as_ref(),
+        &hse_approver,
+    );
+    if !second {
+        let flagged = match permit.get("hse_self_approved") {
+            Some(Value::Bool(b)) => *b,
+            Some(Value::Number(n)) => n.as_i64() == Some(1),
+            _ => false,
+        };
+        let allowed = if flagged {
+            match field(permit, "entity_sync_id") {
+                Some(node) => match local_id(conn, "org_nodes", node).await? {
+                    Some(node_id) => {
+                        crate::permit::queries::permit_four_eyes_rule(conn, node_id).await?
+                            == crate::reliability::study::decisions::SelfApprovalRule::Allowed
+                    }
+                    None => return wait(format!("permit {code}: its site {node} is not applied yet")),
+                },
+                None => false,
+            }
+        } else {
+            false
+        };
+        if !allowed {
+            return conflict(
+                "PERMIT_ISSUE_HSE_SELF_APPROVAL",
+                format!(
+                    "permit {code}: its HSE approval was recorded by its author or submitter (or one not recorded), \
+                     without its site opting out of four-eyes on this PC"
+                ),
+            );
+        }
+    }
+    issue_gas_and_workers(conn, permit, code, type_sync, &type_code, gas != 0, gas_tests, workers).await
+}
+
+/// The gas part and the workers of the issue gate of a permit issued on another PC.
+#[allow(clippy::too_many_arguments)]
+async fn issue_gas_and_workers(
+    conn: &impl ConnectionTrait,
+    permit: &Payload,
+    code: &str,
+    type_sync: &str,
+    type_code: &str,
+    gas_flag: bool,
+    gas_tests: &[&Payload],
+    workers: &[&Payload],
+) -> AppResult<Option<InboundVerdict>> {
+    let issued = time(permit, "issued_at").unwrap_or_else(crate::clock::now);
+    if crate::permit::safety_content::needs_gas_test(gas_flag, type_sync, type_code) {
+        if let Some((c, m)) = gas_verdict(conn, permit, code, gas_tests, issued, "issued").await? {
+            return conflict(c, m);
+        }
+    }
+    let Some(type_id) = local_id(conn, "permit_types", type_sync).await? else {
+        return wait(format!("permit {code}: its permit type is not applied yet"));
+    };
+    let wo_id = match field(permit, "linked_work_order_sync_id") {
+        Some(wo) => match local_id(conn, "work_orders", wo).await? {
+            Some(id) => Some(id),
+            None => return wait(format!("permit {code}: its work order {wo} is not applied yet")),
+        },
+        None => None,
+    };
+    if let Some((c, m)) =
+        crate::permit::workers::received_workers_breach(conn, code, type_id, wo_id, issued.date_naive(), workers, false)
+            .await?
+    {
+        return conflict(c, m);
+    }
+    Ok(None)
+}
+
+/// The latest gas reading that counts at `at` (measured after the permit was raised or last reset,
+/// not after `at` nor this PC's future bound), judged on the re-test interval and the limits set
+/// here. `None`: valid. `when`: what the permit became (for the message).
+async fn gas_verdict(
+    conn: &impl ConnectionTrait,
+    permit: &Payload,
+    code: &str,
+    gas_tests: &[&Payload],
+    at: DateTime<Utc>,
+    when: &str,
+) -> AppResult<Option<(&'static str, String)>> {
+    use crate::permit::safety_content::{
+        gas_limits, gas_validity_hours, reading_breaches, safety_content_since, validity_duration,
+    };
+    let since = safety_content_since(field(permit, "requested_at"), field(permit, "safety_reset_at"));
+    let bound = future_bound().min(at + Duration::minutes(MAX_CLOCK_SKEW_MINUTES));
+    let latest = gas_tests
+        .iter()
+        .filter_map(|g| time(g, "measured_at").map(|t| (t, *g)))
+        .filter(|(t, _)| since.is_none_or(|s| *t >= s) && *t <= bound)
+        .max_by_key(|(t, _)| *t);
+    let Some((measured, test)) = latest else {
+        return Ok(Some((
+            "PERMIT_ISSUE_GAS_TEST_MISSING",
+            format!("permit {code} was {when} without the gas test it needs"),
+        )));
+    };
+    let hours = gas_validity_hours(conn).await?;
+    if at - measured > validity_duration(hours) {
+        return Ok(Some((
+            "PERMIT_ISSUE_GAS_TEST_EXPIRED",
+            format!("permit {code} was {when} at {at} on a gas test of {measured}, older than {hours} h"),
+        )));
+    }
+    let limits = gas_limits(conn).await?;
+    let breaches = reading_breaches(
+        &limits,
+        num(test, "o2_percent").unwrap_or(f64::NAN),
+        num(test, "lel_percent").unwrap_or(f64::NAN),
+        num(test, "h2s_ppm").unwrap_or(f64::NAN),
+        num(test, "co_ppm"),
+        code,
+    );
+    if breaches.is_empty() {
+        return Ok(None);
+    }
+    let what: Vec<&str> = breaches.iter().map(|b| b.code.as_str()).collect();
+    Ok(Some((
+        "PERMIT_ISSUE_GAS_TEST_OUT_OF_LIMITS",
+        format!(
+            "permit {code} was {when} on a gas test out of the limits set here ({})",
+            what.join(", ")
+        ),
+    )))
+}
+
+/// Whether permits of the type named by the payload need a gas test; `None` when the type is not
+/// here yet.
+async fn type_needs_gas_test(conn: &impl ConnectionTrait, permit: &Payload) -> AppResult<Option<bool>> {
+    let Some(type_sync) = field(permit, "permit_type_sync_id") else {
+        return Ok(None);
+    };
+    let Some(row) = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT COALESCE(requires_atmospheric_test, 0) AS gas, code FROM permit_types WHERE entity_sync_id = ?",
+            [type_sync.into()],
+        ))
+        .await?
+    else {
+        return Ok(None);
+    };
+    let gas: i64 = row.try_get("", "gas").map_err(sync_err)?;
+    let type_code: String = row.try_get("", "code").map_err(sync_err)?;
+    Ok(Some(crate::permit::safety_content::needs_gas_test(
+        gas != 0,
+        type_sync,
+        &type_code,
+    )))
+}
 
 tokio::task_local! {
     /// While the children counted for a permit's change are applied with it (`apply_group`): that
@@ -129,7 +385,7 @@ pub(crate) fn field<'a>(p: &'a Payload, key: &str) -> Option<&'a str> {
         .filter(|v| !v.is_empty())
 }
 
-fn flag(p: &Payload, key: &str) -> bool {
+pub(crate) fn flag(p: &Payload, key: &str) -> bool {
     match p.get(key) {
         Some(Value::Bool(b)) => *b,
         Some(Value::Number(n)) => n.as_i64().is_some_and(|v| v != 0),
@@ -137,7 +393,7 @@ fn flag(p: &Payload, key: &str) -> bool {
     }
 }
 
-fn time(p: &Payload, key: &str) -> Option<DateTime<Utc>> {
+pub(crate) fn time(p: &Payload, key: &str) -> Option<DateTime<Utc>> {
     field(p, key).and_then(instant)
 }
 
@@ -157,8 +413,8 @@ fn hours(p: &Payload, key: &str) -> Hours {
 }
 
 /// Latest time a received row may carry: this device's clock plus the tolerated difference.
-fn future_bound() -> DateTime<Utc> {
-    Utc::now() + Duration::minutes(MAX_CLOCK_SKEW_MINUTES)
+pub(crate) fn future_bound() -> DateTime<Utc> {
+    crate::clock::now() + Duration::minutes(MAX_CLOCK_SKEW_MINUTES)
 }
 
 pub(crate) fn conflict(code: &'static str, message: String) -> AppResult<Option<InboundVerdict>> {
@@ -250,15 +506,73 @@ pub(crate) fn isolation_rule_breach(iso: &Payload, three_person: bool) -> Option
     lock_removal_breach(iso, point)
 }
 
+/// The zero-energy test of a verification (L4-13, migration 283, `permit::queries::
+/// verify_permit_isolation`), judged against the copy held here (`held`), never on a held row
+/// alone: an isolation newly verified (not verified here, or at another time) carries the
+/// verifier's test comment, not blank and at most `MAX_ZERO_ENERGY_NOTE_CHARS` characters. Without
+/// one it was verified on a PC before the update (`PERMIT_ZERO_ENERGY_PRE_UPGRADE`: a person checks
+/// on site, then resolves). Once verified here, the comment (or its absence, for a verification
+/// recorded here before the update, which is not judged again) is never rewritten nor blanked.
+/// `first_join`: the row is the plant's history received at this PC's first join
+/// (`sync::plant_join::first_join_snapshot_row`): a verification recorded before the update is
+/// history, not judged again (the note rules still apply).
+pub(crate) fn zero_energy_breach(
+    held: Option<&Payload>,
+    iso: &Payload,
+    first_join: bool,
+) -> Option<(&'static str, String)> {
+    let point = field(iso, "isolation_point").unwrap_or("?");
+    let note = field(iso, "zero_energy_note");
+    if let Some(h) = held.filter(|h| field(h, "verified_at").is_some()) {
+        if field(h, "zero_energy_note") != note {
+            return Some((
+                "PERMIT_ZERO_ENERGY_NOTE_CHANGED",
+                format!("isolation '{point}': the zero-energy test recorded at its verification cannot change"),
+            ));
+        }
+        if field(h, "verified_at") == field(iso, "verified_at") {
+            return None;
+        }
+    }
+    field(iso, "verified_at")?;
+    match note {
+        None if first_join && held.is_none() => None,
+        None => Some((
+            "PERMIT_ZERO_ENERGY_PRE_UPGRADE",
+            format!(
+                "isolation '{point}' verified without its zero-energy test (vérifiée avant la mise à jour, sans test \
+                 d'énergie zéro enregistré) — check on site, then resolve"
+            ),
+        )),
+        Some(n) if n.chars().count() > crate::permit::domain::MAX_ZERO_ENERGY_NOTE_CHARS => Some((
+            "PERMIT_ZERO_ENERGY_NOTE_REQUIRED",
+            format!("isolation '{point}': zero-energy test comment longer than allowed"),
+        )),
+        Some(_) => None,
+    }
+}
+
 /// The lock-removal rules a state of an isolation breaks, if any (migration 249,
 /// `permit::queries::record_permit_isolation_removed`, `force_permit_isolation_removal`,
 /// `acknowledge_forced_removal`, `record_worker_informed`). Judged on the row alone.
 fn lock_removal_breach(iso: &Payload, point: &str) -> Option<(&'static str, String)> {
-    let applier = field(iso, "applied_by_sync_id");
+    removal_record_breach(iso, &format!("isolation '{point}'"), "applied_by_sync_id", "applied_at")
+}
+
+/// The lock-removal rules of migration 249 on any lock record: an isolation lock (its applier
+/// `applied_by_sync_id`, fitted `applied_at`) or a personal padlock of the group lock box (its owner
+/// `placed_by_sync_id`, placed `placed_at`, `permit::workers_sync`). `lock`: how the messages name it.
+pub(crate) fn removal_record_breach(
+    iso: &Payload,
+    lock: &str,
+    owner_key: &str,
+    fitted_key: &str,
+) -> Option<(&'static str, String)> {
+    let applier = field(iso, owner_key);
     let remover = field(iso, "removed_by_sync_id");
     let removed_at = field(iso, "removed_at");
     let forced = flag(iso, "forced_removal");
-    let invalid = |code: &'static str, what: &str| Some((code, format!("isolation '{point}': {what}")));
+    let invalid = |code: &'static str, what: &str| Some((code, format!("{lock}: {what}")));
     if remover.is_some() != removed_at.is_some() || removed_at.is_some_and(|t| instant(t).is_none()) {
         return invalid(
             "PERMIT_LOCK_REMOVAL_INVALID",
@@ -266,7 +580,7 @@ fn lock_removal_breach(iso: &Payload, point: &str) -> Option<(&'static str, Stri
         );
     }
     let removed = removed_at.and_then(instant);
-    if removed.is_some() && (applier.is_none() || field(iso, "applied_at").is_none()) {
+    if removed.is_some() && (applier.is_none() || field(iso, fitted_key).is_none()) {
         return invalid("PERMIT_ISOLATION_NOT_APPLIED", "lock taken off but never applied");
     }
     if removed.is_some_and(|t| t > future_bound()) {
@@ -665,11 +979,32 @@ async fn children_with(
             blocked = Some(format!("{table} {sid} waits for {entity} {id}"));
             continue;
         }
-        let merged = overlay(rows.get(&sid), &received);
-        if table == "permit_isolations" && isolation_rule_breach(&merged, three_person).is_some() {
+        // An append-only gas test already held here is never rewritten by its apply: the version held
+        // is the one judged (review of L4-04).
+        if table == "permit_gas_tests" && rows.contains_key(&sid) {
             continue;
         }
+        let merged = overlay(rows.get(&sid), &received);
+        if table == "permit_isolations" {
+            // Judged in the isolation's own context (its batch), not the permit's being applied.
+            let first_join = !rows.contains_key(&sid)
+                && crate::sync::materialize::judged_as_row_of_batch(
+                    item.server_batch_id(),
+                    crate::sync::plant_join::first_join_snapshot_row(conn, table, &sid),
+                )
+                .await?;
+            if isolation_rule_breach(&merged, three_person).is_some()
+                || zero_energy_breach(rows.get(&sid), &merged, first_join).is_some()
+            {
+                continue;
+            }
+        }
         if table == "permit_handover_logs" && handover_rule_breach(&merged).is_some() {
+            continue;
+        }
+        if table == "permit_personal_locks"
+            && crate::permit::workers_sync::personal_lock_breach(&merged, &sid).is_some()
+        {
             continue;
         }
         rows.insert(sid.clone(), merged);
@@ -1385,6 +1720,16 @@ pub(crate) async fn inbound_permit_check(
             );
         }
     }
+    if issue_crossed(from, to) {
+        let gas_tests = permit_children(conn, "permit_gas_tests", entity_sync_id).await?;
+        let workers = permit_children(conn, "permit_workers", entity_sync_id).await?;
+        if let Some(why) = gas_tests.blocked.clone().or_else(|| workers.blocked.clone()) {
+            return wait(format!("permit {code}: {why}"));
+        }
+        if let Some(verdict) = issue_check(conn, &permit, &code, &payloads(&gas_tests), &payloads(&workers)).await? {
+            return Ok(Some(verdict));
+        }
+    }
     if !JUDGED_STATUSES.contains(&to) {
         return Ok(None);
     }
@@ -1431,8 +1776,38 @@ pub(crate) async fn inbound_permit_check(
             if let Some((c, m)) = isolations_ready(&code, needs, three_person, &counted, at) {
                 return conflict(c, m);
             }
+            // L4-04 (review): the gas part of the gate at the moment it protects the work.
+            if type_needs_gas_test(conn, &permit).await? == Some(true) {
+                let gas_tests = permit_children(conn, "permit_gas_tests", entity_sync_id).await?;
+                if let Some(why) = gas_tests.blocked.clone() {
+                    return wait(format!("permit {code}: {why}"));
+                }
+                if let Some((_, m)) = gas_verdict(conn, &permit, &code, &payloads(&gas_tests), at, "active").await? {
+                    return conflict("PERMIT_ACTIVE_GAS_TEST_INVALID", m);
+                }
+            }
         }
         "closed" | "handed_back" => {
+            // The group lockout (L4-18): no personal padlock left on the box, the removals received
+            // with the permit counted (applied with it, before its isolations).
+            let padlocks = permit_children(conn, "permit_personal_locks", entity_sync_id).await?;
+            if let Some(why) = padlocks.blocked.clone() {
+                return wait(format!("permit {code}: {why}"));
+            }
+            let on: Vec<&str> = payloads(&padlocks)
+                .iter()
+                .filter(|l| field(l, "removed_at").is_none())
+                .map(|l| field(l, "lock_number").unwrap_or("?"))
+                .collect();
+            if !on.is_empty() {
+                return conflict(
+                    crate::permit::workers_sync::CLOSED_PERSONAL_LOCKS_ON,
+                    format!(
+                        "permit {code} is {to} while personal padlock(s) {} are still on its group lock box",
+                        on.join(", ")
+                    ),
+                );
+            }
             let pending = payloads(&isolations)
                 .iter()
                 .filter(|i| field(i, "removal_verified_at").is_none() && !cancelled_line(i))
@@ -1475,12 +1850,32 @@ pub(crate) async fn permit_group(
     let (local, permit) = permit_transition(conn, entity_sync_id, received).await?;
     let to = field(&permit, "status").unwrap_or_default();
     let from = local.as_ref().and_then(|l| field(l, "status")).map(str::to_string);
-    if from.as_deref() == Some(to) || !JUDGED_STATUSES.contains(&to) {
+    let judged = JUDGED_STATUSES.contains(&to);
+    let issue = issue_crossed(from.as_deref(), to);
+    if from.as_deref() == Some(to) || !(judged || issue) {
         return Ok(None);
     }
     let mut rows = Vec::new();
-    for table in ["permit_isolations", "permit_suspensions", "permit_handover_logs"] {
-        rows.extend(permit_children(conn, table, entity_sync_id).await?.counted);
+    if judged {
+        // Padlock removals first: an isolation lock taken off in the group is judged after them.
+        if matches!(to, "closed" | "handed_back") {
+            rows.extend(
+                permit_children(conn, "permit_personal_locks", entity_sync_id)
+                    .await?
+                    .counted,
+            );
+        }
+        for table in ["permit_isolations", "permit_suspensions", "permit_handover_logs"] {
+            rows.extend(permit_children(conn, table, entity_sync_id).await?.counted);
+        }
+    }
+    // The gas tests and workers the issue was judged on (`issue_check`), and the gas tests an
+    // activation was judged on, are applied with it.
+    if issue || to == "active" {
+        rows.extend(permit_children(conn, "permit_gas_tests", entity_sync_id).await?.counted);
+    }
+    if issue {
+        rows.extend(permit_children(conn, "permit_workers", entity_sync_id).await?.counted);
     }
     Ok((!rows.is_empty()).then(|| Group {
         parent_sync_id: entity_sync_id.to_string(),
@@ -1677,11 +2072,20 @@ pub(crate) async fn inbound_isolation_check(
     if let Some(verdict) = lock_record_kept(local.as_ref(), &iso) {
         return Ok(Some(verdict));
     }
+    let first_join = local.is_none()
+        && crate::sync::plant_join::first_join_snapshot_row(conn, "permit_isolations", entity_sync_id).await?;
+    // Judged after the isolation rules below (who fitted, verified and removed it): a verification by
+    // the wrong person is the conflict shown first, its zero-energy test second. A change of the note
+    // alone (actions unchanged) is judged here.
+    let zero_energy = zero_energy_breach(local.as_ref(), &iso, first_join);
     if local
         .as_ref()
         .is_some_and(|l| isolation_actions(l) == isolation_actions(&iso) && lock_record(l) == lock_record(&iso))
     {
-        return Ok(None);
+        return match zero_energy {
+            Some((c, m)) => conflict(c, m),
+            None => Ok(None),
+        };
     }
     let point = field(&iso, "isolation_point").unwrap_or(entity_sync_id).to_string();
     if let Some(l) = &local {
@@ -1697,6 +2101,9 @@ pub(crate) async fn inbound_isolation_check(
         None => false,
     };
     if let Some((c, m)) = isolation_rule_breach(&iso, three_person) {
+        return conflict(c, m);
+    }
+    if let Some((c, m)) = zero_energy {
         return conflict(c, m);
     }
     // The permit is applied before its isolations; not here yet, the apply waits for it.
@@ -1771,6 +2178,19 @@ pub(crate) async fn inbound_isolation_check(
             format!("isolation '{point}': lock taken off while permit {code} is '{current}'"),
         );
     }
+    // The group lockout (L4-18): no isolation lock comes off while a personal padlock is on the box.
+    if changed("removed_at") {
+        if let Some(verdict) = crate::permit::workers_sync::open_padlocks_verdict(
+            conn,
+            crate::permit::workers_sync::PadlocksOf::Permit(permit_sync),
+            crate::permit::workers_sync::ISOLATION_PERSONAL_LOCKS_ON,
+            &format!("isolation '{point}': lock taken off"),
+        )
+        .await?
+        {
+            return Ok(Some(verdict));
+        }
+    }
     lock_record_check(conn, local.as_ref(), &iso, entity_sync_id, permit_sync, &point).await
 }
 
@@ -1814,7 +2234,7 @@ pub(crate) async fn local_user(conn: &impl ConnectionTrait, user_sync_id: &str) 
 /// `ptw.close` of `user_sync` at the site of the permit `permit_sync` here (the rule of
 /// `permit::access::may_receive_handover`, the local saves' check): `Ok(None)` when held, else the
 /// verdict (waiting while the person or their rights may still arrive, else `code`).
-async fn close_right_at_permit(
+pub(crate) async fn close_right_at_permit(
     conn: &impl ConnectionTrait,
     user_sync: &str,
     permit_sync: &str,
@@ -1904,17 +2324,23 @@ async fn forced_removal_block(
         return Ok(None);
     };
     let applied = instant(applied_at);
+    // Isolation locks and personal padlocks alike (`permit::queries::open_forced_removal_of`).
     let open = conn
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT pi.entity_sync_id AS sid, pi.removed_at AS removed_at FROM permit_isolations pi \
-               JOIN user_accounts u ON u.id = pi.applied_by_id \
+            "SELECT 'permit_isolations' AS t, pi.entity_sync_id AS sid, pi.removed_at AS removed_at \
+               FROM permit_isolations pi JOIN user_accounts u ON u.id = pi.applied_by_id \
               WHERE u.entity_sync_id = ? AND pi.forced_removal = 1 AND pi.informed_at IS NULL \
-                AND pi.entity_sync_id IS NOT ?",
-            [worker.into(), entity_sync_id.into()],
+                AND pi.entity_sync_id IS NOT ? \
+             UNION ALL \
+             SELECT 'permit_personal_locks' AS t, pl.entity_sync_id AS sid, pl.removed_at AS removed_at \
+               FROM permit_personal_locks pl JOIN user_accounts u ON u.id = pl.placed_by_id \
+              WHERE u.entity_sync_id = ? AND pl.forced_removal = 1 AND pl.informed_at IS NULL",
+            [worker.into(), entity_sync_id.into(), worker.into()],
         ))
         .await?;
     for r in open {
+        let table: String = r.try_get("", "t").map_err(sync_err)?;
         let sid: Option<String> = r.try_get("", "sid").map_err(sync_err)?;
         let removed: Option<String> = r.try_get("", "removed_at").map_err(sync_err)?;
         // Taken off after this lock was applied: the worker could not have been told before.
@@ -1929,10 +2355,10 @@ async fn forced_removal_block(
             Some(sid) => conn
                 .query_one(Statement::from_sql_and_values(
                     DbBackend::Sqlite,
-                    "SELECT 1 AS w FROM sync_inbox WHERE entity_type = 'permit_isolations' \
+                    "SELECT 1 AS w FROM sync_inbox WHERE entity_type = ? \
                        AND entity_sync_id = ? AND apply_status IN ('pending', 'deferred') \
                        AND json_extract(payload_json, '$.informed_at') IS NOT NULL LIMIT 1",
-                    [sid.as_str().into()],
+                    [table.as_str().into(), sid.as_str().into()],
                 ))
                 .await?
                 .is_some(),
@@ -1946,8 +2372,8 @@ async fn forced_removal_block(
         return conflict(
             "PERMIT_WORKER_NOT_INFORMED",
             format!(
-                "isolation '{point}': applied by a worker not yet told of the forced removal of their lock \
-                 (taken off before)"
+                "isolation '{point}': applied by a worker not yet told of the forced removal of one of their \
+                 locks or padlocks (taken off before)"
             ),
         );
     }
@@ -2275,7 +2701,7 @@ pub(crate) async fn inbound_delete_check(
 ) -> AppResult<Option<InboundVerdict>> {
     if matches!(
         entity_type,
-        "qualification_requirements" | "permit_types" | "work_permits"
+        "qualification_requirements" | "permit_types" | "work_permits" | "permit_workers" | "permit_personal_locks"
     ) {
         let held = conn
             .query_one(Statement::from_sql_and_values(
@@ -2293,6 +2719,13 @@ pub(crate) async fn inbound_delete_check(
                 format!(
                     "permit {entity_sync_id} cannot be deleted by synchronisation: a permit is cancelled, never \
                      deleted (its isolation lines and suspensions would be left without it)"
+                ),
+            )
+        } else if entity_type == "permit_workers" || entity_type == "permit_personal_locks" {
+            conflict(
+                "PERMIT_DELETE_REFUSED",
+                format!(
+                    "{entity_type} {entity_sync_id} cannot be deleted by synchronisation: a worker is withdrawn and a padlock taken off, never deleted (the group lockout record is kept)"
                 ),
             )
         } else if entity_type == "permit_types" {
@@ -2515,6 +2948,64 @@ pub(crate) async fn inbound_permit_rule_check(
             }
         }
     }
+    // The permit types the rules require (`permit::required_set`, CMMS Advisor 2026-11-04), when the
+    // row carries its set: a set that does not read is refused; a set that grows is never a conflict
+    // (a type a rule gives is only added, even once started); each clearing of a type that is new or
+    // changed here is judged as the clearing of a rule (who, when, why, before the start, the
+    // permit-issue right at the work order's site here, lead decision D-a). A clearing kept on a work
+    // order moved to another site no longer holds there (`void_clearing_on_site_change`).
+    if let Some(received_set) = received_required_set(received) {
+        let received_items = match received_set {
+            Ok(items) => items,
+            Err(why) => {
+                return conflict(
+                    "WO_PERMIT_REQUIRED_TYPES_INVALID",
+                    format!("work order {code}: the permit types it requires do not read ({why})"),
+                );
+            }
+        };
+        let held_set = match local.as_ref() {
+            Some(l) => required_set_of(l).unwrap_or_default(),
+            None => crate::permit::required_set::RequiredSet::default(),
+        };
+        let site_moved = local.as_ref().is_some_and(|l| {
+            field(l, "entity_sync_id").is_some() && field(l, "entity_sync_id") != field(&wo, "entity_sync_id")
+        });
+        for item in &received_items {
+            let Some(clearing) = &item.clearing else {
+                continue;
+            };
+            let held_clearing = held_set.get(&item.permit_type_code).and_then(|h| h.clearing.as_ref());
+            if held_clearing == Some(clearing) {
+                if site_moved {
+                    return conflict(
+                        "WO_PERMIT_RULE_CLEAR_INVALID",
+                        format!(
+                            "work order {code}: its {} permit requirement was lifted at its site here and the received \
+                             work order moves it to another site with that clearing kept",
+                            item.permit_type_code
+                        ),
+                    );
+                }
+                continue;
+            }
+            let required_by = format!("the plant rule {} ({} permit)", item.rule_code, item.permit_type_code);
+            if let Some(verdict) = judge_clearing(
+                conn,
+                &wo,
+                &code,
+                &required_by,
+                &ProtectedOrigin::Rule(item.rule_code.clone()),
+                clearing.by_sync_id.as_deref(),
+                Some(clearing.at.as_str()),
+                clearing.reason.as_deref(),
+            )
+            .await?
+            {
+                return Ok(Some(verdict));
+            }
+        }
+    }
     // A request flagged "sécurité" here protects its work orders that have not started: each PC
     // derives that protection itself from the request (`permit_requirement::
     // raise_work_orders_of_safety_request`, after the apply here). A received row without that origin
@@ -2609,19 +3100,19 @@ pub(crate) async fn inbound_permit_rule_check(
     if clearing_changed && clearing(&wo) == none && flag(&wo, "requires_permit") {
         return Ok(None);
     }
-    // A safety requirement cleared at one site does not stay cleared at another: a received move of
-    // a work order whose clearing is kept is refused (the PC that moved it withdraws the clearing in
-    // the same change). A work order that had no site here was cleared with the plant-wide right,
-    // which holds at any site.
-    if origin == ProtectedOrigin::SafetyRequest && field(&wo, "permit_rule_cleared_at").is_some() {
+    // A requirement cleared at one site (a safety request's, and a rule's since lead decision D-a)
+    // does not stay cleared at another: a received move of a work order whose clearing is kept is
+    // refused (the PC that moved it withdraws the clearing in the same change). A work order that had
+    // no site here was cleared with the plant-wide right, which holds at any site.
+    if field(&wo, "permit_rule_cleared_at").is_some() {
         if let Some(l) = local.as_ref() {
             let (held_site, new_site) = (field(l, "entity_sync_id"), field(&wo, "entity_sync_id"));
             if held_site.is_some() && held_site != new_site && clearing(l) == clearing(&wo) {
                 return conflict(
                     "WO_PERMIT_RULE_CLEAR_INVALID",
                     format!(
-                        "work order {code}: its permit requirement from a safety request was cleared at its site \
-                         here and the received work order moves it to another site with that clearing kept"
+                        "work order {code}: its permit requirement (required by {required_by}) was cleared at its \
+                         site here and the received work order moves it to another site with that clearing kept"
                     ),
                 );
             }
@@ -2664,15 +3155,81 @@ pub(crate) async fn inbound_permit_rule_check(
             return Ok(None);
         }
     }
+    judge_clearing(
+        conn,
+        &wo,
+        &code,
+        required_by,
+        &origin,
+        field(&wo, "permit_rule_cleared_by_sync_id"),
+        field(&wo, "permit_rule_cleared_at"),
+        field(&wo, "permit_rule_clear_reason"),
+    )
+    .await
+}
+
+/// The set of permit types a received row carries (`permit::required_set`): `None` when the row
+/// does not carry the key (a PC without migration 279) or carries NULL (no set stored there: its
+/// legacy columns speak); else the set, or why it does not read (a value that is not text, or text
+/// that is not a set).
+fn received_required_set(
+    received: &Payload,
+) -> Option<Result<Vec<crate::permit::required_set::RequiredPermit>, String>> {
+    match received.get(crate::permit::required_set::COLUMN) {
+        None | Some(Value::Null) => None,
+        Some(Value::String(s)) if s.trim().is_empty() => None,
+        Some(Value::String(s)) => Some(crate::permit::required_set::parse(s)),
+        Some(other) => Some(Err(format!("not a text value: {other}"))),
+    }
+}
+
+/// The set of permit types a work order requires, read from a row as sent (its set, else its legacy
+/// columns; `permit::required_set::RequiredSet::from_row`).
+pub(crate) fn required_set_of(p: &Payload) -> Result<crate::permit::required_set::RequiredSet, String> {
+    let json = match p.get(crate::permit::required_set::COLUMN) {
+        None | Some(Value::Null) => None,
+        Some(Value::String(s)) => Some(s.as_str()),
+        Some(other) => return Err(format!("not a text value: {other}")),
+    };
+    crate::permit::required_set::RequiredSet::from_row(
+        json,
+        crate::permit::required_set::Legacy {
+            rule_code: field(p, "permit_rule_code"),
+            permit_type: field(p, "permit_rule_permit_type"),
+            cleared_by_sync_id: field(p, "permit_rule_cleared_by_sync_id"),
+            cleared_at: field(p, "permit_rule_cleared_at"),
+            clear_reason: field(p, "permit_rule_clear_reason"),
+        },
+    )
+}
+
+/// One clearing of a protected permit requirement received on a work order (`wo`, the received row
+/// over the local one) judged as on this PC: who, when (readable, not in the future, before the
+/// work started), why (10 characters or more), and that person holds the permit-issue right at the
+/// work order's site here (`permit_requirement::may_clear_protected_requirement`). Used for the
+/// legacy clearing and for the clearing of each permit type of the set (`permit::required_set`).
+#[allow(clippy::too_many_arguments)]
+async fn judge_clearing(
+    conn: &impl ConnectionTrait,
+    wo: &Payload,
+    code: &str,
+    required_by: &str,
+    origin: &crate::wo::workflow::actions::permit_requirement::ProtectedOrigin,
+    cleared_by_sync: Option<&str>,
+    cleared_at: Option<&str>,
+    reason: Option<&str>,
+) -> AppResult<Option<InboundVerdict>> {
+    use crate::wo::workflow::actions::permit_requirement::{self as requirement, ProtectedOrigin};
     let invalid = |why: &str| {
         conflict(
             "WO_PERMIT_RULE_CLEAR_INVALID",
             format!("work order {code}: the permit required by {required_by} was cleared {why}"),
         )
     };
-    let reason_ok = field(&wo, "permit_rule_clear_reason")
+    let reason_ok = reason
+        .map(str::trim)
         .is_some_and(|r| r.chars().count() >= requirement::MIN_CLEAR_REASON_CHARS);
-    let Some(cleared_at) = time(&wo, "permit_rule_cleared_at") else {
+    let Some(cleared_at) = cleared_at.map(str::trim).filter(|t| !t.is_empty()).and_then(instant) else {
         return invalid("without the time it was cleared");
     };
     if !reason_ok {
@@ -2681,13 +3238,13 @@ pub(crate) async fn inbound_permit_rule_check(
     if cleared_at > future_bound() {
         return invalid("at a time in the future");
     }
-    if time(&wo, "actual_start").is_some_and(|started| cleared_at > started) {
+    if time(wo, "actual_start").is_some_and(|started| cleared_at > started) {
         return invalid("after its execution started");
     }
     // Past "ready" without a start time: it started at a time not known here, so a clearing cannot
     // be shown to come before it (the clear action itself refuses a work order past "ready").
-    if time(&wo, "actual_start").is_none() {
-        if let Some(status_sync) = field(&wo, "status_sync_id") {
+    if time(wo, "actual_start").is_none() {
+        if let Some(status_sync) = field(wo, "status_sync_id") {
             let Some(status) = status_code(conn, status_sync).await? else {
                 return wait(format!("work-order status {status_sync} is not applied yet"));
             };
@@ -2698,7 +3255,7 @@ pub(crate) async fn inbound_permit_rule_check(
             }
         }
     }
-    let Some(clearer_sync) = field(&wo, "permit_rule_cleared_by_sync_id") else {
+    let Some(clearer_sync) = cleared_by_sync.map(str::trim).filter(|s| !s.is_empty()) else {
         return invalid("without saying who cleared it");
     };
     let Some(clearer) = local_user(conn, clearer_sync).await? else {
@@ -2707,13 +3264,15 @@ pub(crate) async fn inbound_permit_rule_check(
         ));
     };
     // The work order's site here (its org node, `entity_id`, sent as `entity_sync_id`).
-    let site_sync = field(&wo, "entity_sync_id");
+    let site_sync = field(wo, "entity_sync_id");
     let site = match site_sync {
         Some(node) => local_id(conn, "org_nodes", node).await?,
         None => None,
     };
-    if !requirement::may_clear_protected_requirement(conn, clearer, &origin, site).await? {
-        if origin == ProtectedOrigin::SafetyRequest && site.is_none() {
+    if !requirement::may_clear_protected_requirement(conn, clearer, origin, site).await? {
+        // The right counts at the work order's site (lead decision D-a): a site not applied here
+        // yet waits.
+        if site.is_none() {
             if let Some(node) = site_sync {
                 return wait(format!("work order {code}: its site {node} is not applied yet"));
             }
@@ -2727,8 +3286,7 @@ pub(crate) async fn inbound_permit_rule_check(
             ));
         }
         let right_where = match origin {
-            ProtectedOrigin::Rule(_) => "the permit-issue right here",
-            ProtectedOrigin::SafetyRequest => "the permit-issue right at its site here",
+            ProtectedOrigin::Rule(_) | ProtectedOrigin::SafetyRequest => "the permit-issue right at its site here",
         };
         return conflict(
             "WO_PERMIT_RULE_CLEAR_UNAUTHORISED",
@@ -2785,6 +3343,282 @@ pub(crate) enum HeldRule {
 /// is sent, and every PC keeps its rule the same way. A row that names another rule is noted, to
 /// converge after the write. A row without the rule keys (an older sender) leaves them as they are.
 pub(crate) async fn keep_held_rule_trace(
+    conn: &impl ConnectionTrait,
+    entity_sync_id: &str,
+    payload: &mut Payload,
+) -> AppResult<Option<HeldRule>> {
+    // Whether the row itself requires the permit (before the rule kept here may raise it).
+    let row_requires = flag(payload, "requires_permit");
+    // First: a clearing held here was judged at the work order's site here; a row that moves it
+    // to another site withdraws every one of them, so none is kept below.
+    void_held_clearings_on_received_site_change(conn, entity_sync_id, payload).await?;
+    let held = keep_held_primary_rule(conn, entity_sync_id, payload).await?;
+    keep_required_set(conn, entity_sync_id, payload, row_requires).await?;
+    Ok(held)
+}
+
+/// Before a received work order is written (security review of L4-10b): a clearing held here (the
+/// legacy `permit_rule_cleared_*` and every type lifted in its set) was judged with the
+/// permit-issue right at the work order's site here (lead decision D-a). A received row that moves
+/// the work order to another site (its `entity_sync_id`) from a PC that did not hold that clearing
+/// sends none for it, and [`inbound_permit_rule_check`] accepts it (a clearing it carried unchanged
+/// is refused there). Kept by the merge, such a clearing would hold at a site where nobody judged
+/// it: every one held here is withdrawn first, as a move made here does
+/// (`permit_requirement::void_clearing_on_site_change`, cause `site_change`, recorded in the work
+/// order's history and audit trail in the apply's transaction), so [`keep_held_primary_rule`],
+/// [`keep_required_set`] and [`keep_held_primary_clearing`] find nothing to keep. A clearing the
+/// row carries (judged on arrival at the new site) is written as received. A work order that had no
+/// site here was cleared with the plant-wide right: left as it is.
+async fn void_held_clearings_on_received_site_change(
+    conn: &impl ConnectionTrait,
+    entity_sync_id: &str,
+    payload: &Payload,
+) -> AppResult<bool> {
+    let Some(local) = local_wire(conn, "work_orders", entity_sync_id).await? else {
+        return Ok(false);
+    };
+    let row = overlay(Some(&local), payload);
+    let (held_site, new_site) = (field(&local, "entity_sync_id"), field(&row, "entity_sync_id"));
+    if held_site.is_none() || held_site == new_site {
+        return Ok(false);
+    }
+    let Some(wo_id) = local_id(conn, "work_orders", entity_sync_id).await? else {
+        return Ok(false);
+    };
+    let old_site = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT entity_id FROM work_orders WHERE id = ?",
+            [wo_id.into()],
+        ))
+        .await?
+        .map(|r| r.try_get::<Option<i64>>("", "entity_id").map_err(sync_err))
+        .transpose()?
+        .flatten();
+    let new_site = match new_site {
+        Some(node) => local_id(conn, "org_nodes", node).await?,
+        None => None,
+    };
+    crate::wo::workflow::actions::permit_requirement::void_clearing_on_site_change(
+        conn, wo_id, old_site, new_site, None,
+    )
+    .await
+}
+
+/// Before a received work order is written (after [`keep_held_primary_rule`]), the permit types it
+/// requires (`permit::required_set`, CMMS Advisor 2026-11-04). The column travels whole: written
+/// as received it would drop a type added here, so the set written is the union of the set held
+/// here and the received one (`required_set::merge`: a type added on either PC is kept, a received
+/// clearing, judged on arrival, wins; a clearing held here that the row does not carry is kept,
+/// unless the row is an unambiguous re-tick, `required_set::is_received_retick`, when every clearing
+/// is withdrawn and recorded). A lifting of the primary type kept that way keeps its legacy clearing
+/// too (a row that has not seen it yet sends none). While the merged set has a type not lifted, the
+/// permit stays required. A row from a PC without migration 279 (no key) leaves the column as held
+/// here, except that a lifting of the primary rule made there (its legacy clearing, judged on
+/// arrival by [`inbound_permit_rule_check`]) is recorded on the primary type, whatever the size of
+/// the set; while another type here is not lifted, the permit stays required and this is recorded
+/// in the work order's history and audit trail. Nothing for a work order new here (written as
+/// received).
+async fn keep_required_set(
+    conn: &impl ConnectionTrait,
+    entity_sync_id: &str,
+    payload: &mut Payload,
+    row_requires: bool,
+) -> AppResult<()> {
+    use crate::permit::required_set::{merge, Clearing, COLUMN};
+    let Some(local) = local_wire(conn, "work_orders", entity_sync_id).await? else {
+        return Ok(());
+    };
+    let held = required_set_of(&local).map_err(sync_err)?;
+    let row = overlay(Some(&local), payload);
+    if payload.contains_key(COLUMN) {
+        let received = required_set_of(&row).map_err(sync_err)?;
+        let (merged, withdrawn) = merge(&held, &received, row_requires);
+        payload.insert(COLUMN.to_string(), merged.to_json().map_or(Value::Null, Value::String));
+        if !merged.uncleared_types().is_empty() {
+            payload.insert("requires_permit".into(), Value::from(1_i64));
+        }
+        if withdrawn.is_empty() {
+            keep_held_primary_clearing(&local, &row, payload, &held, &merged);
+        } else {
+            record_received_retick(conn, entity_sync_id, &local, &withdrawn).await?;
+        }
+        return Ok(());
+    }
+    // An older PC: it knows the primary rule only.
+    if !held.stored() {
+        return Ok(());
+    }
+    let mut set = held.clone();
+    // The primary type held here: a row naming another rule (or permit type) never mirrors its
+    // legacy clearing onto a type of the set that is not the primary one.
+    let primary = held
+        .primary()
+        .filter(|p| field(&row, "permit_rule_permit_type") == Some(*p))
+        .map(str::to_string);
+    let mirrored = match (primary.as_deref(), field(&row, "permit_rule_cleared_at")) {
+        (Some(primary), Some(at)) if set.get(primary).is_some_and(|i| i.clearing.is_none()) => set.clear(
+            primary,
+            Clearing {
+                by_sync_id: field(&row, "permit_rule_cleared_by_sync_id").map(str::to_string),
+                at: at.to_string(),
+                reason: field(&row, "permit_rule_clear_reason").map(str::to_string),
+            },
+        ),
+        _ => false,
+    };
+    let remaining = set.uncleared_types();
+    // A set of the primary type alone: the legacy columns say it all (judged as before) once the
+    // lifting is mirrored.
+    let lifted_here = held.items().len() >= 2 && !flag(&row, "requires_permit") && !remaining.is_empty();
+    if !mirrored && !lifted_here {
+        return Ok(());
+    }
+    if mirrored {
+        payload.insert(COLUMN.to_string(), set.to_json().map_or(Value::Null, Value::String));
+    }
+    if remaining.is_empty() {
+        return Ok(());
+    }
+    payload.insert("requires_permit".into(), Value::from(1_i64));
+    let Some(wo_id) = local_id(conn, "work_orders", entity_sync_id).await? else {
+        return Ok(());
+    };
+    let (status, _, _) = crate::wo::workflow::transition::load_wo_status(conn, wo_id).await?;
+    let event = serde_json::json!({
+        "requires_permit": true,
+        "origin": "rule",
+        "cause": "received_without_required_types",
+        "lifted_permit_type": primary.filter(|_| mirrored),
+        "remaining_permit_types": remaining,
+    })
+    .to_string();
+    crate::wo::workflow::events::emit_action_event(
+        conn,
+        wo_id,
+        "permit_types_still_required",
+        None,
+        Some(&status),
+        Some(&status),
+        Some(&event),
+    )
+    .await?;
+    crate::wo::audit::insert_wo_change_event(
+        conn,
+        &crate::wo::audit::WoAuditInput {
+            wo_id: Some(wo_id),
+            action: "permit_types_still_required".into(),
+            actor_id: None,
+            summary: Some(format!(
+                "Exigence levée reçue d'un poste qui ne connaît que la règle principale : les permis {} restent exigés",
+                remaining.join(", ")
+            )),
+            details_json: Some(event),
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+    )
+    .await?;
+    Ok(())
+}
+
+/// A lifting of the primary type held here and kept by [`keep_required_set`] (the row has not seen
+/// it: no re-tick) keeps its legacy clearing. The row sends none, and a primary type without its
+/// legacy clearing reads as required (`required_set::RequiredSet::from_row`, fail-closed): written
+/// as sent, the lifting made here would be dropped without a record while the sender adopts it.
+fn keep_held_primary_clearing(
+    local: &Payload,
+    row: &Payload,
+    payload: &mut Payload,
+    held: &crate::permit::required_set::RequiredSet,
+    merged: &crate::permit::required_set::RequiredSet,
+) {
+    let Some(primary) = held.primary() else {
+        return;
+    };
+    if RULE_TRACE_KEYS.iter().any(|k| field(local, k) != field(row, k))
+        || field(local, "permit_rule_cleared_at").is_none()
+        || CLEARING_KEYS.iter().any(|k| field(row, k).is_some())
+    {
+        return;
+    }
+    let kept = held.get(primary).and_then(|i| i.clearing.as_ref());
+    if kept.is_none() || merged.get(primary).and_then(|i| i.clearing.as_ref()) != kept {
+        return;
+    }
+    for key in CLEARING_KEYS {
+        payload.insert(key.to_string(), local.get(key).cloned().unwrap_or(Value::Null));
+    }
+}
+
+/// Records the clearings withdrawn by a received re-tick (`required_set::is_received_retick`) in
+/// the work order's history and audit trail, as `permit_requirement::withdraw_clearing` records a
+/// re-tick made here (`permit_clearing_withdrawn`, cause `received_retick`).
+async fn record_received_retick(
+    conn: &impl ConnectionTrait,
+    entity_sync_id: &str,
+    local: &Payload,
+    withdrawn: &[crate::permit::required_set::RequiredPermit],
+) -> AppResult<()> {
+    let Some(wo_id) = local_id(conn, "work_orders", entity_sync_id).await? else {
+        return Ok(());
+    };
+    let (status, _, _) = crate::wo::workflow::transition::load_wo_status(conn, wo_id).await?;
+    let rule = field(local, "permit_rule_code");
+    let clearings: Vec<Value> = withdrawn
+        .iter()
+        .map(|i| {
+            let c = i.clearing.as_ref();
+            serde_json::json!({
+                "permit_type_code": i.permit_type_code,
+                "rule_code": i.rule_code,
+                "cleared_by_sync_id": c.and_then(|c| c.by_sync_id.clone()),
+                "cleared_at": c.map(|c| c.at.clone()),
+                "clear_reason": c.and_then(|c| c.reason.clone()),
+            })
+        })
+        .collect();
+    let event = serde_json::json!({
+        "requires_permit": true,
+        "rule": rule,
+        "origin": if rule.is_some() { "rule" } else { "safety_request" },
+        "cause": "received_retick",
+        "actor_sync_id": Value::Null,
+        "withdrawn_cleared_by_sync_id": field(local, "permit_rule_cleared_by_sync_id"),
+        "withdrawn_cleared_at": field(local, "permit_rule_cleared_at"),
+        "withdrawn_clear_reason": field(local, "permit_rule_clear_reason"),
+        "withdrawn_permit_types": withdrawn.iter().map(|i| i.permit_type_code.clone()).collect::<Vec<_>>(),
+        "withdrawn_clearings": clearings,
+    })
+    .to_string();
+    crate::wo::workflow::events::emit_action_event(
+        conn,
+        wo_id,
+        "permit_clearing_withdrawn",
+        None,
+        Some(&status),
+        Some(&status),
+        Some(&event),
+    )
+    .await?;
+    crate::wo::audit::insert_wo_change_event(
+        conn,
+        &crate::wo::audit::WoAuditInput {
+            wo_id: Some(wo_id),
+            action: "permit_clearing_withdrawn".into(),
+            actor_id: None,
+            summary: Some("Levée de l'exigence de permis retirée : permis de nouveau exigé".into()),
+            details_json: Some(event),
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+    )
+    .await?;
+    Ok(())
+}
+
+/// The primary rule of [`keep_held_rule_trace`].
+async fn keep_held_primary_rule(
     conn: &impl ConnectionTrait,
     entity_sync_id: &str,
     payload: &mut Payload,
@@ -3211,6 +4045,21 @@ pub(crate) async fn inbound_work_order_check(
         if let Some((c, m)) = isolations_ready(pcode, needs, three_person, &held, at) {
             return conflict(c, m);
         }
+        // The gas part of the gate at that start or resume (`permit::wo_gate::activation_ready`).
+        match type_needs_gas_test(conn, p).await? {
+            None => return wait(format!("permit {pcode}: its permit type is not applied yet")),
+            Some(false) => {}
+            Some(true) => {
+                let gas_tests = permit_children(conn, "permit_gas_tests", permit_sync).await?;
+                if let Some(why) = gas_tests.blocked.clone() {
+                    return wait(format!("work order {code}: permit {pcode}: {why}"));
+                }
+                let when = format!("used by work order {code} started or resumed");
+                if let Some((_, m)) = gas_verdict(conn, p, pcode, &payloads(&gas_tests), at, &when).await? {
+                    return conflict("PERMIT_WO_START_GAS_TEST_INVALID", m);
+                }
+            }
+        }
     }
     if live_at_start == 0 && flag(&wo, "requires_permit") {
         return conflict(
@@ -3218,19 +4067,42 @@ pub(crate) async fn inbound_work_order_check(
             format!("work order {code} requires a work permit and none was live when it started"),
         );
     }
-    // A plant rule that flagged it (flag not cleared) names the permit type it needs
-    // (`permit::wo_gate`): one live permit is of that type.
-    if flag(&wo, "requires_permit") && field(&wo, "permit_rule_cleared_at").is_none() {
-        if let Some(rule_type) = field(&wo, "permit_rule_permit_type") {
-            if !live_types.iter().any(|t| t == rule_type) {
-                return conflict(
-                    "PERMIT_TYPE_REQUIRED_TO_START",
-                    format!(
-                        "work order {code} started without a live permit of type {rule_type}, required by a plant rule"
-                    ),
-                );
-            }
+    // Every permit type the plant's rules required of it and not cleared (`permit::wo_gate`): one
+    // live permit of each. Judged with the set the sender held (the row's set when it carries one,
+    // else its legacy columns, read as the gate reads them), never the set held here: a type added
+    // here since is not a reason to refuse a start made there (it is named in the arrival finding,
+    // and the resume asks for it).
+    let mut sent = wo.clone();
+    if !received.contains_key(crate::permit::required_set::COLUMN) {
+        sent.remove(crate::permit::required_set::COLUMN);
+    }
+    let set = match required_set_of(&sent) {
+        Ok(set) => set,
+        Err(why) => {
+            return conflict(
+                "WO_PERMIT_REQUIRED_TYPES_INVALID",
+                format!("work order {code}: the permit types it requires do not read ({why})"),
+            )
         }
+    };
+    let required_types = if set.stored() || flag(&wo, "requires_permit") {
+        set.uncleared_types()
+    } else {
+        Vec::new()
+    };
+    let missing: Vec<&str> = required_types
+        .iter()
+        .map(String::as_str)
+        .filter(|t| !live_types.iter().any(|l| l == t))
+        .collect();
+    if !missing.is_empty() {
+        return conflict(
+            "PERMIT_TYPE_REQUIRED_TO_START",
+            format!(
+                "work order {code} started without a live permit of type {}, required by a plant rule",
+                missing.join(", ")
+            ),
+        );
     }
     Ok(None)
 }
@@ -3259,7 +4131,7 @@ pub(crate) async fn work_order_group(
     // applies them itself first (they are then skipped here); those of a permit already here are
     // applied here.
     for (permit_sync, _) in &permits.rows {
-        for table in ["permit_isolations", "permit_suspensions"] {
+        for table in ["permit_isolations", "permit_suspensions", "permit_gas_tests"] {
             rows.extend(permit_children(conn, table, permit_sync).await?.counted);
         }
     }

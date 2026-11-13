@@ -51,7 +51,7 @@ pub async fn write_audit_event_in(conn: &impl ConnectionTrait, input: AuditEvent
     let details_json = input.details_json.map(|value| value.to_string());
     let sync_id = crate::sync::identity::new_entity_sync_id();
     let (origin, seq, prev_hash) = crate::audit::chain::next_position(conn).await?;
-    let happened_at = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let happened_at = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let insert = conn
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,

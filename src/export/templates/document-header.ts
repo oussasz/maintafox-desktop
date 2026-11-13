@@ -1,3 +1,4 @@
+import { i18n } from "@/i18n/config";
 import {
   isDocumentHeaderHtmlEmpty,
   sanitizeDocumentHeaderHtml,
@@ -7,6 +8,7 @@ import {
   getSetting,
   parseDocumentHeaderValue,
 } from "@/services/settings-service";
+import { pushAppToast } from "@/store/app-toast-store";
 
 /**
  * Load sanitized default document letterhead HTML for print fiches.
@@ -18,12 +20,26 @@ export async function loadDocumentHeaderHtml(): Promise<string> {
     const row = await getSetting(DOCUMENT_HEADER_SETTING_KEY, "tenant");
     const parsed = parseDocumentHeaderValue(row?.setting_value_json ?? null);
     const sanitized = sanitizeDocumentHeaderHtml(parsed.html);
-    if (isDocumentHeaderHtmlEmpty(sanitized)) return "";
+    if (isDocumentHeaderHtmlEmpty(sanitized)) {
+      warnEmptyHeader();
+      return "";
+    }
     return sanitized;
   } catch (err) {
     console.error("[document-header] failed to load letterhead:", err);
     return "";
   }
+}
+
+/**
+ * The document leaves without the company logo or plant name: say so at print time, with where
+ * to set it (L5-29). Shown on each print until the header is configured.
+ */
+function warnEmptyHeader(): void {
+  pushAppToast({
+    title: String(i18n.t("settings:documentHeader.emptyPrintWarning")),
+    description: String(i18n.t("settings:documentHeader.emptyPrintWhere")),
+  });
 }
 
 /** Shared CSS for the letterhead block inside A4 print fiches. */

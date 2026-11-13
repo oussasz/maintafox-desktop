@@ -118,7 +118,7 @@ describe("DiApprovalDialog", () => {
     review.approve.mockReturnValue(new Promise((r) => (resolveApprove = r)));
 
     render(<DiApprovalDialog />);
-    fireEvent.click(screen.getByRole("button", { name: enDi.action.approve }));
+    fireEvent.click(screen.getByRole("button", { name: enDi.review.approveOnly }));
 
     const confirm = await screen.findByRole("dialog", { name: enDi.review.confirmApproveTitle });
     expect(confirm).toHaveTextContent("DI-0031 will be approved");
@@ -147,7 +147,7 @@ describe("DiApprovalDialog", () => {
   it("cancelling the confirmation does nothing", async () => {
     review.approvalDi = di();
     render(<DiApprovalDialog />);
-    fireEvent.click(screen.getByRole("button", { name: enDi.action.approve }));
+    fireEvent.click(screen.getByRole("button", { name: enDi.review.approveOnly }));
     const confirm = await screen.findByRole("dialog", { name: enDi.review.confirmApproveTitle });
     fireEvent.click(within(confirm).getByRole("button", { name: enCommon.ds.confirm.cancel }));
     await waitFor(() =>
@@ -206,5 +206,52 @@ describe("DiApprovalDialog", () => {
     accessAt.can = (p) => p === P.DI_CONVERT || p === P.OT_CREATE;
     render(<DiApprovalDialog />);
     expect(screen.getByRole("button", { name: enDi.review.convertToWo })).toBeInTheDocument();
+  });
+
+  it("approves and creates the work order in one confirmation (L1-30)", async () => {
+    review.approvalDi = di();
+    review.approve.mockResolvedValue({ approvedRowVersion: 5 });
+    conversion.convertDiToWo.mockResolvedValue({
+      wo_id: 90,
+      wo_code: "OT-0090",
+      di: di({ status: "closed" } as unknown as Partial<InterventionRequest>),
+      permit_flag: {
+        requires_permit: false,
+        reason_code: "PERMIT_RULES_NO_MATCH",
+        rule_code: null,
+        permit_type_code: null,
+        safety_flag: false,
+        unreadable_rule_codes: [],
+      },
+    });
+
+    render(<DiApprovalDialog />);
+    expect(screen.getByRole("heading", { name: enDi.review.approvalTitle })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: enDi.review.approveAndConvert }));
+    const confirm = await screen.findByRole("dialog", {
+      name: enDi.review.confirmApproveConvertTitle,
+    });
+    fireEvent.click(within(confirm).getByRole("button", { name: enDi.review.approveAndConvert }));
+
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith("/work-orders?openWo=90"));
+    expect(review.approve).toHaveBeenCalledTimes(1);
+    expect(conversion.convertDiToWo).toHaveBeenCalledWith({ diId: 31, expectedRowVersion: 5 });
+  });
+
+  it("the declarer of the request is told another person decides, with no approve or convert button (L1-34)", () => {
+    review.approvalDi = di({ submitter_id: 5 } as unknown as Partial<InterventionRequest>);
+    const { unmount } = render(<DiApprovalDialog />);
+    expect(screen.getByText(enDi.review.selfDecision)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: enDi.review.approveOnly })).toBeNull();
+    expect(screen.queryByRole("button", { name: enDi.review.approveAndConvert })).toBeNull();
+    unmount();
+
+    review.approvalDi = di({
+      status: "approved",
+      submitter_id: 5,
+    } as unknown as Partial<InterventionRequest>);
+    render(<DiApprovalDialog />);
+    expect(screen.getByRole("heading", { name: enDi.review.convertTitle })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: enDi.review.convertToWo })).toBeNull();
   });
 });

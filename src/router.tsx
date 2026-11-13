@@ -18,6 +18,9 @@ const AssetImportPage = lazy(() =>
     default: m.AssetImportPage,
   })),
 );
+const DataImportPage = lazy(() =>
+  import("@/pages/import/DataImportPage").then((m) => ({ default: m.DataImportPage })),
+);
 const RequestsPage = lazy(() =>
   import("@/pages/RequestsPage").then((m) => ({ default: m.RequestsPage })),
 );
@@ -40,6 +43,9 @@ const InspectionsPage = lazy(() =>
   import("@/pages/InspectionsPage").then((m) => ({
     default: m.InspectionsPage,
   })),
+);
+const MyPadlocksPage = lazy(() =>
+  import("@/pages/MyPadlocksPage").then((m) => ({ default: m.MyPadlocksPage })),
 );
 const TrainingPage = lazy(() =>
   import("@/pages/TrainingPage").then((m) => ({ default: m.TrainingPage })),
@@ -130,6 +136,7 @@ const NotificationsPage = lazy(() =>
 const SettingsPage = lazy(() =>
   import("@/pages/SettingsPage").then((m) => ({ default: m.SettingsPage })),
 );
+const HelpPage = lazy(() => import("@/pages/HelpPage").then((m) => ({ default: m.HelpPage })));
 const LoginPage = lazy(() =>
   import("@/pages/auth/LoginPage").then((m) => ({ default: m.LoginPage })),
 );
@@ -244,6 +251,11 @@ const routes: RouteObject[] = [
                     children: [{ path: "permits", element: <PermitsPage /> }],
                   },
                   {
+                    // "Mes cadenas" (L4-18): reachable with the narrow padlock right alone.
+                    element: <PermissionRoute permission={P.PTW_LOCK_OWN} />,
+                    children: [{ path: "my-padlocks", element: <MyPadlocksPage /> }],
+                  },
+                  {
                     element: <PermissionRoute permission={P.INS_VIEW} />,
                     children: [{ path: "inspections", element: <InspectionsPage /> }],
                   },
@@ -340,6 +352,14 @@ const routes: RouteObject[] = [
                     element: <PermissionRoute permission={P.REF_VIEW} />,
                     children: [{ path: "lookups", element: <LookupsPage /> }],
                   },
+                  {
+                    element: (
+                      <PermissionRoute
+                        anyOf={[P.ORG_MANAGE, P.FIN_BUDGET, P.PER_MANAGE, P.TRN_CERTIFY]}
+                      />
+                    ),
+                    children: [{ path: "imports", element: <DataImportPage /> }],
+                  },
                   { path: "notifications", element: <NotificationsPage /> },
                   {
                     element: <PermissionRoute permission={P.DOC_VIEW} />,
@@ -377,6 +397,7 @@ const routes: RouteObject[] = [
                     element: <Navigate to="/settings?tab=activity" replace />,
                   },
                   { path: "settings", element: <SettingsPage /> },
+                  { path: "help", element: <HelpPage /> },
                   // Living design-system reference (docs/DESIGN_SYSTEM.md). Development builds only:
                   // the import is tree-shaken from production bundles.
                   ...(import.meta.env.DEV

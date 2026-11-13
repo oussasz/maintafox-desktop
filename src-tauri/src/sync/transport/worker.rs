@@ -41,7 +41,7 @@ use super::client::{ClientTimeouts, ControlPlaneClient, TransportError, OBJECT_N
 use super::store::{self, PendingExchange, PendingMediaDownload, PendingMediaUpload};
 use super::wire::{
     ExchangeOutboxItem, ExchangeRequest, PresignGetRequest, PresignPutRequest, SnapshotRequest, StoredExchangeRequest,
-    DEVICE_CLASS_DESKTOP, MAX_CURRENT_USER_SYNC_IDS, SNAPSHOT_SCOPE_ALL, SNAPSHOT_SCOPE_USER,
+    DEVICE_CLASS, MAX_CURRENT_USER_SYNC_IDS, SNAPSHOT_SCOPE_ALL, SNAPSHOT_SCOPE_USER,
 };
 use crate::errors::{AppError, AppResult};
 use crate::sync::domain::{SyncMediaManifestItem, SYNC_PROTOCOL_VERSION_V2};
@@ -969,6 +969,7 @@ impl SyncWorker {
                     page_size: SYNC_SNAPSHOT_PAGE_SIZE,
                     scope,
                     current_user_sync_ids: users,
+                    device_class: crate::sync::transport::wire::device_class_if_not_desktop(),
                 };
                 let page = match self.client.snapshot(token, &request).await {
                     Ok(page) => page,
@@ -1105,7 +1106,7 @@ impl SyncWorker {
             idempotency_key: &idempotency_key,
             checkpoint_token: payload.checkpoint_token.as_deref(),
             current_user_sync_ids: &users,
-            device_class: DEVICE_CLASS_DESKTOP,
+            device_class: DEVICE_CLASS,
             tenant_config: payload.tenant_config.as_ref(),
             media_manifest: &manifest,
             outbox_batch: payload.outbox_batch.iter().map(ExchangeOutboxItem::from).collect(),

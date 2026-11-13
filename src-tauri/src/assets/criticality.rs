@@ -14,7 +14,6 @@
 //! rule is written once. Every assessment is kept (`equipment_criticality_assessments`) with the
 //! method code, and the resulting class is written to the asset in the same transaction.
 
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
@@ -259,7 +258,7 @@ pub async fn assess_asset_criticality(
 
     let lookup_id = resolve_criticality_code(&txn, &result.resulting_class).await?;
     let ref_id = resolve_criticality_ref_id(&txn, &result.resulting_class).await?;
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE equipment SET criticality_value_id = ?, equipment_criticality_ref_id = ?, \
@@ -312,6 +311,9 @@ pub async fn assess_asset_criticality(
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("criticality assessment missing after insert")))?;
     let assessment = map_assessment(&row)?;
+    // A machine that becomes critical gets the plant's permit rule on its open work orders at once.
+    crate::permit::requirement_rules::stamp_open_work_orders_of_equipment(&txn, payload.asset_id, Some(actor_id))
+        .await?;
     let asset_row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,

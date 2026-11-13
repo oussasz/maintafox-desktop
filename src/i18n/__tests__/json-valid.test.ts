@@ -54,12 +54,20 @@ const COMMON_TOP_KEYS = [
   "listValue",
   // Required / optional part lines (src/components/common/PartNecessityChoice.tsx).
   "partNecessity",
+  // File picker in the interface language (src/components/ui/file-input.tsx).
+  "fileInput",
   // Dismiss button of the app-wide messages (src/components/shell/AppToastHost.tsx).
   "toast",
   // Date and time fields (src/components/ui/date-field.tsx, time-input.tsx, month-calendar.tsx).
   "dateField",
   // Hint of the decimal entry field (src/components/ui/decimal-field.tsx).
   "decimalField",
+  // "Leave without saving?" question of every dialog (src/components/ui/dialog.tsx).
+  "discardGuard",
+  // "Exporter (Excel/CSV)" button of the main lists (src/components/ui/ExportCsvButton.tsx).
+  "listExport",
+  // Account without a personnel record (src/components/common/PersonnelLinkNotice.tsx).
+  "personnelLink",
 ];
 const AUTH_TOP_KEYS = [
   "activation",

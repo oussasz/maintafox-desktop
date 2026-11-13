@@ -5,11 +5,13 @@ pub mod controls;
 pub mod count_four_eyes;
 pub mod count_sync;
 pub mod domain;
+pub mod dormant;
 pub mod fx;
 pub mod issue;
 pub mod ledger;
 pub mod lots;
 pub mod negative_stock;
+pub mod non_stock;
 pub mod periods;
 pub mod procurement;
 pub mod queries;
@@ -22,6 +24,8 @@ pub mod valuation;
 mod benchmark_tests;
 #[cfg(test)]
 mod negative_stock_tests;
+#[cfg(test)]
+mod non_stock_tests;
 #[cfg(test)]
 mod over_quantity_tests;
 #[cfg(test)]

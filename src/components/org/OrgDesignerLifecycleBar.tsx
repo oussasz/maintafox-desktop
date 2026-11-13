@@ -13,8 +13,8 @@ import { mfAlert } from "@/design-system/tokens";
 import { useStepUp } from "@/hooks/use-step-up";
 import { cn } from "@/lib/utils";
 import {
-  isOrgStructureDesignMode,
   type OrgDesignerWorkspaceMode,
+  isOrgStructureDesignMode,
   useOrgDesignerStore,
 } from "@/stores/org-designer-store";
 import { useOrgGovernanceStore } from "@/stores/org-governance-store";
@@ -188,8 +188,20 @@ export function OrgDesignerLifecycleBar() {
       )}
 
       {!isDesign && hasDraft && (
-        <div className="rounded-md border border-surface-border bg-surface-0 px-3 py-2 text-xs text-text-muted">
-          {t("lifecycle.publishedViewBanner")}
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-surface-border bg-surface-0 px-3 py-2">
+          <p className="text-xs text-text-muted max-w-prose">
+            {t("lifecycle.publishedViewBanner")}
+          </p>
+          <PermissionGate permission={P.ORG_ADMIN}>
+            <Button
+              variant="outline"
+              className="h-10 gap-1.5"
+              onClick={() => onWorkspaceChange("draft")}
+            >
+              <PenLine className="h-3.5 w-3.5" aria-hidden />
+              {t("lifecycle.openDraft")}
+            </Button>
+          </PermissionGate>
         </div>
       )}
 

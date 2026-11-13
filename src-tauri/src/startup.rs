@@ -410,6 +410,7 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
     let permit_sweep = crate::permit::ended_hold::sweep(&app_state.db).await;
     info!(
         held = permit_sweep.work_orders_held,
+        expired_held = permit_sweep.expired_held,
         downtimes_ended = permit_sweep.downtimes_ended,
         failures = permit_sweep.failures,
         "startup: permit-end catch-up"
@@ -434,6 +435,16 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
         info!("startup: notification scheduler started");
     }
 
+    // Phase 5 (permits): running work under an expired permit is put on hold, every minute
+    // (`permit::ended_hold::start_expiry_watch`; L4-08, CMMS Advisor decision 9). Non-fatal.
+    {
+        let expiry_db = app_state.db.clone();
+        tauri::async_runtime::spawn(async move {
+            crate::permit::ended_hold::start_expiry_watch(expiry_db).await;
+        });
+        info!("startup: permit expiry watch started");
+    }
+
     // Phase 5a: notification emails through the control API (non-fatal; `notifications::email`)
     {
         let email_db = app_state.db.clone();
@@ -445,6 +456,20 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
             .await;
         });
         info!("startup: notification email dispatcher started");
+    }
+
+    // Phone enrolments issued here and revocations of disabled accounts' phones
+    // (`commands::mobile_enrolment`; desktop only, non-fatal), supervised background task: each
+    // round runs on its own, so a failed round never stops the next.
+    {
+        let phones_db = app_state.db.clone();
+        app_state
+            .tasks
+            .spawn("mobile_enrolment_follow_up", move |cancel| {
+                crate::commands::mobile_enrolment::run_follow_up(phones_db, cancel)
+            })
+            .await;
+        info!("startup: phone enrolment follow-up started");
     }
 
     // Daily digest of notifications (`notifications::digest`), supervised background task.
@@ -661,7 +686,19 @@ fn rights_changed_hook(
     })
 }
 
+/// The last startup event, for a page that starts listening after it was sent (the phone's webview
+/// loads later than the engine starts). Process memory only.
+static LAST_STARTUP_EVENT: std::sync::Mutex<Option<StartupEvent>> = std::sync::Mutex::new(None);
+
+/// The last startup event sent, if any (`commands::mobile::get_last_startup_event`).
+pub fn last_startup_event() -> Option<StartupEvent> {
+    LAST_STARTUP_EVENT.lock().ok().and_then(|last| last.clone())
+}
+
 fn emit_event(app: &AppHandle, event: StartupEvent) {
+    if let Ok(mut last) = LAST_STARTUP_EVENT.lock() {
+        *last = Some(event.clone());
+    }
     if let Err(e) = app.emit("startup_event", event) {
         error!("failed to emit startup event: {e}");
     }

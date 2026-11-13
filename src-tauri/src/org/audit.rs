@@ -9,7 +9,6 @@
 //! Sub-phase 01 — File 04 — Sprint S2.
 
 use crate::errors::AppResult;
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 use serde::{Deserialize, Serialize};
 
@@ -52,7 +51,7 @@ pub struct OrgChangeEvent {
 /// Fire-and-forget semantics: if the insert fails, a `tracing::error!` is emitted
 /// but the caller's operation is NOT rolled back.
 pub async fn record_org_change(db: &impl ConnectionTrait, input: OrgAuditEventInput) -> AppResult<()> {
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
     let step_up_val: i32 = if input.requires_step_up { 1 } else { 0 };
     let change_type_log = input.change_type.clone();
 

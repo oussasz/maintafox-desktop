@@ -16,12 +16,14 @@
     "refresh": "Refresh",
     "refreshForecast": "Refresh forecast",
     "newPlan": "New plan",
+    "duplicatePlan": "Duplicate this plan",
+    "duplicate": "Duplicate",
     "editPlan": "Edit plan",
     "newVersion": "New version",
     "editVersion": "Edit",
     "publish": "Publish",
-    "transition": "Update status",
-    "transitionOccurrence": "Change status",
+    "transition": "Change the plan's state",
+    "transitionOccurrence": "Change the due date's state",
     "logExecution": "Log execution",
     "viewFindings": "View findings",
     "createFollowUpDi": "Create a follow-up request (DI)",
@@ -320,6 +322,26 @@
       "title": "Create PM plan",
       "description": "Define a governed PM strategy. Publish a version after approval to generate due work."
     },
+    "duplicatePlan": {
+      "title": "Duplicate plan {{code}}",
+      "description": "The new plan takes version {{version}}: trigger, tasks, parts, duration, crew and safety requirements. It is created as a draft (version 1); publish it afterwards like any plan.",
+      "prefilledTitle": "Copy of {{title}}",
+      "target": "Target equipment",
+      "targetScope": "Target scope",
+      "targetCurrent": "Same equipment as the original plan: {{asset}}",
+      "targetHint": "Choose another machine to copy the plan onto similar equipment.",
+      "meter": "Meter of the target equipment",
+      "meterLater": "Choose later",
+      "meterHint": "Only meters with the same unit as the original meter are offered.",
+      "meterNone": "The target equipment has no meter with the same unit: the meter will remain to be chosen.",
+      "meterLaterWarning": "Without a meter, the plan cannot be published until a meter is chosen in its version.",
+      "notCopied": "Not carried over: due dates, work orders, readings, costs, last-done dates, version history and approvals.",
+      "noVersion": "This plan has neither a published version nor a draft to copy.",
+      "whyCode": "Enter the code of the new plan to duplicate.",
+      "whyTitle": "Enter the title of the new plan to duplicate.",
+      "whyScope": "Choose the target scope to duplicate.",
+      "saving": "Duplicating…"
+    },
     "editPlan": {
       "title": "Edit PM plan",
       "description": "Update plan metadata. Strategy changes require a new version for trigger rules."
@@ -364,7 +386,8 @@
     "activationPath": "Lifecycle order: draft → proposed → approved → active. Publish a version while approved/active/suspended. Then use Refresh forecast to create due work.",
     "currentStatus": "Current status: {{status}}",
     "alreadyOperational": "This plan is already operational or retired.",
-    "woCloseOutcome": "When the linked work order is closed, the occurrence is completed with its outcome: failures and checklist steps marked not OK become findings."
+    "woCloseOutcome": "When the linked work order is closed, the occurrence is completed with its outcome: failures and checklist steps marked not OK become findings.",
+    "versionEffect": "Publishing a new version replaces the current version for the next due dates generated. Due dates and work orders already generated keep the content of their version; the plan stays active while the new version is prepared."
   },
   "empty": {
     "noPlans": "No PM plans yet. Create a plan to start.",
@@ -380,6 +403,13 @@
     "noParts": "No part required.",
     "noSkills": "No skill in the catalogue."
   },
+  "coverage": {
+    "title": "Covering plan",
+    "hint": "An annual overhaul can replace the weekly check of the same asset: while the covering plan has an occurrence in the period, this plan does not generate one.",
+    "coveredBy": "Covered by plan",
+    "none": "None (this plan stands alone)",
+    "covers": "This plan covers: {{plans}}."
+  },
   "hints": {
     "partNecessityMissing": "Say for each part whether it is required or optional: {{codes}}.",
     "publishBlockedByLifecycle": "To publish, set plan status to approved, active, or suspended.",
@@ -387,6 +417,9 @@
     "editVersionDraftOnly": "Edit is available only for draft versions.",
     "deletePlanDraftOnly": "Delete is available only for draft plans.",
     "deleteVersionDraftOnly": "Delete is available only for draft versions.",
+    "siteScopeOtherSite": "You hold this right only on your own site: this plan is on another site.",
+    "siteScopePlantWidePlan": "Plan covering several sites: reserved for plant-wide rights.",
+    "siteScopeNoSite": "Plan without a site (its equipment is installed nowhere): reserved for plant-wide rights.",
     "generationNeedLifecycle": "Forecast requires active/suspended lifecycle and an active flag.",
     "generationNeedVersion": "Publish at least one version before refreshing the forecast.",
     "generationReady": "Ready to refresh the forecast.",
@@ -417,6 +450,9 @@
     "executionLogged": "Execution logged.",
     "versionPublished": "Version v{{version}} published.",
     "revisionCreated": "Draft version v{{version}} created from the finding.",
+    "planDuplicated": "Plan {{code}} created as a draft from the original plan.",
+    "planDuplicatedMeterToChoose": "Plan {{code}} created as a draft. Choose its meter in the version before publishing it.",
+    "planDuplicatedRefreshFailed": "Plan {{code}} was created, but the screen could not be refreshed. Refresh the list to open it.",
     "readingRecorded": "Meter reading recorded; the forecast of the asset was updated."
   },
   "archive": {
@@ -444,7 +480,8 @@
     "cronMorning": "Daily at 06:00",
     "cronCustom": "Custom schedule (cron)",
     "cronCustomHint": "Six fields: second minute hour day month weekday.",
-    "horizonDays": "Horizon (days)"
+    "horizonDays": "Horizon (days)",
+    "skippedHint": "Skipped: due date already there, covered by a wider plan over the same period, or equipment without a meter of the required type."
   },
   "errors": {
     "listLoad": "The list of choices could not be loaded.",
@@ -462,6 +499,10 @@
     "scopeRequired": "Choose what the plan covers.",
     "readingRequired": "Enter a reading of 0 or more for a meter.",
     "readingLower": "The reading is lower than the last one: say whether the counter rolled over or the meter was replaced.",
+    "jumpTitle": "Unusual value",
+    "jumpBody": "This reading is far above the usual use of this meter since the previous reading. Check the typed value (a typing error would trigger maintenance by mistake), then confirm if it is correct.",
+    "jumpBack": "Correct the value",
+    "jumpConfirm": "Yes, the value is correct",
     "PM_CODE_NOT_IN_LIST": "“{{code}}” is not an active value of the reference list concerned."
   },
   "tolerance": {
@@ -491,5 +532,13 @@
   "sourceDecision": {
     "toReview": "From a refused / waiting decision — to review",
     "toReviewHint": "The version in force comes from a reliability decision refused at synchronisation or not yet accepted on this PC. Review it; publishing another version clears this flag."
+  },
+  "lifecycleAction": {
+    "draft": "Back to draft",
+    "proposed": "Propose",
+    "approved": "Approve",
+    "active": "Reactivate the plan",
+    "suspended": "Suspend the plan",
+    "retired": "Retire the plan"
   }
 }

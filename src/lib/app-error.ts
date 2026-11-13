@@ -18,6 +18,7 @@ import { ZodError } from "zod";
 import { i18n } from "@/i18n/config";
 import { ACCOUNT_LOCKED, accountLockedErrorText } from "@/lib/account-lockout";
 import { displayParams, formatOrgIssuesWithI18n } from "@/lib/format-org-validation-issue";
+import { moduleLabelKey } from "@/lib/module-capability";
 import { permissionLabel } from "@/lib/permission-labels";
 import { STEP_UP_CANCELLED_MESSAGE } from "@/lib/step-up-bridge";
 import {
@@ -42,14 +43,51 @@ export function appErrorText(err: unknown): string {
   return description ?? title;
 }
 
-/** The readable name of the right a "permission denied" sentence names; null when it names none. */
-function missingRight(message: string): string | null {
+/**
+ * The readable names of the rights a "permission denied" sentence names (the refused right and,
+ * when the action needs a second one, the linked right); empty when it names none. Labels only,
+ * never the permission code.
+ */
+function missingRights(message: string): string[] {
   const names = message.match(/[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+/g) ?? [];
-  const known = names.find((n) => PERMISSION_CATALOG.some((p) => p.name === n));
+  const known = [...new Set(names)].filter((n) => PERMISSION_CATALOG.some((p) => p.name === n));
   // Before the rights' names are loaded the label would be the English catalogue text: the
   // generic reason stands in instead.
-  if (!i18n.hasLoadedNamespace("admin")) return null;
-  return known ? permissionLabel(i18n.getFixedT(null, "admin") as TFunction<"admin">, known) : null;
+  if (!i18n.hasLoadedNamespace("admin")) return [];
+  const t = i18n.getFixedT(null, "admin") as TFunction<"admin">;
+  return known.map((n) => permissionLabel(t, n));
+}
+
+/**
+ * Licence states that stop a module whatever the plan includes (in grace only the essential
+ * modules run; `entitlements::queries::check_entitlement_capability`).
+ */
+const LICENCE_NOT_IN_FORCE_STATES = new Set(["suspended", "revoked", "expired", "grace"]);
+
+/**
+ * A refusal because the licence does not allow the module now (`LICENCE_MODULE_OFF:module=…,
+ * state=…`, `entitlements::queries::enforce_capability_for_permission`): it says so, naming the
+ * module, instead of a bare "permission refused" an administrator cannot act on.
+ */
+function licenceModuleOff(message: string): { title: string; description: string } | null {
+  const match = message.match(/LICENCE_MODULE_OFF:module=([a-z_.]+),state=([a-z_]+)/);
+  if (!match) return null;
+  const [, moduleKey = "", state = ""] = match;
+  const labelKey = moduleLabelKey(moduleKey);
+  const module = labelKey
+    ? String(i18n.t(`shell:${labelKey}` as never))
+    : String(i18n.t("errors:licence.moduleUnknown"));
+  const notInForce = LICENCE_NOT_IN_FORCE_STATES.has(state);
+  return {
+    title: String(
+      i18n.t(notInForce ? "errors:licence.notInForceTitle" : "errors:licence.moduleOffTitle"),
+    ),
+    description: String(
+      i18n.t(notInForce ? "errors:licence.licenceNotInForce" : "errors:licence.moduleOff", {
+        module,
+      }),
+    ),
+  };
 }
 
 export function describeAppError(err: unknown): AppErrorDescription {
@@ -88,15 +126,33 @@ export function describeAppError(err: unknown): AppErrorDescription {
   // The server's sentence names the missing right ("Permission requise : ot.close"); it is shown
   // by its readable name (`permission-labels.ts`), the generic reason when no right can be read.
   if (code === "PERMISSION_DENIED") {
-    const right = missingRight(rawMsg);
+    const licence = licenceModuleOff(rawMsg);
+    if (licence) {
+      return { ...licence, code, technical: null };
+    }
+    const rights = missingRights(rawMsg);
+    // "Permission requise : a, b, ou c" lists alternatives: any one of them is enough.
+    const anyOf = /\s(?:ou|or)\s/i.test(rawMsg);
+    const quoted = rights.map((r) => String(i18n.t("errors:generic.rightQuoted", { right: r })));
     return {
       title: String(i18n.t("errors:appError.PERMISSION_DENIED")),
-      description: right
-        ? String(i18n.t("errors:generic.rightRequired", { right }))
-        : String(i18n.t("errors:generic.forbidden")),
+      description:
+        rights.length === 1
+          ? String(i18n.t("errors:generic.rightRequired", { right: rights[0] }))
+          : rights.length > 1
+            ? String(
+                i18n.t(
+                  anyOf ? "errors:generic.anyRightRequired" : "errors:generic.rightsRequired",
+                  {
+                    right: quoted.join(", "),
+                  },
+                ),
+              )
+            : String(i18n.t("errors:generic.forbidden")),
       code,
-      // The server's text names the missing right: kept for "Détails techniques" and support.
-      technical: rawMsg.trim() || null,
+      // A refusal is not a technical error: no "Détails techniques" (the server's English text
+      // names a permission code and would only repeat the sentence above).
+      technical: null,
     };
   }
 

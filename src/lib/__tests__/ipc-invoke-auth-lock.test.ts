@@ -131,7 +131,8 @@ describe("ipc-invoke auth lock gating", () => {
     expect(toasts).toHaveLength(1);
     expect(toasts[0]).toMatchObject({
       title: "Permission refusée.",
-      description: "Droit requis : Gérer les comptes utilisateurs",
+      description:
+        "Droit manquant : « Gérer les comptes utilisateurs ». Demandez à votre administrateur de l'ajouter à votre rôle.",
       variant: "destructive",
     });
     // The server's technical English text is never shown.

@@ -448,6 +448,75 @@ async fn maintenance_profile_sums_costs_and_rolls_up_components() {
     assert_eq!(rolled.failure_work_order_count, 2);
 }
 
+/// L2-06: a new asset shows no figure it has no data for. The health score stays "no data" while
+/// only register events exist, age runs from the commissioning date (never the record creation),
+/// and the lifetime cost names the date of its first work.
+#[tokio::test]
+async fn new_asset_figures_wait_for_real_data_and_age_runs_from_commissioning() {
+    let db = setup().await;
+    let site = site_with_cost_center(&db).await;
+    let asset = identity::create_asset(&db, payload("PMP-NEW", site, None), 1)
+        .await
+        .expect("create");
+    // A register event only (a move): not condition data.
+    exec(
+        &db,
+        &format!(
+            "INSERT INTO equipment_lifecycle_events (entity_sync_id, equipment_id, event_type, occurred_at, created_at) VALUES ('l206-move', {id}, 'moved', '{now}', '{now}')",
+            id = asset.id,
+            now = chrono::Utc::now().to_rfc3339()
+        ),
+    )
+    .await;
+    let health = crate::assets::health::get_asset_health_score(&db, asset.id)
+        .await
+        .expect("health");
+    assert_eq!((health.score, health.label.as_str()), (None, "no_data"));
+
+    let summary = crate::assets::history::get_asset_history_summary(&db, asset.id)
+        .await
+        .expect("summary");
+    assert_eq!(
+        (summary.commissioned_at.as_deref(), summary.age_days),
+        (None, None),
+        "no commissioning date: no age, even though the record exists"
+    );
+    let profile = maintenance_profile::get_asset_maintenance_profile(&db, asset.id, false, chrono::Utc::now())
+        .await
+        .expect("profile");
+    assert_eq!((profile.work_order_count, profile.cost_since.as_deref()), (0, None));
+
+    // Commissioned eight years ago: the age says so although the record is new.
+    let commissioned = (chrono::Utc::now() - chrono::Duration::days(8 * 365))
+        .date_naive()
+        .to_string();
+    exec(
+        &db,
+        &format!(
+            "UPDATE equipment SET commissioning_date = '{commissioned}' WHERE id = {}",
+            asset.id
+        ),
+    )
+    .await;
+    let summary = crate::assets::history::get_asset_history_summary(&db, asset.id)
+        .await
+        .expect("summary");
+    assert_eq!(summary.commissioned_at.as_deref(), Some(commissioned.as_str()));
+    assert!(summary.age_days.expect("age") >= 8 * 365);
+
+    // A first work order is maintenance evidence: the score appears, and the cost names its start.
+    let at = (chrono::Utc::now() - chrono::Duration::days(20)).to_rfc3339();
+    work_order(&db, "OT-L206", asset.id, "corrective", "closed", 300.0, &at).await;
+    let health = crate::assets::health::get_asset_health_score(&db, asset.id)
+        .await
+        .expect("health");
+    assert!(health.score.is_some());
+    let profile = maintenance_profile::get_asset_maintenance_profile(&db, asset.id, false, chrono::Utc::now())
+        .await
+        .expect("profile");
+    assert_eq!(profile.cost_since.as_deref(), Some(at.as_str()));
+}
+
 async fn article(db: &DatabaseConnection, code: &str) -> i64 {
     exec(
         db,

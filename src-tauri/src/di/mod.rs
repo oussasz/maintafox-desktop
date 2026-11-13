@@ -39,4 +39,6 @@ mod query_tests;
 #[cfg(test)]
 mod review_tests;
 #[cfg(test)]
+mod safety_alert_tests;
+#[cfg(test)]
 mod tests;

@@ -33,12 +33,14 @@ const PAGE_SOURCE: Record<string, string> = {
   "/inventory": "src/pages/InventoryPage.tsx",
   "/permits": "src/pages/PermitsPage.tsx",
   "/equipment": "src/pages/assets/AssetRegistryPage.tsx",
+  "/planning": "src/pages/PlanningPage.tsx",
 };
 
 /** How a page names a query parameter it reads (literal, or the constant that holds it). */
 const PARAM_SPELLING: Record<string, string[]> = {
   queue: ['"queue"'],
   permit: ["PERMIT_QUERY_SELECT"],
+  openWo: ["LIST_PARAM.openWo"],
 };
 
 function readsParam(path: string, param: string): boolean {

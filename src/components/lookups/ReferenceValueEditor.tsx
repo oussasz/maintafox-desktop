@@ -31,6 +31,17 @@ import {
   removesCriticalTag,
 } from "@/components/lookups/AbsenceBehaviourPicker";
 import {
+  type CharacteristicEditState,
+  CharacteristicEditCells,
+  CharacteristicHeadCells,
+  CharacteristicReadCells,
+  EMPTY_CHARACTERISTIC_EDIT,
+  buildCharacteristicMetadata,
+  characteristicComplete,
+  characteristicStateFrom,
+  useCharacteristicUnits,
+} from "@/components/lookups/CharacteristicColumns";
+import {
   MaintenanceNatureSelect,
   MaintenanceNatureText,
   useMaintenanceNatures,
@@ -77,6 +88,7 @@ import {
   ReferenceValueTableRow,
 } from "@/components/lookups/ReferenceValueTable";
 import { SchedulePatternDialog } from "@/components/lookups/SchedulePatternPanel";
+import { codeFromLabel } from "@/components/lookups/reference-code";
 import { buildReferenceCsv } from "@/components/lookups/reference-csv";
 import {
   REFERENCE_SET_STATUS_TONE,
@@ -229,9 +241,12 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
     natureTag: null,
   });
   const [deleteTarget, setDeleteTarget] = useState<ReferenceValue | null>(null);
+  /** The user typed the code: stop proposing one from the label. */
+  const [codeTouched, setCodeTouched] = useState(false);
   const [aliasValueId, setAliasValueId] = useState<number | null>(null);
   const [patternValueId, setPatternValueId] = useState<number | null>(null);
-  const [sortField, setSortField] = useState<SortField>("code");
+  // Sorted by the French label: the code is internal (L5-19).
+  const [sortField, setSortField] = useState<SortField>("label");
   const [sortAsc, setSortAsc] = useState(true);
   const [parentCandidates, setParentCandidates] = useState<ReferenceValue[]>([]);
   const columnFlags = useMemo(() => resolveReferenceValueColumns(domain), [domain]);
@@ -242,9 +257,22 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
     showAbsenceBehaviour,
     showUnit,
     showPermitRule,
+    showCharacteristic,
     crossDomainParentCode,
     sameSetHierarchy,
   } = columnFlags;
+  // Technical characteristics per family (EQUIPMENT.CHARACTERISTICS): type, unit, required.
+  const characteristicUnits = useCharacteristicUnits(showCharacteristic);
+  const [editChar, setEditChar] = useState<CharacteristicEditState>(EMPTY_CHARACTERISTIC_EDIT);
+  const [newChar, setNewChar] = useState<CharacteristicEditState>(EMPTY_CHARACTERISTIC_EDIT);
+  // A value that hangs under a value of another list (family -> class, sub-family -> family, ...)
+  // is only offered by forms once its parent is chosen: without a parent it would never show up.
+  const parentRequired = crossDomainParentCode != null;
+  const hierarchyHintKey = `editor.hierarchy.${
+    domain?.code === "EQUIPMENT.FAMILY" || domain?.code === "EQUIPMENT.SUBFAMILY"
+      ? domain.code.replace(".", "_")
+      : "generic"
+  }`;
   // The nature (request types) and the absence behaviour (absence types) are both `semantic_tag`.
   const showSemanticTag = showNature || showAbsenceBehaviour;
   // Permit requirement rules (PERMIT.REQUIREMENT_RULES): class / work type → permit type.
@@ -360,18 +388,25 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
       });
       if (showUnit) setEditUnit(unitEditStateFrom(v));
       if (showPermitRule) setEditRule(permitRuleStateFrom(v));
+      if (showCharacteristic) setEditChar(characteristicStateFrom(v));
       setAliasValueId(null);
       if (showSchedule) {
         setPatternValueId(v.id);
       }
     },
-    [setEditingValueId, showSchedule, showUnit, showPermitRule],
+    [setEditingValueId, showSchedule, showUnit, showPermitRule, showCharacteristic],
   );
 
   const cancelEdit = useCallback(() => {
     setEditingValueId(null);
     setPatternValueId(null);
   }, [setEditingValueId]);
+
+  const confirmSaved = useCallback(
+    (key: "editor.savedToast" | "editor.addedToast", label: string) =>
+      pushAppToast({ title: t(key, { label }), variant: "success" }),
+    [t],
+  );
 
   const commitEdit = useCallback(
     async (valueId: number) => {
@@ -384,6 +419,7 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
             description: editRow.description || null,
             metadata_json: buildPermitRuleMetadata(existing.metadata_json, editRule),
           });
+          confirmSaved("editor.savedToast", editRow.label);
           return;
         }
         if (showUnit && existing) {
@@ -406,11 +442,22 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
               baseFactor: factor,
             }),
           });
+          confirmSaved("editor.savedToast", editRow.label);
           return;
         }
+        if (showCharacteristic && !characteristicComplete(editChar)) return;
+        if (parentRequired && editRow.parentId == null) return;
         await saveValue(valueId, {
           label: editRow.label,
           description: editRow.description || null,
+          ...(showCharacteristic
+            ? {
+                metadata_json: buildCharacteristicMetadata(
+                  existing?.metadata_json ?? null,
+                  editChar,
+                ),
+              }
+            : {}),
           // "" clears the nature on the server (corrective fallback); null would leave it. An
           // absence type without a behaviour is refused by the server (required).
           ...(showSemanticTag ? { semantic_tag: editRow.natureTag ?? "" } : {}),
@@ -422,6 +469,7 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
           }));
         }
         setPatternValueId(null);
+        confirmSaved("editor.savedToast", editRow.label);
       } catch {
         // The store keeps the translated error (shown above the table) and the row stays in edit.
       }
@@ -431,19 +479,25 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
       editRow,
       values,
       showParent,
+      parentRequired,
       showSemanticTag,
       showUnit,
       editUnit,
       showPermitRule,
       editRule,
+      showCharacteristic,
+      editChar,
+      confirmSaved,
     ],
   );
 
   const startNewRow = useCallback(() => {
     setNewValueDraft({});
     setNewRow({ code: "", label: "", description: "", parentId: null, natureTag: null });
+    setCodeTouched(false);
     setNewUnit(EMPTY_UNIT_EDIT);
     setNewRule(EMPTY_PERMIT_RULE_EDIT);
+    setNewChar(EMPTY_CHARACTERISTIC_EDIT);
   }, [setNewValueDraft]);
 
   const cancelNewRow = useCallback(() => {
@@ -452,9 +506,14 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
 
   const commitNewRow = useCallback(async () => {
     if (!newRow.code.trim() || !newRow.label.trim()) return;
+    const added = newRow.label.trim();
+    const addAndConfirm = async (payload: CreateReferenceValuePayload) => {
+      await addValue(payload);
+      if (!useReferenceGovernanceStore.getState().error) confirmSaved("editor.addedToast", added);
+    };
     if (showPermitRule) {
       if (!permitRuleComplete(newRule)) return;
-      await addValue({
+      await addAndConfirm({
         set_id: setId,
         code: newRow.code.trim(),
         label: newRow.label.trim(),
@@ -467,7 +526,7 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
       // A plant unit: base standard unit (same set) and factor; the dimension is the base's.
       const factor = parsePositiveNumber(newUnit.factor);
       if (factor == null || newUnit.baseId == null || !newUnit.symbol.trim()) return;
-      await addValue({
+      await addAndConfirm({
         set_id: setId,
         parent_id: newUnit.baseId,
         code: newRow.code.trim(),
@@ -481,6 +540,8 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
       });
       return;
     }
+    if (showCharacteristic && !characteristicComplete(newChar)) return;
+    if (parentRequired && newRow.parentId == null) return;
     const payload: CreateReferenceValuePayload = {
       set_id: setId,
       ...(newRow.parentId != null ? { parent_id: newRow.parentId } : {}),
@@ -488,9 +549,23 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
       label: newRow.label.trim(),
       description: newRow.description.trim() || null,
       ...(showSemanticTag && newRow.natureTag ? { semantic_tag: newRow.natureTag } : {}),
+      ...(showCharacteristic ? { metadata_json: buildCharacteristicMetadata(null, newChar) } : {}),
     };
-    await addValue(payload);
-  }, [addValue, setId, newRow, showSemanticTag, showUnit, newUnit, showPermitRule, newRule]);
+    await addAndConfirm(payload);
+  }, [
+    addValue,
+    confirmSaved,
+    setId,
+    newRow,
+    showSemanticTag,
+    showUnit,
+    newUnit,
+    showPermitRule,
+    newRule,
+    showCharacteristic,
+    newChar,
+    parentRequired,
+  ]);
 
   const confirmDeactivate = useCallback(async () => {
     if (!deleteTarget) return;
@@ -733,6 +808,13 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
             {showPermitRule ? (
               <p className="px-1 pb-2 text-xs text-text-secondary">{t("permitRules.intro")}</p>
             ) : null}
+            {parentRequired ? (
+              <p className="px-1 pb-2 text-xs text-text-secondary">
+                {t(hierarchyHintKey as "editor.none", {
+                  parent: parentDomain?.name ?? crossDomainParentCode,
+                })}
+              </p>
+            ) : null}
             {showPermitRule && unusableRules.length > 0 ? (
               <p
                 role="alert"
@@ -926,7 +1008,7 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
                 sortDirection={sortDirection("code")}
                 onSort={() => toggleSort("code")}
               >
-                {t("editor.colCode")}
+                <span title={t("editor.codeHint")}>{t("editor.colCode")}</span>
               </ReferenceValueTableHeadCell>
               <ReferenceValueTableHeadCell
                 sortable
@@ -940,6 +1022,7 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
               </ReferenceValueTableHeadCell>
               {showUnit ? <UnitHeadCells /> : null}
               {showPermitRule ? <PermitRuleHeadCells /> : null}
+              {showCharacteristic ? <CharacteristicHeadCells /> : null}
               {showSchedule ? (
                 <ReferenceValueTableHeadCell>
                   {t("schedulePattern.column")}
@@ -979,7 +1062,12 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
                 <ReferenceValueTableCell>
                   <Input
                     value={newRow.code}
-                    onChange={(e) => setNewRow({ ...newRow, code: e.target.value })}
+                    onChange={(e) => {
+                      // Emptying the field brings the proposal from the label back.
+                      setCodeTouched(e.target.value !== "");
+                      setNewRow({ ...newRow, code: e.target.value.toUpperCase() });
+                    }}
+                    title={t("editor.codeProposedHint")}
                     onKeyDown={handleNewKeyDown}
                     placeholder={t("editor.codePlaceholder")}
                     aria-label={t("editor.colCode")}
@@ -990,7 +1078,13 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
                 <ReferenceValueTableCell>
                   <Input
                     value={newRow.label}
-                    onChange={(e) => setNewRow({ ...newRow, label: e.target.value })}
+                    onChange={(e) =>
+                      setNewRow({
+                        ...newRow,
+                        label: e.target.value,
+                        ...(codeTouched ? {} : { code: codeFromLabel(e.target.value) }),
+                      })
+                    }
                     onKeyDown={handleNewKeyDown}
                     placeholder={t("editor.labelPlaceholder")}
                     aria-label={t("editor.colLabel")}
@@ -1023,6 +1117,13 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
                     options={permitRuleOptions}
                   />
                 ) : null}
+                {showCharacteristic ? (
+                  <CharacteristicEditCells
+                    state={newChar}
+                    onChange={setNewChar}
+                    units={characteristicUnits.units}
+                  />
+                ) : null}
                 {showSchedule ? (
                   <ReferenceValueTableCell className="text-xs text-text-muted">
                     {t("schedulePattern.afterCreate")}
@@ -1039,15 +1140,23 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
                         })
                       }
                       aria-label={t("editor.colParent")}
+                      aria-invalid={parentRequired && newRow.parentId == null}
                       className={cn(mfInput.nativeSelect, "h-9")}
                     >
-                      <option value="">{t("editor.none")}</option>
+                      <option value="">
+                        {parentRequired ? t("editor.parentChoose") : t("editor.none")}
+                      </option>
                       {parentCandidates.map((p) => (
                         <option key={p.id} value={p.id}>
                           {parentLabel(p)}
                         </option>
                       ))}
                     </select>
+                    {parentRequired && newRow.parentId == null ? (
+                      <p role="alert" className="mt-1 text-xs text-tone-danger-fg">
+                        {t("editor.parentMissing")}
+                      </p>
+                    ) : null}
                   </ReferenceValueTableCell>
                 ) : null}
                 {showNature ? (
@@ -1086,7 +1195,8 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
                         !newRow.code.trim() ||
                         !newRow.label.trim() ||
                         (showUnit && !unitEditComplete(newUnit)) ||
-                        (showPermitRule && !permitRuleComplete(newRule))
+                        (showPermitRule && !permitRuleComplete(newRule)) ||
+                        (showCharacteristic && !characteristicComplete(newChar))
                       }
                     >
                       <Check className="h-4 w-4 text-status-success" aria-hidden />
@@ -1151,7 +1261,12 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
                             aria-label={t("editor.systemValue")}
                           />
                         ) : null}
-                        <span className="font-mono text-xs">{v.code}</span>
+                        <span
+                          className="font-mono text-xs text-text-muted"
+                          title={t("editor.codeHint")}
+                        >
+                          {v.code}
+                        </span>
                       </span>
                     )}
                   </ReferenceValueTableCell>
@@ -1173,6 +1288,7 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
                             type="button"
                             className="min-h-9 shrink-0 rounded text-left text-xs font-medium text-primary underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                             aria-expanded={aliasValueId === v.id}
+                            title={t("editor.aliasesHint")}
                             onClick={() => {
                               setAliasValueId(aliasValueId === v.id ? null : v.id);
                               if (aliasValueId !== v.id) setPatternValueId(null);
@@ -1226,6 +1342,17 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
                       <PermitRuleReadCells value={v} options={permitRuleOptions} />
                     )
                   ) : null}
+                  {showCharacteristic ? (
+                    isEditing ? (
+                      <CharacteristicEditCells
+                        state={editChar}
+                        onChange={setEditChar}
+                        units={characteristicUnits.units}
+                      />
+                    ) : (
+                      <CharacteristicReadCells value={v} />
+                    )
+                  ) : null}
                   {showSchedule ? (
                     <ReferenceValueTableCell className="text-xs text-text-muted">
                       <button
@@ -1240,28 +1367,41 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
                   {showParent ? (
                     <ReferenceValueTableCell className="text-xs text-text-muted">
                       {isEditing ? (
-                        <select
-                          value={editRow.parentId == null ? "" : String(editRow.parentId)}
-                          onChange={(e) =>
-                            setEditRow({
-                              ...editRow,
-                              parentId: e.target.value ? Number(e.target.value) : null,
-                            })
-                          }
-                          aria-label={t("editor.colParent")}
-                          className={cn(mfInput.nativeSelect, "h-9")}
-                        >
-                          <option value="">{t("editor.none")}</option>
-                          {parentCandidates
-                            .filter((p) => p.id !== v.id)
-                            .map((p) => (
-                              <option key={p.id} value={p.id}>
-                                {parentLabel(p)}
-                              </option>
-                            ))}
-                        </select>
+                        <>
+                          <select
+                            value={editRow.parentId == null ? "" : String(editRow.parentId)}
+                            onChange={(e) =>
+                              setEditRow({
+                                ...editRow,
+                                parentId: e.target.value ? Number(e.target.value) : null,
+                              })
+                            }
+                            aria-label={t("editor.colParent")}
+                            aria-invalid={parentRequired && editRow.parentId == null}
+                            className={cn(mfInput.nativeSelect, "h-9")}
+                          >
+                            <option value="">
+                              {parentRequired ? t("editor.parentChoose") : t("editor.none")}
+                            </option>
+                            {parentCandidates
+                              .filter((p) => p.id !== v.id)
+                              .map((p) => (
+                                <option key={p.id} value={p.id}>
+                                  {parentLabel(p)}
+                                </option>
+                              ))}
+                          </select>
+                          {parentRequired && editRow.parentId == null ? (
+                            <p role="alert" className="mt-1 text-xs text-tone-danger-fg">
+                              {t("editor.parentMissing")}
+                            </p>
+                          ) : null}
+                        </>
                       ) : parentValue ? (
-                        parentLabel(parentValue)
+                        // The French label; the internal code only on hover (L5-19).
+                        <span title={parentValue.code}>{parentValue.label}</span>
+                      ) : parentRequired ? (
+                        <span className="text-tone-warning-fg">{t("editor.orphanParent")}</span>
                       ) : (
                         "—"
                       )}
@@ -1306,7 +1446,10 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
                     <div className="flex items-center gap-2" title={switchReason}>
                       <Switch
                         checked={v.is_active}
-                        onCheckedChange={(next) => void setValueActive(v.id, next)}
+                        // Switching a value off asks first (it disappears from every picker).
+                        onCheckedChange={(next) =>
+                          next ? void setValueActive(v.id, true) : setDeleteTarget(v)
+                        }
                         disabled={savingValue || !canDeactivateValue || isSystemRow}
                         aria-label={t("editor.activeToggle", { label: v.label })}
                       />
@@ -1329,7 +1472,8 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
                           disabled={
                             savingValue ||
                             (showUnit && !unitEditComplete(editUnit)) ||
-                            (showPermitRule && !permitRuleComplete(editRule))
+                            (showPermitRule && !permitRuleComplete(editRule)) ||
+                            (showCharacteristic && !characteristicComplete(editChar))
                           }
                         >
                           <Check className="h-4 w-4 text-status-success" aria-hidden />

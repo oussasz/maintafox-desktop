@@ -244,7 +244,32 @@ mod m20261025_000262_delegation_policy_author;
 mod m20261026_000263_availability_block_version;
 pub(crate) mod m20261026_000264_reliability_decision_seal;
 mod m20261026_000265_retired_equipment_reviews;
+mod m20261029_000266_mobile_phone_enrolled_notice;
 mod m20261101_000036_activity_audit_log;
+mod m20261101_000270_meter_reading_cancellation;
+mod m20261102_000267_role_models;
+pub(crate) mod m20261102_000268_org_root_level_label;
+mod m20261102_000269_procurement_approval_rights;
+mod m20261104_000271_role_models_receipt;
+mod m20261104_000272_permit_cancel_reason;
+mod m20261104_000273_bulk_import;
+mod m20261104_000274_permit_type_work_at_height;
+mod m20261104_000275_wo_parts_to_issue;
+mod m20261104_000277_wo_depannage;
+mod m20261104_000278_permit_rule_critical_asset;
+mod m20261104_000279_wo_required_permit_types;
+mod m20261106_000282_di_safety_alert;
+mod m20261106_000283_permit_isolation_zero_energy;
+mod m20261110_000286_wo_history_records;
+mod m20261111_000287_library_document_control;
+mod m20261111_000288_library_document_versions;
+mod m20261111_000289_asset_condition_and_repeat_failures;
+mod m20261111_000290_permit_safety_content;
+mod m20261111_000291_non_stock_wo_purchase;
+mod m20261111_000292_pm_plan_coverage;
+mod m20261111_000293_contractors_returns;
+mod m20261111_000294_permit_workers;
+mod m20261113_000296_wo_warranty_claim;
 mod m20261201_000037_observability_permissions;
 mod m_test;
 
@@ -496,6 +521,31 @@ impl MigratorTrait for Migrator {
             Box::new(m20261026_000263_availability_block_version::Migration),
             Box::new(m20261026_000264_reliability_decision_seal::Migration),
             Box::new(m20261026_000265_retired_equipment_reviews::Migration),
+            Box::new(m20261029_000266_mobile_phone_enrolled_notice::Migration),
+            Box::new(m20261102_000268_org_root_level_label::Migration),
+            Box::new(m20261102_000267_role_models::Migration),
+            Box::new(m20261102_000269_procurement_approval_rights::Migration),
+            Box::new(m20261101_000270_meter_reading_cancellation::Migration),
+            Box::new(m20261104_000271_role_models_receipt::Migration),
+            Box::new(m20261104_000272_permit_cancel_reason::Migration),
+            Box::new(m20261104_000273_bulk_import::Migration),
+            Box::new(m20261104_000274_permit_type_work_at_height::Migration),
+            Box::new(m20261104_000275_wo_parts_to_issue::Migration),
+            Box::new(m20261104_000278_permit_rule_critical_asset::Migration),
+            Box::new(m20261104_000279_wo_required_permit_types::Migration),
+            Box::new(m20261106_000282_di_safety_alert::Migration),
+            Box::new(m20261106_000283_permit_isolation_zero_energy::Migration),
+            Box::new(m20261111_000287_library_document_control::Migration),
+            Box::new(m20261111_000288_library_document_versions::Migration),
+            Box::new(m20261111_000289_asset_condition_and_repeat_failures::Migration),
+            Box::new(m20261111_000292_pm_plan_coverage::Migration),
+            Box::new(m20261104_000277_wo_depannage::Migration),
+            Box::new(m20261110_000286_wo_history_records::Migration),
+            Box::new(m20261111_000290_permit_safety_content::Migration),
+            Box::new(m20261111_000291_non_stock_wo_purchase::Migration),
+            Box::new(m20261111_000293_contractors_returns::Migration),
+            Box::new(m20261111_000294_permit_workers::Migration),
+            Box::new(m20261113_000296_wo_warranty_claim::Migration),
         ]
     }
 }

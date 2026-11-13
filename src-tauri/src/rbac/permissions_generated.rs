@@ -97,8 +97,12 @@ pub const REF_PUBLISH: &str = "ref.publish";
 pub const INV_VIEW: &str = "inv.view";
 /// Issue, return, adjust, and transfer stock
 pub const INV_MANAGE: &str = "inv.manage";
-/// Create and approve purchase requisitions and orders
+/// Create and manage purchase requisitions and orders
 pub const INV_PROCURE: &str = "inv.procure";
+/// Approve or reject purchase requisitions and orders, within the role's approval limit
+pub const INV_APPROVE: &str = "inv.approve";
+/// Record goods receipts against purchase orders
+pub const INV_RECEIVE: &str = "inv.receive";
 /// Execute and post stock count sessions
 pub const INV_COUNT: &str = "inv.count";
 /// View PM plans and occurrences
@@ -173,6 +177,10 @@ pub const PTW_VIEW: &str = "ptw.view";
 pub const PTW_ISSUE: &str = "ptw.issue";
 /// Close and cancel work permits
 pub const PTW_CLOSE: &str = "ptw.close";
+/// Record the HSE approval of work permits
+pub const PTW_HSE_APPROVE: &str = "ptw.hse_approve";
+/// Place and remove one's own personal padlock on the group lock box of a work permit one is listed on
+pub const PTW_LOCK_OWN: &str = "ptw.lock_own";
 /// View budgets and cost data
 pub const FIN_VIEW: &str = "fin.view";
 /// Manage governed budget baselines
@@ -405,7 +413,7 @@ pub const CATALOG: &[PermissionMeta] = &[
         name: OT_APPROVE,
         description: "Approve work orders from draft / planning",
         category: "ot",
-        is_dangerous: false,
+        is_dangerous: true,
         requires_step_up: false,
         usage: "backend",
         aliases: &[],
@@ -574,12 +582,30 @@ pub const CATALOG: &[PermissionMeta] = &[
     },
     PermissionMeta {
         name: INV_PROCURE,
-        description: "Create and approve purchase requisitions and orders",
+        description: "Create and manage purchase requisitions and orders",
         category: "inv",
         is_dangerous: true,
         requires_step_up: false,
         usage: "both",
         aliases: &["inv.order"],
+    },
+    PermissionMeta {
+        name: INV_APPROVE,
+        description: "Approve or reject purchase requisitions and orders, within the role's approval limit",
+        category: "inv",
+        is_dangerous: true,
+        requires_step_up: false,
+        usage: "both",
+        aliases: &[],
+    },
+    PermissionMeta {
+        name: INV_RECEIVE,
+        description: "Record goods receipts against purchase orders",
+        category: "inv",
+        is_dangerous: false,
+        requires_step_up: false,
+        usage: "both",
+        aliases: &[],
     },
     PermissionMeta {
         name: INV_COUNT,
@@ -630,7 +656,7 @@ pub const CATALOG: &[PermissionMeta] = &[
         name: PM_APPROVE,
         description: "Approve PM plan changes",
         category: "pm",
-        is_dangerous: false,
+        is_dangerous: true,
         requires_step_up: false,
         usage: "both",
         aliases: &[],
@@ -774,7 +800,7 @@ pub const CATALOG: &[PermissionMeta] = &[
         name: PLAN_CONFIRM,
         description: "Confirm planning commitments",
         category: "plan",
-        is_dangerous: false,
+        is_dangerous: true,
         requires_step_up: false,
         usage: "both",
         aliases: &[],
@@ -900,7 +926,7 @@ pub const CATALOG: &[PermissionMeta] = &[
         name: PTW_ISSUE,
         description: "Issue work permits",
         category: "ptw",
-        is_dangerous: false,
+        is_dangerous: true,
         requires_step_up: false,
         usage: "backend",
         aliases: &["ptw.create", "ptw.approve"],
@@ -913,6 +939,25 @@ pub const CATALOG: &[PermissionMeta] = &[
         requires_step_up: true,
         usage: "backend",
         aliases: &["ptw.cancel"],
+    },
+    PermissionMeta {
+        name: PTW_HSE_APPROVE,
+        description: "Record the HSE approval of work permits",
+        category: "ptw",
+        is_dangerous: true,
+        requires_step_up: false,
+        usage: "both",
+        aliases: &[],
+    },
+    PermissionMeta {
+        name: PTW_LOCK_OWN,
+        description:
+            "Place and remove one's own personal padlock on the group lock box of a work permit one is listed on",
+        category: "ptw",
+        is_dangerous: false,
+        requires_step_up: false,
+        usage: "both",
+        aliases: &[],
     },
     PermissionMeta {
         name: FIN_VIEW,
@@ -1343,6 +1388,31 @@ pub const DEPENDENCIES: &[PermissionDep] = &[
         dep_type: "hard",
     },
     PermissionDep {
+        permission: INV_APPROVE,
+        requires: INV_VIEW,
+        dep_type: "hard",
+    },
+    PermissionDep {
+        permission: PTW_HSE_APPROVE,
+        requires: PTW_VIEW,
+        dep_type: "hard",
+    },
+    PermissionDep {
+        permission: PTW_LOCK_OWN,
+        requires: PTW_VIEW,
+        dep_type: "warn",
+    },
+    PermissionDep {
+        permission: INV_APPROVE,
+        requires: INV_PROCURE,
+        dep_type: "hard",
+    },
+    PermissionDep {
+        permission: INV_RECEIVE,
+        requires: INV_VIEW,
+        dep_type: "hard",
+    },
+    PermissionDep {
         permission: INV_COUNT,
         requires: INV_VIEW,
         dep_type: "hard",
@@ -1563,8 +1633,6 @@ pub const OPERATOR_PERMISSIONS: &[&str] = &[
     PM_VIEW,
     RAM_VIEW,
     SYNC_VIEW,
-    REP_VIEW,
-    ARC_VIEW,
     DOC_VIEW,
     PLAN_VIEW,
     LOG_VIEW,
@@ -1573,8 +1641,7 @@ pub const OPERATOR_PERMISSIONS: &[&str] = &[
     ERP_VIEW,
     PTW_VIEW,
     PTW_ISSUE,
-    FIN_VIEW,
-    FIN_REPORT,
+    PTW_LOCK_OWN,
     INS_VIEW,
     INS_EXECUTE,
     CFG_VIEW,
@@ -1601,6 +1668,7 @@ pub const PLANNER_PERMISSIONS: &[&str] = &[
     INV_VIEW,
     INV_MANAGE,
     INV_PROCURE,
+    INV_RECEIVE,
     ORG_VIEW,
     PER_VIEW,
     PER_REPORT,
@@ -1641,6 +1709,200 @@ pub const HIDDEN_FROM_PLANT_SCREENS: &[&str] = &[IOT_VIEW, IOT_MANAGE, ERP_VIEW,
 
 /// Whole permission categories not shown on the plant's role screens.
 pub const HIDDEN_CATEGORIES_FROM_PLANT_SCREENS: &[&str] = &["vendor_console"];
+
+/// Role templates (role models) offered when creating a role: name → permissions copied into
+/// the new role. Migrations seed the `role_templates` rows from this list.
+pub const ROLE_TEMPLATES: &[(&str, &[&str])] = &[
+    (
+        "Supervisor Template",
+        &[
+            DI_VIEW,
+            DI_CREATE,
+            DI_SCREEN,
+            DI_REVIEW,
+            DI_APPROVE,
+            DI_CONVERT,
+            OT_VIEW,
+            OT_CREATE,
+            OT_EDIT,
+            OT_APPROVE,
+            OT_CLOSE,
+            PM_VIEW,
+            PLAN_VIEW,
+            PLAN_EDIT,
+            EQ_VIEW,
+            INV_VIEW,
+            PER_VIEW,
+            PER_POSITION_VIEW,
+            PTW_VIEW,
+            INS_VIEW,
+            TRN_VIEW,
+            ORG_VIEW,
+            DOC_VIEW,
+            REP_VIEW,
+        ],
+    ),
+    (
+        "Technician Template",
+        &[
+            OT_VIEW,
+            OT_EDIT,
+            DI_VIEW,
+            DI_CREATE,
+            EQ_VIEW,
+            INV_VIEW,
+            PM_VIEW,
+            INS_VIEW,
+            INS_EXECUTE,
+            PTW_VIEW,
+            PTW_LOCK_OWN,
+            DOC_VIEW,
+            TRN_VIEW,
+        ],
+    ),
+    (
+        "Planner Template",
+        &[
+            PLAN_VIEW,
+            PLAN_EDIT,
+            PLAN_CONFIRM,
+            PLAN_WINDOWS,
+            OT_VIEW,
+            OT_CREATE,
+            OT_EDIT,
+            DI_VIEW,
+            DI_SCREEN,
+            PM_VIEW,
+            PM_CREATE,
+            PM_EDIT,
+            INV_VIEW,
+        ],
+    ),
+    ("Observer Template", &[OT_VIEW, DI_VIEW, PM_VIEW, EQ_VIEW]),
+    (
+        "Finance Manager Template",
+        &[
+            FIN_VIEW,
+            FIN_BUDGET,
+            FIN_REPORT,
+            FIN_POST,
+            FIN_APPROVE,
+            ORG_VIEW,
+            REF_VIEW,
+            EQ_VIEW,
+            OT_VIEW,
+            INV_VIEW,
+            PM_VIEW,
+            PLAN_VIEW,
+            REP_VIEW,
+            REP_EXPORT,
+            DOC_VIEW,
+        ],
+    ),
+    (
+        "Storekeeper Template",
+        &[
+            INV_VIEW,
+            INV_MANAGE,
+            INV_COUNT,
+            INV_RECEIVE,
+            OT_VIEW,
+            EQ_VIEW,
+            REF_VIEW,
+            DOC_VIEW,
+        ],
+    ),
+    (
+        "Buyer Template",
+        &[
+            INV_VIEW,
+            INV_PROCURE,
+            OT_VIEW,
+            EQ_VIEW,
+            FIN_VIEW,
+            REF_VIEW,
+            REP_VIEW,
+            REP_EXPORT,
+            DOC_VIEW,
+        ],
+    ),
+    (
+        "HSE Manager Template",
+        &[
+            PTW_VIEW,
+            PTW_ISSUE,
+            PTW_CLOSE,
+            PTW_HSE_APPROVE,
+            PTW_LOCK_OWN,
+            OT_VIEW,
+            DI_VIEW,
+            DI_CREATE,
+            EQ_VIEW,
+            INS_VIEW,
+            TRN_VIEW,
+            PER_VIEW,
+            ORG_VIEW,
+            LOG_VIEW,
+            DOC_VIEW,
+            REP_VIEW,
+        ],
+    ),
+    (
+        "Maintenance Manager Template",
+        &[
+            DI_VIEW,
+            DI_CREATE,
+            DI_SCREEN,
+            DI_REVIEW,
+            DI_APPROVE,
+            DI_CONVERT,
+            OT_VIEW,
+            OT_CREATE,
+            OT_EDIT,
+            OT_EMERGENCY_ASSIGN,
+            OT_APPROVE,
+            OT_CLOSE,
+            OT_REOPEN,
+            PM_VIEW,
+            PM_CREATE,
+            PM_EDIT,
+            PM_APPROVE,
+            PLAN_VIEW,
+            PLAN_EDIT,
+            PLAN_CONFIRM,
+            PLAN_WINDOWS,
+            EQ_VIEW,
+            EQ_MANAGE,
+            INV_VIEW,
+            INV_PROCURE,
+            INV_APPROVE,
+            INV_RECEIVE,
+            PER_VIEW,
+            PER_REPORT,
+            PER_POSITION_VIEW,
+            RAM_VIEW,
+            RAM_ANALYZE,
+            REP_VIEW,
+            REP_EXPORT,
+            FIN_VIEW,
+            PTW_VIEW,
+            INS_VIEW,
+            TRN_VIEW,
+            ORG_VIEW,
+            REF_VIEW,
+            DOC_VIEW,
+            LOG_VIEW,
+        ],
+    ),
+    (
+        "Cost Controller Template",
+        &[
+            FIN_VIEW, FIN_REPORT, REP_VIEW, REP_EXPORT, OT_VIEW, PM_VIEW, PLAN_VIEW, INV_VIEW, EQ_VIEW, ORG_VIEW,
+            REF_VIEW, DOC_VIEW,
+        ],
+    ),
+    ("Production Operator Template", &[DI_VIEW, DI_CREATE_OWN, EQ_VIEW]),
+];
 
 /// Resolve a permission or alias to its canonical name.
 pub fn canonicalize(name: &str) -> Option<&'static str> {

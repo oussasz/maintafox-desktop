@@ -19,7 +19,8 @@
     "reliability": "Reliability",
     "documents": "Documents & Branding",
     "work_orders": "Work orders",
-    "inventory": "Inventory"
+    "inventory": "Inventory",
+    "permits": "Work permits"
   },
   "table": {
     "key": "Key",
@@ -77,15 +78,26 @@
     "inventory.count_four_eyes_value_threshold": "Four-eyes tolerance of a count: value of the variance",
     "inventory.count_four_eyes_percent_threshold": "Four-eyes tolerance of a count: share of the system quantity",
     "inventory.reconciliation_drift_break": "Stock reconciliation break gap",
-    "locale.fiscal_year_start_month": "Fiscal year starts in"
+    "locale.fiscal_year_start_month": "Fiscal year starts in",
+    "permit.gas_o2_min_percent": "Atmospheric test: lowest O2 accepted (%)",
+    "permit.gas_o2_max_percent": "Atmospheric test: highest O2 accepted (%)",
+    "permit.gas_lel_max_percent": "Atmospheric test: LEL limit (%)",
+    "permit.gas_h2s_max_ppm": "Atmospheric test: H2S limit (ppm)",
+    "permit.gas_co_max_ppm": "Atmospheric test: CO limit (ppm)",
+    "permit.gas_test_validity_hours": "Atmospheric test: validity (h)",
+    "reliability.repeat_failure_count": "Repeat failures: number of failures",
+    "reliability.repeat_failure_window_days": "Repeat failures: period (days)"
   },
   "documentHeader": {
+    "emptyPrintWarning": "Document printed without a company header",
+    "emptyPrintWhere": "No logo or plant name is set. An administrator can set it in Settings › General › Documents and branding.",
+    "emptySetupPrompt": "The document header is empty: printed work orders, requests and purchase orders leave without a logo or plant name. Add at least the plant name and the logo below.",
     "removeLogoConfirmTitle": "Remove the logo?",
     "removeLogoConfirmBody": "The logo no longer appears in the header of printed documents (work orders, purchase orders…). You can upload another one.",
     "title": "Documents & Branding",
     "description": "Configure the default letterhead injected at the top of printed work orders, intervention requests, and purchase orders.",
     "logoLabel": "Company logo",
-    "logoHint": "PNG, JPEG, WebP, or GIF. Max 5 MB. Stored for document headers and future app chrome.",
+    "logoHint": "PNG, JPEG, WebP, or GIF. Max 5 MB. Used in the header of printed documents.",
     "uploadLogo": "Upload logo",
     "replaceLogo": "Replace logo",
     "removeLogo": "Remove logo",
@@ -97,6 +109,8 @@
     "saveSuccess": "Document header saved",
     "saveError": "Failed to save document header",
     "loadError": "Failed to load document header",
+    "imageRejectedTitle": "Image not added to the header",
+    "imageRejectedBody": "This image is too heavy for the header, even shrunk (limit: {{max_kb}} KB per image). Choose a smaller image.",
     "logoUploadError": "Failed to upload logo",
     "logoClearError": "Failed to remove logo",
     "invalidShape": "Stored header value is invalid. Resetting to an empty template.",
@@ -191,13 +205,22 @@
       "require_digit": "Require Digit",
       "max_age_days": "Max Age (days)",
       "history_count": "History Count",
-      "schedule_cron": "Schedule (cron)",
+      "schedule_cron": "Automatic backup frequency",
       "retention_days": "Retention (days)",
       "include_photos": "Include Photos",
       "compression_level": "Compression Level"
     },
     "loadError": "The policy could not be loaded.",
-    "unreadable": "The stored policy is unreadable: it cannot be edited here. Contact support."
+    "unreadable": "The stored policy is unreadable: it cannot be edited here. Contact support.",
+    "schedule": {
+      "none": "No automatic backup",
+      "daily2": "Every night at 02:00",
+      "daily12": "Every day at 12:00",
+      "daily20": "Every evening at 20:00",
+      "every6h": "Every 6 hours",
+      "weeklyMonday": "Every Monday at 02:00",
+      "custom": "Custom ({{expr}})"
+    }
   },
   "permissionDenied": "You do not have permission to access settings",
   "options": {
@@ -269,7 +292,7 @@
   },
   "backupOps": {
     "title": "Backup operations",
-    "description": "Back up, validate or restore the database, and review recent runs. Scheduled backups follow the backup policy and are kept in the application's backups folder.",
+    "description": "Back up, check or restore the database, and see the history. Automatic backups follow the backup policy; they are written to the external folder chosen below, otherwise to the application's “backups” folder on this PC.",
     "loadError": "Failed to load backup history",
     "chooseTarget": "Choose backup destination",
     "chooseBackup": "Choose backup file to validate",
@@ -373,7 +396,15 @@
       "ram.fmeca_rpn_critical_threshold": "From this risk priority number (S × O × D) an FMECA failure mode is critical.",
       "backup.retention_daily": "Number of daily scheduled backups kept (at least one).",
       "backup.retention_weekly": "Number of weekly backups kept in addition.",
-      "backup.retention_monthly": "Number of monthly backups kept in addition."
+      "backup.retention_monthly": "Number of monthly backups kept in addition.",
+      "permit.gas_o2_min_percent": "A permit that requires an atmospheric test is issued only when its latest oxygen reading is at least this value (shipped value: 19.5 %).",
+      "permit.gas_o2_max_percent": "… and at most this value (shipped value: 23.5 %).",
+      "permit.gas_lel_max_percent": "The latest flammable gas reading (% of the lower explosive limit) must stay below this value (shipped value: 10 %).",
+      "permit.gas_h2s_max_ppm": "The latest hydrogen sulphide reading must stay below this value (shipped value: 10 ppm).",
+      "permit.gas_co_max_ppm": "When carbon monoxide is measured, the latest reading must stay below this value (shipped value: 25 ppm).",
+      "permit.gas_test_validity_hours": "An atmospheric test is valid for this number of hours: after that, test again before issuing or activating the permit, reinstating it after a suspension, or starting or resuming the work (shipped value: 4 h).",
+      "reliability.repeat_failure_count": "An equipment is flagged “repeat failures” from this number of unplanned failures within the period below.",
+      "reliability.repeat_failure_window_days": "Period, in days up to today, over which unplanned failures are counted for the “repeat failures” flag."
     },
     "units": {
       "wo.reopen_window_days_one": "{{count}} day",
@@ -387,7 +418,17 @@
       "backup.retention_weekly_one": "{{count}} week",
       "backup.retention_weekly_other": "{{count}} weeks",
       "backup.retention_monthly_one": "{{count}} month",
-      "backup.retention_monthly_other": "{{count}} months"
+      "backup.retention_monthly_other": "{{count}} months",
+      "permit.gas_o2_min_percent": "{{value, number(maximumFractionDigits: 6)}} %",
+      "permit.gas_o2_max_percent": "{{value, number(maximumFractionDigits: 6)}} %",
+      "permit.gas_lel_max_percent": "{{value, number(maximumFractionDigits: 6)}} % LEL",
+      "permit.gas_h2s_max_ppm": "{{value, number(maximumFractionDigits: 6)}} ppm",
+      "permit.gas_co_max_ppm": "{{value, number(maximumFractionDigits: 6)}} ppm",
+      "permit.gas_test_validity_hours": "{{value, number(maximumFractionDigits: 6)}} h",
+      "reliability.repeat_failure_count_one": "{{count}} failure",
+      "reliability.repeat_failure_count_other": "{{count}} failures",
+      "reliability.repeat_failure_window_days_one": "{{count}} day",
+      "reliability.repeat_failure_window_days_other": "{{count}} days"
     },
     "currencyLoadError": "The currency list (Reference data › Currencies) could not be loaded: the currency cannot be changed.",
     "currencyLoading": "Loading currencies…",
@@ -527,6 +568,14 @@
     "history": "History",
     "historyError": "The history could not be loaded",
     "noHistory": "No change at this site.",
+    "depannageValidation": {
+      "title": "Breakdown validation",
+      "label": "Approve breakdowns automatically at their close",
+      "help": "Off (recommended): each breakdown is validated after the fact by an approver of the site other than the person who started it, before its close. Turn on only for a site without a second approver: the breakdown is then marked \"approved automatically (site rule)\", with no validator.",
+      "active": "Breakdowns approved automatically at this site",
+      "confirmOnBody": "At {{site}}, breakdowns not validated will be approved automatically at their close, with no validator. Other sites keep the validation.",
+      "confirmOffBody": "At {{site}}, each breakdown must again be validated by an approver of the site before its close."
+    },
     "selfApproval": {
       "label": "Allow self-approval of reliability decisions and work permits",
       "help": "Off (recommended): a second person approves every reliability decision and every work permit of this site (four-eyes: not the person who wrote or submitted the permit). Turn on only for a site where one person both prepares and approves; such approvals are marked \"self-approval (site without four-eyes)\" on the permit and \"Self-approved\" on the decision.",
@@ -579,5 +628,32 @@
     "ADMIN_RECOVERY_PASSWORD_MISMATCH": "The two passwords do not match.",
     "ADMIN_RECOVERY_RETRY": "The administrator could not be saved because the database is busy: wait a moment, then retry.",
     "ADMIN_RECOVERY_NOTICE_NOT_FOUND": "This notice is not addressed to you or has already been acknowledged."
+  },
+  "backupDest": {
+    "title": "Copy outside this PC",
+    "description": "If this PC fails or is stolen, only copies kept elsewhere bring the data back. Choose an external disk (not another partition of this disk), a USB key or a network folder: automatic backups are written there. When it cannot be reached (disk unplugged, network down), the backup is made on this PC and the alert below says so.",
+    "loadError": "Could not read the backup status",
+    "outsideNone": "No backup has been copied outside this PC yet. Choose an external folder or run a backup to a USB key.",
+    "outsideOld": "Last copy outside this PC: {{date}}, more than {{days}} days ago. Check that the external folder is plugged in or reachable.",
+    "outsideOk": "Last copy outside this PC: {{date}}.",
+    "folder": "Automatic backup folder:",
+    "folderNone": "none (this PC only)",
+    "unreachable": "Unreachable right now",
+    "choose": "Choose an external folder…",
+    "change": "Change folder…",
+    "clear": "Stop copying outside the PC",
+    "chooseTitle": "Automatic backup folder",
+    "saved": "External folder saved",
+    "cleared": "Automatic backups stay on this PC",
+    "saveError": "Folder refused",
+    "guideTitle": "How to restore a backup",
+    "guideSamePcTitle": "On this PC",
+    "guideSamePc": "Click “Restore a backup…” and choose the file. The current data is backed up first, then Maintafox restarts.",
+    "guideNewPcTitle": "On a new PC (failure, replacement)",
+    "guideNewPc1": "Keep the recovery key outside this PC (“Database encryption” section): without it, no backup can be opened on another PC.",
+    "guideNewPc2": "Install the same Maintafox version (or a newer one) on the new PC, open it once, then close it.",
+    "guideNewPc3": "Copy the latest backup (.db file of the external folder) into the new PC's %APPDATA%\\systems.maintafox.desktop folder, in place of the “maintafox.db” file (rename the backup “maintafox.db”).",
+    "guideNewPc4": "Open Maintafox: it asks for the encryption key. Enter the old PC's recovery key. If Maintafox then asks to activate the workstation, follow the activation screen.",
+    "guideNewPc5": "Stop using the old PC with this data: two PCs must not work on the same copy."
   }
 }

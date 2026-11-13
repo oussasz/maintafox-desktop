@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DI_WORKFLOW_STATUS_TONE, mfTone, toneOf } from "@/design-system/tone";
 import { useFormatters } from "@/hooks/use-formatters";
+import { listLinks } from "@/lib/list-links";
 import { cn } from "@/lib/utils";
 import type { AnalyticsDiStatusSegment } from "@shared/ipc-types";
 
@@ -49,17 +50,29 @@ export function AnalyticsDiStatusChart(props: { segments: AnalyticsDiStatusSegme
               const label = diStatusLabel(t, seg.status);
               const tone = toneOf(DI_WORKFLOW_STATUS_TONE, seg.status);
               return (
-                <li key={seg.status} className="space-y-1">
-                  <div className="flex justify-between text-xs">
-                    <span className="font-medium text-text-primary">{label}</span>
-                    <span className="tabular-nums text-text-muted">{formatNumber(seg.count)}</span>
-                  </div>
-                  <div className="h-2 overflow-hidden rounded-full bg-surface-2" aria-hidden>
-                    <div
-                      className={cn("h-full rounded-full transition-all", mfTone[tone].bar)}
-                      style={{ width: `${(seg.count / max) * 100}%` }}
-                    />
-                  </div>
+                <li key={seg.status}>
+                  {/* Each status opens the request list filtered on it. */}
+                  <button
+                    type="button"
+                    className="block w-full space-y-1 rounded-md px-1 py-0.5 text-start hover:bg-surface-2"
+                    onClick={() => navigate(listLinks.requests({ status: seg.status }))}
+                  >
+                    <span className="flex justify-between text-xs">
+                      <span className="font-medium text-text-primary">{label}</span>
+                      <span className="tabular-nums text-text-muted">
+                        {formatNumber(seg.count)}
+                      </span>
+                    </span>
+                    <span
+                      className="block h-2 overflow-hidden rounded-full bg-surface-2"
+                      aria-hidden
+                    >
+                      <span
+                        className={cn("block h-full rounded-full transition-all", mfTone[tone].bar)}
+                        style={{ width: `${(seg.count / max) * 100}%` }}
+                      />
+                    </span>
+                  </button>
                 </li>
               );
             })}

@@ -74,6 +74,25 @@ impl std::fmt::Display for WoMacroState {
 // WorkOrder — full row struct matching DDL (migration 022)
 // ═══════════════════════════════════════════════════════════════════════════════
 
+/// One permit type the plant's rules require of a work order, as the work order screen shows it
+/// (`permit::wo_gate::required_permit_views`): the rule that gave it, whether it is the primary rule
+/// (the legacy `permit_rule_code`), and its state — `live` (a permit of that type is linked and not
+/// ended), `missing` (none: the start and the resume are refused) or `cleared` (lifted, who, when,
+/// why).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RequiredPermitView {
+    pub permit_type_code: String,
+    pub permit_type_name: String,
+    pub rule_code: String,
+    pub primary: bool,
+    pub cleared_at: Option<String>,
+    pub cleared_by_name: Option<String>,
+    pub clear_reason: Option<String>,
+    pub live_permit_code: Option<String>,
+    pub live_permit_status: Option<String>,
+    pub state: String,
+}
+
 /// Complete work order record for reads.
 /// Matches all columns in `work_orders` (migration 022).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -174,6 +193,24 @@ pub struct WorkOrder {
     /// (migration 255): cleared like a rule flag, never by the general edit.
     #[serde(default)]
     pub permit_from_safety_di: bool,
+    /// Created and started by the dépannage path (`wo::depannage`, migration 277): unscheduled,
+    /// planning validated after the fact.
+    #[serde(default)]
+    pub is_depannage: bool,
+    /// "Panne constatée à" (UTC): when the breakdown was found; set on a dépannage.
+    #[serde(default)]
+    pub breakdown_at: Option<String>,
+    /// "Machine arrêtée": set on a dépannage (no default).
+    #[serde(default)]
+    pub machine_stopped: Option<bool>,
+    /// After-the-fact validation of a dépannage: who validated it and when, or that it was
+    /// approved automatically. Empty until validated.
+    #[serde(default)]
+    pub validated_by_id: Option<i64>,
+    #[serde(default)]
+    pub validated_at: Option<String>,
+    #[serde(default)]
+    pub validation_auto_approved: Option<bool>,
     pub entity_sync_id: Option<String>,
     pub closeout_validation_profile_id: Option<i64>,
     pub closeout_validation_passed: bool,
@@ -191,11 +228,11 @@ pub struct WorkOrder {
     /// "Déconsignation à faire": mechanically complete with a lock still fitted under one of its
     /// permits (`permit::wo_gate::deisolation_pending_sql`); derived on read, not stored.
     pub deisolation_pending: bool,
-    /// The permit types of every plant rule that matches this work order now, when they differ
-    /// ("plusieurs règles de permis"): display only, filled by the detail read (`commands::wo::
-    /// get_wo`, `permit::requirement_rules::matching_permit_types`); empty elsewhere.
+    /// Every permit type the plant's rules require of this work order (`permit::required_set`, CMMS
+    /// Advisor 2026-11-04), each with its state: filled by the detail read and by the clearing of a
+    /// type (`permit::wo_gate::required_permit_views`); empty elsewhere.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub permit_rule_matching_types: Vec<String>,
+    pub required_permits: Vec<RequiredPermitView>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status_label: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -574,6 +611,27 @@ pub fn map_work_order(row: &QueryResult) -> AppResult<WorkOrder> {
             .try_get::<i64>("", "permit_from_safety_di")
             .map_err(|e| decode_err("permit_from_safety_di", e))?
             != 0,
+        is_depannage: row
+            .try_get::<i64>("", "is_depannage")
+            .map_err(|e| decode_err("is_depannage", e))?
+            != 0,
+        breakdown_at: row
+            .try_get::<Option<String>>("", "breakdown_at")
+            .map_err(|e| decode_err("breakdown_at", e))?,
+        machine_stopped: row
+            .try_get::<Option<i64>>("", "machine_stopped")
+            .map_err(|e| decode_err("machine_stopped", e))?
+            .map(|v| v != 0),
+        validated_by_id: row
+            .try_get::<Option<i64>>("", "validated_by_id")
+            .map_err(|e| decode_err("validated_by_id", e))?,
+        validated_at: row
+            .try_get::<Option<String>>("", "validated_at")
+            .map_err(|e| decode_err("validated_at", e))?,
+        validation_auto_approved: row
+            .try_get::<Option<i64>>("", "validation_auto_approved")
+            .map_err(|e| decode_err("validation_auto_approved", e))?
+            .map(|v| v != 0),
         entity_sync_id: row
             .try_get::<Option<String>>("", "entity_sync_id")
             .map_err(|e| decode_err("entity_sync_id", e))?,
@@ -609,7 +667,7 @@ pub fn map_work_order(row: &QueryResult) -> AppResult<WorkOrder> {
             .try_get::<i64>("", "deisolation_pending")
             .map_err(|e| decode_err("deisolation_pending", e))?
             != 0,
-        permit_rule_matching_types: Vec::new(),
+        required_permits: Vec::new(),
         status_label: row.try_get::<Option<String>>("", "status_label").unwrap_or(None),
         status_color: row.try_get::<Option<String>>("", "status_color").unwrap_or(None),
         type_code: row.try_get::<Option<String>>("", "type_code").unwrap_or(None),

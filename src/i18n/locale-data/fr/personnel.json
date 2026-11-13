@@ -155,7 +155,10 @@
       "di30d": "DI sur 30 jours"
     },
     "workHistory": {
-      "module": { "wo": "OT", "di": "DI" },
+      "module": {
+        "wo": "OT",
+        "di": "DI"
+      },
       "role": {
         "primary_responsible": "Responsable principal",
         "intervener": "Intervenant",
@@ -175,7 +178,9 @@
       "labor": "Taux horaire",
       "overtime": "Taux heures sup.",
       "source": "Source",
-      "sourceType": { "manual": "Saisie manuelle" },
+      "sourceType": {
+        "manual": "Saisie manuelle"
+      },
       "active": "Actif",
       "empty": "Aucune grille de taux. Ajoutez un taux horaire pour le Planning et le coût main-d'œuvre OT.",
       "addTitle": "Ajouter une grille de taux",
@@ -194,6 +199,8 @@
     "restricted": "Restreint"
   },
   "create": {
+    "created": "Fiche de {{name}} créée",
+    "savedEdit": "Fiche de {{name}} enregistrée",
     "positionSeedFailed": "Les exigences du poste n'ont pas pu être chargées ({{msg}}) : ajoutez les compétences à la main.",
     "photoUploadWarning": "Fiche enregistrée, mais la photo n'a pas pu être envoyée : {{msg}}",
     "qualificationsInRecord": "Les compétences et certifications d'une personne existante se gèrent dans l'onglet Qualifications de sa fiche.",
@@ -708,7 +715,8 @@
     "action": {
       "openWizard": "Importer",
       "close": "Fermer",
-      "apply": "Appliquer le lot"
+      "apply": "Appliquer le lot",
+      "applyDisabled": "Chargez et vérifiez un fichier sans erreur bloquante avant d'appliquer le lot."
     },
     "mode": {
       "label": "Mode d'import",
@@ -740,24 +748,24 @@
     "export": {
       "saved": "Export enregistré",
       "failed": "L'export n'a pas pu être enregistré",
-      "summary": "Exporter le CSV synthese",
-      "skillsGap": "Exporter le CSV ecarts de competences",
+      "summary": "Exporter le CSV synthèse",
+      "skillsGap": "Exporter le CSV écarts de compétences",
       "kpi": "Exporter le CSV KPI"
     },
     "panel": {
-      "title": "Rapports effectifs",
-      "description": "Synthese operationnelle, ecarts de competences et KPI de readiness.",
+      "title": "Analyses du personnel",
+      "description": "Synthèse du personnel, écarts de compétences et indicateurs d'aptitude à intervenir.",
       "refresh": "Actualiser les rapports"
     },
     "kpis": {
       "totalPersonnel": "Total personnel : {{count}}",
-      "avgSkills": "Moy. competences/personne : {{value}}",
-      "blockedRatio": "Taux bloques : {{value}}"
+      "avgSkills": "Compétences par personne (moyenne) : {{value}}",
+      "blockedRatio": "Personnes bloquées : {{value}}"
     },
     "skillsGap": {
-      "title": "Ecarts de competences prioritaires",
-      "empty": "Aucune donnee d'ecart disponible.",
-      "score": "Score d'ecart : {{score}}"
+      "title": "Écarts de compétences prioritaires",
+      "empty": "Aucun écart de compétences à signaler.",
+      "score": "Écart de compétences : {{score}}"
     }
   },
   "capacityDays": {
@@ -779,6 +787,7 @@
     "bases": {
       "roster": "Classes horaires",
       "rest_day": "Repos",
+      "site_rest_day": "Repos du site",
       "holiday": "Jour férié",
       "no_schedule": "Aucune classe horaire",
       "no_members": "Aucun membre"
@@ -835,6 +844,20 @@
     "contractStart": "Début du contrat",
     "contractEnd": "Fin du contrat",
     "endBeforeStart": "La fin du contrat précède son début.",
+    "contractNumber": "N° de contrat",
+    "contractAmount": "Montant du contrat",
+    "amountInvalid": "Saisissez un montant positif.",
+    "alertDays": "Alerte avant la fin (jours)",
+    "alertDaysInvalid": "Saisissez un nombre entier de jours entre 0 et 365.",
+    "amount": "Montant / consommé",
+    "consumed": "Consommé : {{amount}}",
+    "contractState": {
+      "active": "Contrat en cours",
+      "expiring": "Se termine dans {{days}} jours",
+      "expired": "Contrat expiré"
+    },
+    "contractAlert_one": "{{count}} sous-traitant actif a un contrat bientôt échu ou échu.",
+    "contractAlert_other": "{{count}} sous-traitants actifs ont un contrat bientôt échu ou échu.",
     "onboarding": "Référencement",
     "insurance": "Assurance",
     "notes": "Remarques",
@@ -853,6 +876,14 @@
       "valid": "Valide",
       "expired": "Échue",
       "not_required": "Non exigée"
+    },
+    "performance": {
+      "header": "Performance",
+      "workOrders_one": "{{count}} OT confié",
+      "workOrders_other": "{{count}} OT confiés",
+      "onTime": "Délais tenus : {{pct}} % ({{onTime}}/{{total}})",
+      "noClosed": "Aucun OT clôturé avec échéance",
+      "onTimeHint": "Part des OT clôturés au plus tard à leur fin planifiée, parmi les OT clôturés qui avaient une fin planifiée (OT annulés exclus)."
     }
   },
   "siteWeek": {

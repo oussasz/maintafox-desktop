@@ -1,8 +1,10 @@
 /**
  * WoAuditTimeline.tsx
  *
- * Read-only vertical timeline showing WO audit change events.
- * Presentation via shared Timeline; fetch/mapping stay here.
+ * Read-only vertical timeline showing the OT's history: its change events and the audit-trail
+ * events whose object is the OT (close-out, imported history), with the fields each one changed
+ * ("Date de clôture : — → 28/10/2026 18:26"). Presentation via shared Timeline; fetch/mapping
+ * stay here.
  */
 
 import {
@@ -20,6 +22,12 @@ import {
 import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 
+import { AuditChangeList } from "@/components/activity/AuditChangeList";
+import {
+  eventLabel,
+  payloadChanges,
+  payloadChangesUnavailable,
+} from "@/components/activity/activity-labels";
 import { Timeline } from "@/components/timeline";
 import type { TimelineEntry, TimelineTone } from "@/components/timeline";
 import { mfTone } from "@/design-system/tone";
@@ -35,6 +43,7 @@ const HISTORY_MAX = 500;
 /** Actions recorded by the backend (`wo_change_events.action`) that have a translated label. */
 const KNOWN_ACTIONS = new Set([
   "created",
+  "updated",
   "submitted",
   "planned",
   "planning_approved",
@@ -65,6 +74,7 @@ const KNOWN_ACTIONS = new Set([
   "task_reopened",
   "labor_closed_by_cancellation",
   "labor_closed_by_closeout",
+  "labor_added",
 ]);
 
 function actionIcon(action: string) {
@@ -99,7 +109,7 @@ function actionIcon(action: string) {
 }
 
 function resultTone(result: string): TimelineTone {
-  if (result === "applied") return "success";
+  if (result === "applied" || result === "success") return "success";
   if (result === "blocked") return "danger";
   if (result === "partial") return "warning";
   return "default";
@@ -116,12 +126,24 @@ function requiresPermitOf(detailsJson: string | null): boolean | null {
   }
 }
 
+/** `{"origin": "depannage"}` of an assignment made by a dépannage (`wo::depannage`); else false. */
+function fromDepannage(detailsJson: string | null): boolean {
+  if (!detailsJson) return false;
+  try {
+    const parsed = JSON.parse(detailsJson) as { origin?: unknown };
+    return parsed.origin === "depannage";
+  } catch {
+    return false;
+  }
+}
+
 interface WoAuditTimelineProps {
   woId: number;
 }
 
 export function WoAuditTimeline({ woId }: WoAuditTimelineProps) {
   const { t, i18n } = useTranslation("ot");
+  const { t: tActivity } = useTranslation("activity");
   const fetchLatest = useCallback((limit: number) => listWoChangeEvents(woId, limit), [woId]);
   const history = useLatestHistory<WoChangeEvent>(fetchLatest, {
     pageSize: HISTORY_PAGE,
@@ -132,8 +154,9 @@ export function WoAuditTimeline({ woId }: WoAuditTimelineProps) {
   const entries: TimelineEntry[] = useMemo(
     () =>
       events.map((evt) => {
+        const fromAudit = evt.source === "audit";
         const resultKey =
-          evt.apply_result === "applied"
+          evt.apply_result === "applied" || (fromAudit && evt.apply_result === "success")
             ? "audit.applied"
             : evt.apply_result === "blocked"
               ? "audit.blocked"
@@ -151,11 +174,38 @@ export function WoAuditTimeline({ woId }: WoAuditTimelineProps) {
         const known = KNOWN_ACTIONS.has(evt.action);
         const permit =
           evt.action === "permit_requirement_changed" ? requiresPermitOf(evt.details_json) : null;
+        const changes = payloadChanges(evt.details_json);
+        const unavailable = payloadChangesUnavailable(evt.details_json);
+        const permitText =
+          permit !== null ? t(permit ? "audit.permitRequired" : "audit.permitNotRequired") : null;
+        const originText =
+          evt.action === "assigned" && fromDepannage(evt.details_json)
+            ? t("audit.originDepannage")
+            : null;
+        // Audit-trail events are named like in the audit log (`activity` labels).
+        const title = fromAudit
+          ? eventLabel(tActivity, evt.action)
+          : known
+            ? t(`audit.actions.${evt.action}`)
+            : t("audit.actions.other");
         return {
-          id: String(evt.id),
-          title: known ? t(`audit.actions.${evt.action}`) : t("audit.actions.other"),
-          ...(permit !== null
-            ? { description: t(permit ? "audit.permitRequired" : "audit.permitNotRequired") }
+          id: `${evt.source}-${evt.id}`,
+          title,
+          ...(permitText !== null || originText !== null || changes.length > 0 || unavailable
+            ? {
+                description: (
+                  <>
+                    {originText !== null ? <span className="block">{originText}</span> : null}
+                    {permitText !== null ? <span className="block">{permitText}</span> : null}
+                    <AuditChangeList changes={changes} className="text-xs" />
+                    {unavailable ? (
+                      <span className="block text-xs text-text-muted">
+                        {tActivity("audit.detail.changesUnavailable")}
+                      </span>
+                    ) : null}
+                  </>
+                ),
+              }
             : {}),
           timestamp: evt.acted_at,
           actor:
@@ -164,7 +214,7 @@ export function WoAuditTimeline({ woId }: WoAuditTimelineProps) {
           badges,
         };
       }),
-    [events, t],
+    [events, t, tActivity],
   );
 
   return (

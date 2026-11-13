@@ -35,7 +35,12 @@ import {
   composeArticleActivity,
   computeArticleKpis,
 } from "@/components/inventory/article-activity";
+import {
+  type PricedPurchase,
+  summarizeSupplierPrices,
+} from "@/components/inventory/supplier-price-history";
 import { useLookupOptions } from "@/components/inventory/use-lookup-options";
+import { BackToOriginButton } from "@/components/ui/back-to-origin-button";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -68,12 +73,14 @@ import { StatusChip } from "@/components/ui/status-chip";
 import { PROCUREMENT_STATUS_TONE, REPAIRABLE_STATUS_TONE, toneOf } from "@/design-system/tone";
 import { useFormatters } from "@/hooks/use-formatters";
 import { formatOrDash, formatSiteLabel } from "@/lib/display";
+import { cn } from "@/lib/utils";
 import {
   type InventoryArticleRow,
   deleteInventoryArticleEquivalent,
   getInventoryArticleRepairableHistory,
   isBelowReorderPoint,
   listInventoryArticleEquivalents,
+  listInventoryArticleUsage,
   listInventoryArticlePurchaseHistory,
   listInventoryDocumentLinks,
   listInventoryReservations,
@@ -94,6 +101,7 @@ export type ArticleDetailView =
   | "stock_positions"
   | "reservations"
   | "purchase_history"
+  | "used_on"
   | "equivalents"
   | "repairable_history"
   | "documents";
@@ -107,6 +115,8 @@ export interface ArticleDetailWorkspaceProps {
   onStockAdjusted?: () => void;
   /** Optional: open a purchase order from the purchase history section. */
   onOpenPurchaseOrder?: (purchaseOrderId: number) => void;
+  /** Set when the article was opened by a link from another screen: shows "← Retour". */
+  onBackToOrigin?: () => void;
 }
 
 /** One independently loaded section of the article detail. */
@@ -174,6 +184,7 @@ export function ArticleDetailWorkspace({
   onCreateRequisition,
   onStockAdjusted,
   onOpenPurchaseOrder,
+  onBackToOrigin,
 }: ArticleDetailWorkspaceProps) {
   const { t } = useTranslation("inventory");
   const { t: tc } = useTranslation("common");
@@ -211,6 +222,7 @@ export function ArticleDetailWorkspace({
     [],
     articleId,
   );
+  const usedOn = useSection(() => listInventoryArticleUsage(articleId), [], articleId);
   const equivalents = useSection(() => listInventoryArticleEquivalents(articleId), [], articleId);
   const repairableHistory = useSection(
     () => getInventoryArticleRepairableHistory(articleId),
@@ -313,6 +325,7 @@ export function ArticleDetailWorkspace({
       { id: "stock_positions", label: t("detail.tabs.stockPositions") },
       { id: "reservations", label: t("detail.tabs.reservations") },
       { id: "purchase_history", label: t("article.sections.purchaseHistory") },
+      { id: "used_on", label: t("article.sections.usedOn") },
       { id: "equivalents", label: t("article.sections.equivalents") },
       { id: "repairable_history", label: t("article.sections.repairableHistory") },
       { id: "documents", label: t("article.sections.documents") },
@@ -384,6 +397,7 @@ export function ArticleDetailWorkspace({
 
   return (
     <div className="flex h-full flex-col space-y-4 overflow-auto p-4">
+      {onBackToOrigin ? <BackToOriginButton onClick={onBackToOrigin} /> : null}
       <EntityDetailHeader
         code={article.article_code}
         designation={article.article_name}
@@ -641,6 +655,7 @@ export function ArticleDetailWorkspace({
                 <p className="text-sm text-text-muted">{t("article.purchaseHistory.empty")}</p>
               ) : (
                 <div className="space-y-2">
+                  <SupplierPriceTable rows={purchaseHistory.data} />
                   {purchaseHistory.data.map((row) => (
                     <div
                       key={row.purchase_order_id}
@@ -689,6 +704,54 @@ export function ArticleDetailWorkspace({
                     </div>
                   ))}
                 </div>
+              )}
+            </SectionBody>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {/* ── USED ON (where-used list from the equipment parts lists) ── */}
+      {activeView === "used_on" ? (
+        <Card>
+          <CardContent className="space-y-3 pt-4">
+            <p className="text-sm text-text-muted">{t("article.usedOn.hint")}</p>
+            <SectionBody section={usedOn}>
+              {usedOn.data.length === 0 ? (
+                <p className="text-sm text-text-muted">{t("article.usedOn.empty")}</p>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-surface-border text-left text-text-muted">
+                      <th className="py-2 pr-3 font-medium">
+                        {t("article.usedOn.columns.equipment")}
+                      </th>
+                      <th className="py-2 pr-3 text-right font-medium">
+                        {t("article.usedOn.columns.quantity")}
+                      </th>
+                      <th className="py-2 font-medium">{t("article.usedOn.columns.critical")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {usedOn.data.map((u) => (
+                      <tr key={u.asset_id} className="border-b border-surface-border last:border-0">
+                        <td className="py-2 pr-3">
+                          <span className="font-medium">{u.asset_code}</span>{" "}
+                          <span className="text-text-secondary">{u.asset_name}</span>
+                        </td>
+                        <td className="py-2 pr-3 text-right tabular-nums">
+                          {formatNumber(u.quantity)}
+                        </td>
+                        <td className="py-2">
+                          {u.is_critical_spare ? (
+                            <Badge variant="destructive">{t("article.usedOn.critical")}</Badge>
+                          ) : (
+                            "—"
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               )}
             </SectionBody>
           </CardContent>
@@ -1164,6 +1227,78 @@ export function ArticleDetailWorkspace({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+/** Price history per supplier (UX L3-13): last and previous price, change, lowest and highest. */
+function SupplierPriceTable({ rows }: { rows: readonly PricedPurchase[] }) {
+  const { t } = useTranslation("inventory");
+  const { formatCurrency, formatNumber, formatDate } = useFormatters();
+  const summaries = summarizeSupplierPrices(rows);
+  if (summaries.length === 0) return null;
+  return (
+    <div className="overflow-x-auto rounded border border-surface-border">
+      <table className="w-full text-xs">
+        <caption className="px-2.5 pt-2 text-left text-sm font-medium">
+          {t("article.priceHistory.title")}
+        </caption>
+        <thead className="text-text-muted">
+          <tr>
+            <th className="px-2.5 py-1.5 text-left font-medium">
+              {t("article.priceHistory.supplier")}
+            </th>
+            <th className="px-2.5 py-1.5 text-right font-medium">
+              {t("article.priceHistory.last")}
+            </th>
+            <th className="px-2.5 py-1.5 text-right font-medium">
+              {t("article.priceHistory.previous")}
+            </th>
+            <th className="px-2.5 py-1.5 text-right font-medium">
+              {t("article.priceHistory.change")}
+            </th>
+            <th className="px-2.5 py-1.5 text-right font-medium">
+              {t("article.priceHistory.range")}
+            </th>
+            <th className="px-2.5 py-1.5 text-right font-medium">
+              {t("article.priceHistory.purchases")}
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {summaries.map((s) => (
+            <tr key={s.supplierId ?? "none"} className="border-t border-surface-border">
+              <td className="px-2.5 py-1.5">
+                {s.supplierName ?? t("article.priceHistory.noSupplier")}
+                {s.lastOrderedAt ? (
+                  <span className="ml-1 text-text-muted">({formatDate(s.lastOrderedAt)})</span>
+                ) : null}
+              </td>
+              <td className="px-2.5 py-1.5 text-right tabular-nums">
+                {formatCurrency(s.lastPrice)}
+              </td>
+              <td className="px-2.5 py-1.5 text-right tabular-nums">
+                {s.previousPrice != null ? formatCurrency(s.previousPrice) : "—"}
+              </td>
+              <td
+                className={cn(
+                  "px-2.5 py-1.5 text-right tabular-nums",
+                  s.changePct != null && s.changePct > 0 && "text-status-danger",
+                  s.changePct != null && s.changePct < 0 && "text-status-success",
+                )}
+              >
+                {s.changePct != null
+                  ? `${s.changePct > 0 ? "+" : ""}${formatNumber(s.changePct, { maximumFractionDigits: 1 })} %`
+                  : "—"}
+              </td>
+              <td className="px-2.5 py-1.5 text-right tabular-nums">
+                {formatCurrency(s.minPrice)} – {formatCurrency(s.maxPrice)}
+              </td>
+              <td className="px-2.5 py-1.5 text-right tabular-nums">{formatNumber(s.purchases)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

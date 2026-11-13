@@ -11,10 +11,11 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { BudgetCockpitView, cockpitCsv } from "@/components/finance/BudgetCockpitView";
 import { BudgetPeriodsPanel, closeBlocker } from "@/components/finance/BudgetPeriodsPanel";
+import { groupBudgetLines } from "@/components/finance/BudgetPlanningPanel";
 import { SettlementWorklist } from "@/components/finance/SettlementWorklist";
 import { variancePct } from "@/components/finance/VarianceReviewsPanel";
 import { parseAmount } from "@/components/finance/WoCostEstimateDialog";
-import { WoCostPanel, costVariance } from "@/components/finance/WoCostPanel";
+import { WoCostPanel, costVariance, isNegligibleVariance } from "@/components/finance/WoCostPanel";
 import { forecastTone } from "@/components/finance/finance-tone";
 import { catalogLabel, periodCalendarMonth } from "@/components/finance/use-finance-catalogs";
 import { useFormatters } from "@/hooks/use-formatters";
@@ -27,6 +28,7 @@ import type {
   WoCostView,
 } from "@/services/finance-cost-service";
 import { formatDecimalInput } from "@/utils/decimal";
+import type { BudgetLine } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
 const svc = vi.hoisted(() => ({
@@ -67,6 +69,16 @@ function money(value: number, currency?: string): string {
   let out = "";
   function Probe() {
     out = useFormatters().formatCurrency(value, currency);
+    return null;
+  }
+  render(<Probe />);
+  return out;
+}
+
+function pct(value: number): string {
+  let out = "";
+  function Probe() {
+    out = useFormatters().formatPercent(value);
     return null;
   }
   render(<Probe />);
@@ -256,6 +268,39 @@ describe("finance helpers", () => {
     expect(costVariance(figures(null, null, 0, 50))).toBeNull();
   });
 
+  it("shows no gap before any cost is booked and treats a tiny gap as none", () => {
+    expect(costVariance(figures(5000, null, 0, 0))).toBeNull();
+    const tiny = figures(5000, null, 0, 5001.12);
+    expect(costVariance(tiny)?.amount).toBeCloseTo(1.12);
+    expect(isNegligibleVariance({ base: "estimated", amount: 1.12 }, tiny)).toBe(true);
+    const real = figures(5000, null, 0, 6000);
+    expect(isNegligibleVariance({ base: "estimated", amount: 1000 }, real)).toBe(false);
+  });
+
+  it("groups budget lines by cost centre with subtotals, whole year then months (L7-24)", () => {
+    const line = (id: number, cc: number, name: string, month: number | null, amount: number) =>
+      ({
+        id,
+        cost_center_id: cc,
+        cost_center_code: `CC-${cc}`,
+        cost_center_name: name,
+        period_month: month,
+        budget_bucket: "labor",
+        planned_amount: amount,
+      }) as BudgetLine;
+    const groups = groupBudgetLines([
+      line(1, 2, "Utilités", 3, 100),
+      line(2, 1, "Atelier", 2, 50),
+      line(3, 2, "Utilités", null, 400),
+      line(4, 2, "Utilités", 1, 25),
+    ]);
+    expect(groups.map((g) => [g.name, g.lines.length, g.subtotal])).toEqual([
+      ["Atelier", 1, 50],
+      ["Utilités", 3, 525],
+    ]);
+    expect(groups[1]?.lines.map((l) => l.period_month)).toEqual([null, 1, 3]);
+  });
+
   it("parses typed amounts with comma or dot and refuses negatives", () => {
     expect(parseAmount("1 250,50")).toBe(1250.5);
     expect(parseAmount("")).toBe(0);
@@ -397,6 +442,20 @@ describe("SettlementWorklist", () => {
     await waitFor(() => expect(onChanged).toHaveBeenCalled());
   });
 
+  it("keeps the intro to one sentence and folds the settlement rules (L7-24)", async () => {
+    svc.listWoSettlements.mockResolvedValue([]);
+    render(
+      <MemoryRouter>
+        <SettlementWorklist fiscalYear={2026} />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText(enBudget.settlements.intro)).toBeInTheDocument();
+    const how = screen.getByTestId("settlement-how");
+    expect(how).not.toHaveAttribute("open");
+    expect(how).toHaveTextContent(enBudget.settlements.howTitle);
+    expect(how.querySelectorAll("li")).toHaveLength(4);
+  });
+
   it("offers no retry without the posting right", async () => {
     svc.listWoSettlements.mockResolvedValue([settlement()]);
     render(
@@ -448,7 +507,7 @@ describe("BudgetPeriodsPanel", () => {
     ]);
     render(<BudgetPeriodsPanel fiscalYear={2025} currency="DZD" />);
     await screen.findByText("January 2025");
-    expect(screen.queryByRole("button", { name: "Close" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Close the month" })).not.toBeInTheDocument();
   });
 
   it("closes an ended month and keeps a month with pending OTs locked", async () => {
@@ -471,13 +530,17 @@ describe("BudgetPeriodsPanel", () => {
     svc.listBudgetPeriods.mockResolvedValue(months);
     svc.closeBudgetPeriod.mockResolvedValue(months);
     render(<BudgetPeriodsPanel fiscalYear={2025} currency="DZD" />);
-    const buttons = await screen.findAllByRole("button", { name: "Close" });
+    const buttons = await screen.findAllByRole("button", { name: "Close the month" });
     expect(buttons).toHaveLength(12);
+    // L7-13: the twelve ended months still open are announced above the table.
+    expect(screen.getByRole("status").textContent).toContain(
+      "12 months have ended and are still open",
+    );
     expect(buttons[1]).toBeDisabled();
     fireEvent.click(buttons[0] as HTMLElement);
     const dialog = await screen.findByRole("dialog");
     const confirm = Array.from(dialog.querySelectorAll("button")).find(
-      (b) => b.textContent === "Close",
+      (b) => b.textContent === "Close the month",
     );
     fireEvent.click(confirm as HTMLElement);
     await waitFor(() =>
@@ -556,6 +619,7 @@ describe("BudgetCockpitView", () => {
           equipment_code: "PMP-001",
           event_at: "2026-10-10T10:00:00Z",
           is_reversal: false,
+          row_version: 1,
         },
       ],
       commitments: [],
@@ -578,6 +642,18 @@ describe("BudgetCockpitView", () => {
     );
     await screen.findByText("CC-MNT-PMP");
     expect(document.body.textContent).toContain(money(4200, "DZD"));
+    // L7-14: consumption against the budget of the months already started (460 / 3 500), the
+    // annual share beside it, and the cumulative sentence naming both budgets.
+    expect(document.body.textContent).toContain(pct((460 / 3500) * 100));
+    expect(document.body.textContent).toContain(
+      `Actual / budget from January to October; ${pct((460 / 4200) * 100)} of the annual budget`,
+    );
+    expect(document.body.textContent).toContain(`${pct((1500 / 4200) * 100)} of the annual budget`);
+    expect(document.body.textContent).toContain(
+      `From January to October: actual ${money(460, "DZD")} against a budget of ${money(3500, "DZD")} for these months (annual budget ${money(4200, "DZD")}).`,
+    );
+    expect(screen.getByText("Budget and actual by month (DZD)")).toBeInTheDocument();
+    expect(screen.getByTestId("burn-axis").children).toHaveLength(3);
     expect(document.body.textContent).toContain("1 closed work order is waiting for settlement");
     fireEvent.click(screen.getByRole("button", { name: "Show pending settlements" }));
     expect(onNavigate).toHaveBeenCalledWith("settlements");
@@ -620,6 +696,7 @@ describe("BudgetCockpitView", () => {
         equipment_code: null,
         event_at: "2026-10-10T10:00:00Z",
         is_reversal: false,
+        row_version: 1,
       });
       svc.getBudgetCockpitDrilldown.mockReset();
       svc.getBudgetCockpitDrilldown

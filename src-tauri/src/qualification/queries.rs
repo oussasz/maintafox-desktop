@@ -1,4 +1,4 @@
-use chrono::{Duration, NaiveDate, Utc};
+use chrono::{Duration, NaiveDate};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use uuid::Uuid;
 
@@ -71,7 +71,7 @@ pub(crate) fn readiness_status(
             let Some(exp_d) = parse_iso_date(exp) else {
                 return "expired".to_string();
             };
-            let today = Utc::now().date_naive();
+            let today = crate::clock::now().date_naive();
             if exp_d < today {
                 return "expired".to_string();
             }
@@ -415,7 +415,7 @@ pub async fn replace_profile_skills(
     profile_id: i64,
     skill_reference_value_ids: &[i64],
 ) -> AppResult<()> {
-    let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "DELETE FROM qualification_profile_skills WHERE profile_id = ?",

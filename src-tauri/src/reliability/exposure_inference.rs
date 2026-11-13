@@ -141,7 +141,7 @@ pub async fn infer_exposure_hours(
 
     let p0 = parse_dt_utc(period_start)?;
     let p1 = parse_dt_utc(period_end)?;
-    let now = Utc::now();
+    let now = crate::clock::now();
     let window_end = if p1 < now { p1 } else { now };
     let exclude_injected_sources = crate::commands::product_license::is_product_activation_complete(db).await?;
     if exclude_injected_sources {

@@ -2,16 +2,19 @@ import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 
+import { smallCountChange } from "@/components/analytics/analytics-kpi-trend";
 import {
   VisualMetricCard,
   type VisualMetricTrendSense,
 } from "@/components/metrics/VisualMetricCard";
+import { useFleetKpiText } from "@/components/reliability/use-fleet-kpi-text";
 import { Button } from "@/components/ui/button";
 import { useFormatters, type Formatters } from "@/hooks/use-formatters";
 import type { OverviewKpiCell, OverviewKpisPayload } from "@shared/ipc-types";
 import {
   DEFAULT_KPI_STABLE_BELOW,
   OVERVIEW_KPI_REGISTRY_BY_KEY,
+  OVERVIEW_KPI_SEMANTIC_KEYS,
   isOverviewKpiAccent,
   isOverviewKpiSemanticKey,
   type OverviewKpiLayoutEntry,
@@ -59,6 +62,7 @@ export function OverviewMetricCards(props: {
 }) {
   const { t } = useTranslation("dashboard");
   const { t: tr } = useTranslation("reports");
+  const fleetText = useFleetKpiText();
   const navigate = useNavigate();
   const formatters = useFormatters();
   const { formatNumber } = formatters;
@@ -103,6 +107,18 @@ export function OverviewMetricCards(props: {
         sense: senseForDelta(points, direction),
       };
     }
+    // A small count changes in units ("+3"), never "+300 %" for 1 to 4 (L7-08); its colour
+    // still follows the KPI's sense (a rising overdue count stays red).
+    if (cell.value_kind === "count") {
+      const delta = smallCountChange(cell.value, cell.previous_value);
+      if (delta === 0) return { label: t("kpi.stable"), sense: "neutral" };
+      if (delta !== null) {
+        return {
+          label: `${delta > 0 ? "+" : ""}${formatNumber(delta)}`,
+          sense: senseForDelta(delta, direction),
+        };
+      }
+    }
     const pct = trendPercent(cell.value, cell.previous_value);
     if (pct === null) return undefined;
     if (Math.abs(pct) < stableBelow) {
@@ -114,6 +130,27 @@ export function OverviewMetricCards(props: {
       label: `${sign}${formatNumber(rounded)} %`,
       sense: senseForDelta(cell.value - cell.previous_value, direction),
     };
+  };
+
+  /**
+   * Context of a card. A fleet reliability cell is worded as on the RAMS home from its live figures
+   * (`study::fleet_kpis`): MTBF and Aₒ with window and hours basis, MTTR with its definition, each
+   * with its exclusions; data quality with its window only. The others: their registry text.
+   */
+  const contextOf = (cell: OverviewKpiCell, contextKey: string): string => {
+    const fleet = cell.fleet;
+    if (fleet == null) return t(contextKey as never);
+    const period = fleetText.months(fleet.window_months);
+    switch (cell.semantic_key) {
+      case OVERVIEW_KPI_SEMANTIC_KEYS.MTBF:
+        return fleetText.rateContext("mtbf", fleet.kpis, period);
+      case OVERVIEW_KPI_SEMANTIC_KEYS.MTTR:
+        return fleetText.rateContext("mttr", fleet.kpis, period);
+      case OVERVIEW_KPI_SEMANTIC_KEYS.AVAILABILITY:
+        return fleetText.rateContext("availability", fleet.kpis, period);
+      default:
+        return period;
+    }
   };
 
   /** The KPI's "stable" band, worded from the registry value. */
@@ -151,7 +188,7 @@ export function OverviewMetricCards(props: {
             <VisualMetricCard
               key={entry.id}
               title={t(reg.labelKey as never)}
-              context={t(reg.contextKey as never)}
+              context={contextOf(cell, reg.contextKey)}
               value={available ? formatCellValue(cell, formatters) : "—"}
               available={available}
               unavailableLabel="—"

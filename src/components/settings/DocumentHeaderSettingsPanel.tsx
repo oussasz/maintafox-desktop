@@ -6,21 +6,25 @@ import { DocumentHeaderEditor } from "@/components/editor/DocumentHeaderEditor";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { mfAlert } from "@/design-system/tokens";
+import { i18n } from "@/i18n/config";
 import { appErrorReason } from "@/lib/app-error";
+import { HEADER_IMAGE_MAX_BYTES } from "@/lib/document-header-image";
 import {
+  documentHeaderIssue,
   isDocumentHeaderHtmlEmpty,
   sanitizeDocumentHeaderHtml,
 } from "@/lib/document-header-sanitize";
 import {
-  clearDocumentBrandingLogo,
   DOCUMENT_HEADER_SETTING_KEY,
+  type DocumentHeaderSettingValue,
   EMPTY_DOCUMENT_HEADER,
+  clearDocumentBrandingLogo,
   getSetting,
   parseDocumentHeaderValue,
   readDocumentBrandingLogoPreview,
   setSetting,
   uploadDocumentBrandingLogo,
-  type DocumentHeaderSettingValue,
 } from "@/services/settings-service";
 
 interface DocumentHeaderSettingsPanelProps {
@@ -52,7 +56,7 @@ export function DocumentHeaderSettingsPanel({
     setLoading(true);
     setLoadError(false);
     try {
-      const row = await getSetting(DOCUMENT_HEADER_SETTING_KEY, "tenant");
+      const row = await getSetting(DOCUMENT_HEADER_SETTING_KEY, "tenant", { notifyOnError: false });
       const rawJson = row?.setting_value_json ?? null;
       if (rawJson) {
         try {
@@ -136,18 +140,32 @@ export function DocumentHeaderSettingsPanel({
     setSaving(true);
     try {
       const sanitized = sanitizeDocumentHeaderHtml(draftHtml);
+      // Refused here with its reason when the engine would refuse it (too large).
+      const issue = documentHeaderIssue(sanitized);
+      if (issue) {
+        onToast({
+          title: t("documentHeader.saveError"),
+          description: String(i18n.t(`errors:gateError.${issue.code}`, issue.params)),
+          variant: "destructive",
+        });
+        return;
+      }
       const payload: DocumentHeaderSettingValue = {
         version: 1,
         content_json: value.content_json,
         html: sanitized,
         logo_relative_path: value.logo_relative_path,
       };
-      await setSetting({
-        key: DOCUMENT_HEADER_SETTING_KEY,
-        scope: "tenant",
-        value_json: JSON.stringify(payload),
-        change_summary: t("documentHeader.save"),
-      });
+      // The failure is shown once, here (title: what failed, text: why): no global toast.
+      await setSetting(
+        {
+          key: DOCUMENT_HEADER_SETTING_KEY,
+          scope: "tenant",
+          value_json: JSON.stringify(payload),
+          change_summary: t("documentHeader.save"),
+        },
+        { notifyOnError: false },
+      );
       setValue(payload);
       setDraftHtml(sanitized);
       onToast({ title: t("documentHeader.saveSuccess"), variant: "success" });
@@ -166,6 +184,7 @@ export function DocumentHeaderSettingsPanel({
 
   const previewHtml = sanitizeDocumentHeaderHtml(draftHtml);
   const previewEmpty = isDocumentHeaderHtmlEmpty(previewHtml);
+  const savedEmpty = isDocumentHeaderHtmlEmpty(sanitizeDocumentHeaderHtml(value.html));
 
   return (
     <Card className="shadow-none">
@@ -192,6 +211,12 @@ export function DocumentHeaderSettingsPanel({
           </div>
         ) : (
           <>
+            {savedEmpty ? (
+              // Printed documents leave without logo or plant name until this is set (L5-29).
+              <p role="status" className={mfAlert.warning}>
+                {t("documentHeader.emptySetupPrompt")}
+              </p>
+            ) : null}
             <div className="space-y-2">
               <p className="text-sm font-medium text-text-primary">
                 {t("documentHeader.logoLabel")}
@@ -238,6 +263,15 @@ export function DocumentHeaderSettingsPanel({
               <DocumentHeaderEditor
                 contentJson={value.content_json}
                 disabled={saving}
+                onImageRejected={() =>
+                  onToast({
+                    title: t("documentHeader.imageRejectedTitle"),
+                    description: t("documentHeader.imageRejectedBody", {
+                      max_kb: String(Math.floor(HEADER_IMAGE_MAX_BYTES / 1000)),
+                    }),
+                    variant: "destructive",
+                  })
+                }
                 insertImageSrc={pendingInsertSrc}
                 onInsertImageConsumed={() => setPendingInsertSrc(null)}
                 onChange={({ contentJson, html }) => {

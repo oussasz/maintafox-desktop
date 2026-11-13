@@ -1,17 +1,18 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import i18next from "i18next";
-import { createRef, type ReactNode } from "react";
+import { type ReactNode, createRef } from "react";
 import { initReactI18next } from "react-i18next";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   ProcurementRepairablePanel,
+  type ProcurementRepairablePanelHandle,
   purchaseOrderCancelTarget,
   requisitionDeclineOrCloseTarget,
-  type ProcurementRepairablePanelHandle,
 } from "@/components/inventory/ProcurementRepairablePanel";
 import enCommon from "@/i18n/en/common.json";
 import enInventory from "@/i18n/locale-data/en/inventory.json";
+import { useSessionStore } from "@/store/session-store";
 
 const mocks = vi.hoisted(() => ({
   createInventoryMultiLineRequisition: vi.fn(),
@@ -35,6 +36,7 @@ const mocks = vi.hoisted(() => ({
   listInventoryGoodsReceipts: vi.fn(),
   listInventoryGoodsReceiptLines: vi.fn(),
   listInventoryStateEvents: vi.fn(),
+  listProcurementApproverRoles: vi.fn(),
   getInventoryPurchaseOrderDetail: vi.fn(),
   updateInventoryProcurementPostingState: vi.fn(),
   upsertInventoryDocumentLink: vi.fn(),
@@ -228,6 +230,13 @@ describe("ProcurementRepairablePanel", () => {
     mocks.listInventoryGoodsReceipts.mockResolvedValue([]);
     mocks.listInventoryGoodsReceiptLines.mockResolvedValue([]);
     mocks.listInventoryStateEvents.mockResolvedValue([]);
+    mocks.listProcurementApproverRoles.mockResolvedValue({
+      document_type: "REQUISITION",
+      document_id: 503,
+      amount: 120,
+      amount_unknown_reason: null,
+      role_names: ["Administrator"],
+    });
     mocks.listInventoryDocumentLinks.mockResolvedValue([]);
     mocks.updateInventoryProcurementPostingState.mockResolvedValue({});
     mocks.upsertInventoryDocumentLink.mockResolvedValue({});
@@ -440,12 +449,20 @@ describe("ProcurementRepairablePanel", () => {
     render(<ProcurementRepairablePanel />);
     await openRow("REQ-3");
     const detail = await screen.findByRole("dialog");
+    // A submitted requisition names who approves it.
+    expect(await within(detail).findByText("To be approved by: Administrator")).toBeInTheDocument();
     fireEvent.click(within(detail).getByRole("button", { name: "Reject" }));
 
     const rejectDialog = await screen.findByRole("dialog", { name: "Reject requisition" });
+    // No reason typed yet: the grey button says what is missing.
+    expect(within(rejectDialog).getByRole("button", { name: "Reject requisition" })).toBeDisabled();
+    expect(within(rejectDialog).getByTestId("inv-reject-reason-blocker")).toHaveTextContent(
+      "Enter the rejection reason.",
+    );
     fireEvent.change(within(rejectDialog).getByLabelText("Rejection reason"), {
       target: { value: "Duplicate of REQ-2" },
     });
+    expect(within(rejectDialog).queryByTestId("inv-reject-reason-blocker")).not.toBeInTheDocument();
     fireEvent.click(within(rejectDialog).getByRole("button", { name: "Reject requisition" }));
 
     await waitFor(() =>
@@ -455,6 +472,49 @@ describe("ProcurementRepairablePanel", () => {
     );
     const stillOpen = await screen.findByRole("dialog", { name: "Reject requisition" });
     expect(within(stillOpen).getByLabelText("Rejection reason")).toHaveValue("Duplicate of REQ-2");
+  });
+
+  it("greys Approve in the row menu of the user's own request, with the reason (L5-08)", async () => {
+    // Same rule as `inventory::approvals::ensure_can_approve`: the requester never approves.
+    useSessionStore.setState({ info: { user_id: 7 } as never });
+    try {
+      mocks.listInventoryProcurementRequisitions.mockResolvedValue([
+        {
+          id: 504,
+          req_number: "REQ-4",
+          demand_source_type: "MANUAL",
+          demand_source_id: null,
+          demand_source_ref: null,
+          purchase_priority: "NORMAL",
+          status: "SUBMITTED",
+          posting_state: "PENDING_POSTING",
+          posting_error: null,
+          requested_by_id: 7,
+          requested_by_name: "Amina Haddad",
+          row_version: 1,
+          created_at: "2026-01-01T00:00:00Z",
+          updated_at: "2026-01-01T00:00:00Z",
+        },
+      ]);
+      render(<ProcurementRepairablePanel />);
+      await screen.findByText("REQ-4");
+      const trigger = screen.getAllByRole("button", {
+        name: enInventory.procurement.requisitions.actions.menu,
+      })[0] as HTMLElement;
+      fireEvent.keyDown(trigger, { key: "Enter" });
+
+      const approve = await screen.findByRole("menuitem", {
+        name: new RegExp(`^${enInventory.procurement.requisitions.actions.approve}`),
+      });
+      const reason = enInventory.procurement.approval.ownDocument;
+      expect(approve).toHaveAttribute("data-disabled");
+      expect(approve).toHaveAttribute("title", reason);
+      expect(approve).toHaveTextContent(reason);
+      fireEvent.click(approve);
+      expect(mocks.transitionInventoryProcurementRequisition).not.toHaveBeenCalled();
+    } finally {
+      useSessionStore.setState({ info: null });
+    }
   });
 
   it("asks before cancelling a draft PO and sends CANCELLED, not CLOSED", async () => {

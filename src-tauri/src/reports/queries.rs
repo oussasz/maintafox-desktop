@@ -214,32 +214,22 @@ pub async fn insert_run(
     export_format: &str,
 ) -> AppResult<i64> {
     let now = Utc::now().to_rfc3339();
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO report_runs (schedule_id, template_id, user_id, status, export_format, started_at)
-         VALUES (?, ?, ?, ?, ?, ?)",
-        [
-            schedule_id.into(),
-            template_id.into(),
-            user_id.into(),
-            status.into(),
-            export_format.into(),
-            now.clone().into(),
-        ],
-    ))
-    .await?;
-    let row = db
-        .query_one(Statement::from_string(
+    let inserted = db
+        .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT last_insert_rowid() AS id".to_string(),
+            "INSERT INTO report_runs (schedule_id, template_id, user_id, status, export_format, started_at)
+         VALUES (?, ?, ?, ?, ?, ?)",
+            [
+                schedule_id.into(),
+                template_id.into(),
+                user_id.into(),
+                status.into(),
+                export_format.into(),
+                now.clone().into(),
+            ],
         ))
         .await?;
-    let id: i64 = row
-        .as_ref()
-        .ok_or_else(|| AppError::Database(sea_orm::DbErr::Custom("last_insert_rowid".into())))?
-        .try_get("", "id")
-        .map_err(|e| AppError::Database(sea_orm::DbErr::Custom(format!("id: {e}"))))?;
-    Ok(id)
+    crate::db::inserted_id(&inserted)
 }
 
 pub async fn finish_run_success(
@@ -324,7 +314,8 @@ pub async fn upsert_schedule(
         .await?;
         Ok(id)
     } else {
-        db.execute(Statement::from_sql_and_values(
+        let inserted = db
+            .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO report_schedules (user_id, template_id, cron_expr, export_format, enabled, next_run_at, created_at, updated_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -340,16 +331,7 @@ pub async fn upsert_schedule(
             ],
         ))
         .await?;
-        let row = db
-            .query_one(Statement::from_string(
-                DbBackend::Sqlite,
-                "SELECT last_insert_rowid() AS id".to_string(),
-            ))
-            .await?;
-        row.as_ref()
-            .ok_or_else(|| AppError::Database(sea_orm::DbErr::Custom("last_insert_rowid".into())))?
-            .try_get("", "id")
-            .map_err(|e| AppError::Database(sea_orm::DbErr::Custom(format!("id: {e}"))))
+        crate::db::inserted_id(&inserted)
     }
 }
 
@@ -374,9 +356,10 @@ pub struct DashboardSummaryFigures {
     pub assets: i64,
     /// Assets with a reliability snapshot over the last 365 days.
     pub assets_with_snapshots: i64,
-    /// Mean data-quality score, 0..=1.
-    pub data_quality: Option<f64>,
-    /// Pooled fleet MTBF in hours.
+    /// "Taille d'échantillon": mean sample-size score of those snapshots, 0..=1 (never data quality).
+    pub sample_size_score: Option<f64>,
+    /// Fleet MTBF in hours over the last 12 calendar months: the live calculation
+    /// (`study::fleet_kpis`), the Vue d'ensemble / RAMS home figure.
     pub mtbf_hours: Option<f64>,
 }
 
@@ -400,7 +383,7 @@ pub async fn fetch_dashboard_summary(db: &DatabaseConnection) -> AppResult<Dashb
     )
     .await?;
     let assets = count_scalar(db, "SELECT COUNT(*) AS cnt FROM equipment WHERE deleted_at IS NULL").await?;
-    // Pooled fleet ratios over the latest snapshot per equipment (never mean of ratios).
+    // Snapshot count and sample-size score: the stored snapshots of the last 365 days.
     let fleet = crate::reliability::fleet::pooled_fleet_kpis(
         db,
         crate::reliability::fleet::FleetWindow {
@@ -411,13 +394,25 @@ pub async fn fetch_dashboard_summary(db: &DatabaseConnection) -> AppResult<Dashb
         crate::reliability::readiness::DQ_GREEN_THRESHOLD,
     )
     .await?;
+    // MTBF: the one live calculation over the last 12 calendar months (as the Vue d'ensemble).
+    let now = crate::clock::now();
+    let live = crate::reliability::study::fleet_kpis::fleet_kpis(
+        db,
+        &crate::reliability::study::fleet_kpis::FleetScope {
+            start: crate::reliability::study::fleet_kpis::months_before(now, 12),
+            end: now,
+            equipment_class_id: None,
+            org_node_id: None,
+        },
+    )
+    .await?;
     Ok(DashboardSummaryFigures {
         open_di,
         open_wo,
         assets,
         assets_with_snapshots: fleet.equipment_count,
-        data_quality: fleet.mean_data_quality_score,
-        mtbf_hours: fleet.mtbf_hours,
+        sample_size_score: fleet.mean_data_quality_score,
+        mtbf_hours: live.mtbf_hours,
     })
 }
 

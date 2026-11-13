@@ -45,19 +45,48 @@ export const DEFAULT_DASHBOARD_METRIC_CARDS: DashboardWidgetLayoutEntry[] = [
   { id: DASHBOARD_METRIC_CARD_IDS.TOTAL_ASSETS, order: 3, visible: true },
 ];
 
-/** Role panels first, then the shared widgets — RAMS lives only under `/analytics` (not Home). */
+/**
+ * The key figures first (late OTs, open requests, OTs in progress), then the role panels. The two
+ * charts are offered but hidden by default: they live in Analytics, and the page stays short
+ * (field test L7-15). RAMS lives only under `/analytics` (not Home).
+ */
 export const DEFAULT_DASHBOARD_LAYOUT: DashboardLayoutV1 = {
   version: 1,
   widgets: [
-    { id: DASHBOARD_WIDGET_IDS.MY_WORK, order: 0, visible: true },
-    { id: DASHBOARD_WIDGET_IDS.SUPERVISION, order: 1, visible: true },
-    { id: DASHBOARD_WIDGET_IDS.PLANNING, order: 2, visible: true },
-    { id: DASHBOARD_WIDGET_IDS.KPIS, order: 3, visible: true },
-    { id: DASHBOARD_WIDGET_IDS.WORKLOAD, order: 4, visible: true },
-    { id: DASHBOARD_WIDGET_IDS.DI_STATUS, order: 5, visible: true },
+    { id: DASHBOARD_WIDGET_IDS.KPIS, order: 0, visible: true },
+    { id: DASHBOARD_WIDGET_IDS.MY_WORK, order: 1, visible: true },
+    { id: DASHBOARD_WIDGET_IDS.SUPERVISION, order: 2, visible: true },
+    { id: DASHBOARD_WIDGET_IDS.PLANNING, order: 3, visible: true },
+    { id: DASHBOARD_WIDGET_IDS.WORKLOAD, order: 4, visible: false },
+    { id: DASHBOARD_WIDGET_IDS.DI_STATUS, order: 5, visible: false },
   ],
   metric_cards: DEFAULT_DASHBOARD_METRIC_CARDS.map((c) => ({ ...c })),
 };
+
+/** Ready-made home layouts per role: the blocks shown, in order (the others are hidden). */
+export const DASHBOARD_ROLE_PRESETS = {
+  technician: [DASHBOARD_WIDGET_IDS.MY_WORK],
+  planner: [DASHBOARD_WIDGET_IDS.PLANNING, DASHBOARD_WIDGET_IDS.MY_WORK, DASHBOARD_WIDGET_IDS.KPIS],
+  manager: [
+    DASHBOARD_WIDGET_IDS.KPIS,
+    DASHBOARD_WIDGET_IDS.SUPERVISION,
+    DASHBOARD_WIDGET_IDS.PLANNING,
+    DASHBOARD_WIDGET_IDS.DI_STATUS,
+    DASHBOARD_WIDGET_IDS.WORKLOAD,
+  ],
+} as const satisfies Record<string, readonly DashboardWidgetId[]>;
+
+export type DashboardRolePreset = keyof typeof DASHBOARD_ROLE_PRESETS;
+
+/** The page blocks of a role preset (overview cards are left as they are). */
+export function widgetsForRolePreset(preset: DashboardRolePreset): DashboardWidgetLayoutEntry[] {
+  const shown: readonly DashboardWidgetId[] = DASHBOARD_ROLE_PRESETS[preset];
+  const hidden = Object.values(DASHBOARD_WIDGET_IDS).filter((id) => !shown.includes(id));
+  return [
+    ...shown.map((id, order) => ({ id, order, visible: true })),
+    ...hidden.map((id, i) => ({ id, order: shown.length + i, visible: false })),
+  ];
+}
 
 /**
  * Who sees each widget (not stored in the layout). A widget is offered when the user holds one
@@ -69,14 +98,14 @@ export const DEFAULT_DASHBOARD_LAYOUT: DashboardLayoutV1 = {
  */
 export const DASHBOARD_WIDGET_PERMISSIONS: Record<DashboardWidgetId, readonly PermissionName[]> = {
   [DASHBOARD_WIDGET_IDS.MY_WORK]: [P.OT_VIEW, P.DI_VIEW, P.INS_VIEW, P.PM_VIEW],
+  // People who review or approve the work of others; closing one's own work order or reading
+  // reports does not make a technician a supervisor (L5-26).
   [DASHBOARD_WIDGET_IDS.SUPERVISION]: [
     P.OT_APPROVE,
-    P.OT_CLOSE,
     P.DI_SCREEN,
     P.DI_REVIEW,
     P.DI_APPROVE,
     P.PM_APPROVE,
-    P.REP_VIEW,
   ],
   [DASHBOARD_WIDGET_IDS.PLANNING]: [P.PLAN_VIEW],
   [DASHBOARD_WIDGET_IDS.KPIS]: [P.DI_VIEW, P.OT_VIEW, P.EQ_VIEW, P.PM_VIEW, P.INV_VIEW, P.REP_VIEW],

@@ -18,8 +18,9 @@
     "sessions": "Sessions",
     "delegation": "Délégation",
     "emergency": "Urgence",
-    "importExport": "Import / Export",
-    "audit": "Audit"
+    "importExport": "Import / export des rôles",
+    "audit": "Audit",
+    "phones": "Téléphones"
   },
   "metrics": {
     "loadError": "Impossible de charger les indicateurs d'administration",
@@ -52,11 +53,91 @@
     "saved": "Rôle mis à jour",
     "delete": "Supprimer",
     "deleted": "Rôle supprimé",
+    "shipped": {
+      "administrator": {
+        "name": "Administrateur",
+        "description": "Tous les droits, y compris la gestion des comptes, des rôles et des réglages. À réserver à une ou deux personnes."
+      },
+      "supervisor": {
+        "name": "Superviseur maintenance",
+        "description": "Organise le travail de l'équipe : demandes, ordres de travail, préventif, personnel et magasin."
+      },
+      "technician": {
+        "name": "Technicien de maintenance",
+        "description": "Travail de tous les jours : consulte tout, crée et réalise les demandes et les ordres de travail."
+      },
+      "readonly": {
+        "name": "Consultation seule",
+        "description": "Consulte les écrans de maintenance sans rien pouvoir modifier."
+      },
+      "planner": {
+        "name": "Planificateur",
+        "description": "Planifie les ordres de travail et le préventif, prépare les pièces et les achats."
+      },
+      "financeManager": {
+        "name": "Responsable financier",
+        "description": "Prépare et suit les budgets de maintenance, valide les coûts et les exporte."
+      },
+      "formerRoleSame": "Ancien rôle, identique à {{role}}",
+      "formerRoleDifferent": "Ancien rôle, proche de {{role}} : vérifiez ses droits",
+      "formerRoleUnknown": "Ancien rôle, proche de {{role}}",
+      "formerRoleDescriptionSame": "Rôle d'une version précédente, avec les mêmes droits que « {{role}} ». Les comptes qui l'ont le gardent ; pour un nouveau compte, choisissez « {{role}} ».",
+      "formerRoleDescriptionDifferent": "Rôle d'une version précédente, prévu pour le même métier que « {{role}} », mais ses droits ne sont plus les mêmes : comparez-les avant de décider. Les comptes qui l'ont le gardent ; pour un nouveau compte, choisissez « {{role}} » ou un rôle de l'usine.",
+      "formerRoleDescriptionUnknown": "Rôle d'une version précédente, prévu pour le même métier que « {{role}} ». Ses droits sont visibles dans Rôles, rubrique « Anciens rôles ». Les comptes qui l'ont le gardent."
+    },
+    "templates": {
+      "supervisor": {
+        "name": "Superviseur",
+        "description": "Anime l'équipe : trie et approuve les demandes, les transforme en ordres de travail, affecte, approuve et clôture les travaux. Consulte le préventif, le planning, le stock, les permis et les formations."
+      },
+      "technician": {
+        "name": "Technicien",
+        "description": "Réalise ses ordres de travail (temps, pièces, constats), signale ce qu'il trouve, fait les rondes d'inspection. Voit le permis et la fiche de consignation sous lesquels il travaille, sans délivrer de permis. Si vos techniciens posent eux-mêmes leur cadenas, ajoutez « Délivrer des permis de travail » jusqu’à la version suivante."
+      },
+      "planner": {
+        "name": "Planificateur",
+        "description": "Planifie les ordres de travail et le préventif, et réserve leurs pièces en préparant les ordres de travail. Ne passe pas d'achats et ne fait pas d'ajustements de stock ; peut sortir du stock les pièces de ses ordres de travail."
+      },
+      "observer": {
+        "name": "Consultation seule",
+        "description": "Consulte les ordres de travail, les demandes, le préventif et les équipements, sans rien modifier."
+      },
+      "financeManager": {
+        "name": "Responsable financier",
+        "description": "Prépare et suit les budgets de maintenance, valide et comptabilise les coûts, exporte les rapports."
+      },
+      "storekeeper": {
+        "name": "Magasinier",
+        "description": "Travail du magasin : sorties, retours, transferts et inventaires. Il enregistre aussi les livraisons fournisseurs (droit de réception), sans pouvoir passer ni approuver les achats : l'achat et la réception restent faits par deux personnes différentes."
+      },
+      "buyer": {
+        "name": "Acheteur",
+        "description": "Demandes d'achat et commandes. Il n'enregistre pas les livraisons : la réception revient au magasinier, pour que l'achat et la réception restent faits par deux personnes différentes. Personne n'approuve sa propre demande ni sa propre commande ; l'approbation revient à un responsable qui détient le droit d'approbation, dans la limite de son plafond."
+      },
+      "hseManager": {
+        "name": "Responsable HSE",
+        "description": "Délivre, suit et clôture les permis de travail et les consignations, signale les dangers. Les règles de revalidation et de « personne différente » sur les permis s'appliquent toujours."
+      },
+      "maintenanceManager": {
+        "name": "Responsable maintenance",
+        "description": "Pilote la maintenance : demandes, ordres de travail (y compris réaffectation d'urgence et réouverture), programme préventif, planning, équipements, fiabilité et rapports. Gère et approuve les achats (dans la limite de son plafond) ; pas de droit de budget ni d'administration."
+      },
+      "costController": {
+        "name": "Contrôleur de coûts",
+        "description": "Consulte et exporte les coûts et les budgets de maintenance. Ne modifie, n'approuve et ne comptabilise rien."
+      },
+      "productionOperator": {
+        "name": "Opérateur de production",
+        "description": "Signale un problème sur une machine de son secteur et suit ses demandes. Rien d'autre."
+      }
+    },
     "create": {
       "title": "Créer un rôle",
-      "description": "Définissez un nom et sélectionnez éventuellement un modèle.",
-      "template": "Modèle",
-      "noTemplate": "Sans modèle",
+      "description": "Partez d'un modèle de métier ou d'un rôle vide, puis adaptez ses droits.",
+      "template": "Créer à partir d'un modèle",
+      "noTemplate": "Sans modèle (rôle vide)",
+      "templateRights_one": "Le nouveau rôle reprend {{count}} droit de ce modèle ; vous pourrez l'adapter ensuite.",
+      "templateRights_other": "Le nouveau rôle reprend les {{count}} droits de ce modèle ; vous pourrez les adapter ensuite.",
       "confirm": "Créer",
       "namePlaceholder": "Technicien terrain"
     },
@@ -109,7 +190,7 @@
       "allModes": "Tous modes",
       "local": "Local",
       "sso": "SSO",
-      "hybrid": "Hybride",
+      "hybrid": "Local ou SSO",
       "statusLabel": "Statut",
       "modeLabel": "Mode"
     },
@@ -205,6 +286,10 @@
     "create.personnelLocked": "Lié au personnel n° {{id}}",
     "create.personnelNone": "Aucun personnel lié",
     "create.usernamePlaceholder": "jean.dupont",
+    "create.usernameTaken": "Cet identifiant existe déjà : choisissez-en un autre.",
+    "create.displayName": "Nom affiché",
+    "create.displayNamePlaceholder": "Prénom Nom",
+    "create.displayNameHint": "Nom montré comme auteur et approbateur. Laissé vide, c'est le nom de la fiche personnel liée, sinon l'identifiant.",
     "edit": {
       "title": "Modifier l'utilisateur",
       "description": "Mettez à jour l'identité et les options du compte. Pour modifier les permissions, utilisez « Assigner un rôle » (bouclier) sur la ligne de l'utilisateur.",
@@ -338,12 +423,12 @@
       "name": "Nom",
       "description": "Description",
       "dangerous": "Dangereux",
-      "stepUp": "Step-up",
+      "stepUp": "Mot de passe redemandé",
       "type": "Type"
     },
     "badges": {
       "dangerous": "Dangereux",
-      "stepUp": "Step-up",
+      "stepUp": "Mot de passe redemandé",
       "system": "Système",
       "custom": "Personnalisé"
     },
@@ -554,7 +639,15 @@
       },
       "inv_procure": {
         "label": "Gérer les achats",
-        "description": "Créer et approuver les demandes d'achat et les commandes. Action sensible."
+        "description": "Créer et suivre les demandes d'achat et les commandes. Action sensible."
+      },
+      "inv_approve": {
+        "label": "Approuver les achats",
+        "description": "Approuver ou refuser les demandes d'achat et les commandes, dans la limite du plafond du rôle. Action sensible."
+      },
+      "inv_receive": {
+        "label": "Réceptionner les marchandises",
+        "description": "Enregistrer les réceptions des commandes fournisseurs."
       },
       "inv_count": {
         "label": "Réaliser les inventaires",
@@ -687,6 +780,14 @@
       "ptw_close": {
         "label": "Clôturer ou annuler des permis de travail",
         "description": "Clôturer et annuler des permis de travail. Action sensible : confirmation du mot de passe requise."
+      },
+      "ptw_hse_approve": {
+        "label": "Approuver les permis côté HSE",
+        "description": "Enregistrer l'approbation HSE d'un permis de travail dont le type l'exige, sur un permis que l'on n'a ni rédigé ni soumis. Action sensible."
+      },
+      "ptw_lock_own": {
+        "label": "Poser / retirer mon cadenas",
+        "description": "Poser et retirer uniquement son propre cadenas personnel sur la boîte de consignation collective d'un permis où l'on figure comme intervenant. Ne donne aucun autre droit sur le permis."
       },
       "fin_view": {
         "label": "Voir les budgets et coûts",
@@ -842,7 +943,7 @@
       "adminRole": "Rôle admin",
       "scope": "Périmètre",
       "domains": "Domaines autorisés",
-      "stepUp": "Step-up requis",
+      "stepUp": "Mot de passe redemandé",
       "actions": "Actions"
     },
     "create": "Nouvelle politique",
@@ -863,10 +964,10 @@
       "scopeReference": "Référence du périmètre",
       "allowedDomains": "Domaines autorisés",
       "selectDomains": "Sélectionner les domaines",
-      "requiresStepUp": "Exiger le step-up pour la publication"
+      "requiresStepUp": "Redemander le mot de passe à la publication"
     },
     "scopeTypes": {
-      "tenant": "Global (tenant)",
+      "tenant": "Toute l'entreprise",
       "site": "Site",
       "department": "Département"
     },
@@ -929,7 +1030,8 @@
     }
   },
   "importExport": {
-    "title": "Import / Export de rôles",
+    "title": "Import / export des rôles",
+    "description": "Sauvegardez ou transférez des rôles et leurs droits (fichier JSON). Pour exporter une liste en Excel, utilisez le bouton « Exporter (Excel/CSV) » de la liste.",
     "export": {
       "title": "Exporter des rôles",
       "selectRoles": "Sélectionnez les rôles à exporter",
@@ -973,11 +1075,12 @@
     "department": "Département"
   },
   "audit": {
+    "scopeWholeCompany": "Toute l'entreprise",
     "title": "Chronologie d'audit de l'administration",
     "applied": "Appliqué",
     "blocked": "Bloqué",
     "partial": "Partiel",
-    "stepUp": "Step-up",
+    "stepUp": "Mot de passe redemandé",
     "scopeValue": "Périmètre : {{scope}}",
     "user": "Utilisateur n° {{id}}",
     "system": "Système",
@@ -1016,8 +1119,8 @@
     },
     "identityMode": {
       "local": "Mot de passe local",
-      "sso": "SSO",
-      "hybrid": "Hybride"
+      "sso": "Connexion d’entreprise (SSO)",
+      "hybrid": "Mot de passe local ou connexion d’entreprise"
     },
     "scope": {
       "label": "Périmètre",
@@ -1037,6 +1140,14 @@
       "windowInvalid": "La date de début doit précéder la date de fin.",
       "replaces": "Ce compte a déjà le rôle « {{role}} » sur ce périmètre : il sera remplacé.",
       "replacesMany": "Ce compte a déjà les rôles {{roles}} sur ce périmètre : ils seront tous remplacés.",
+      "plantWide": {
+        "title_one": "Ce compte a déjà un rôle sur toute l'usine.",
+        "title_other": "Ce compte a déjà des rôles sur toute l'usine.",
+        "replace": "Remplacer le rôle usine entière « {{role}} »",
+        "hint": "Un rôle remplacé prend fin dès maintenant ; il reste dans l'historique du compte.",
+        "kept_one": "Le rôle « {{roles}} » reste en place : il donne toujours accès à tous les sites : la limite au site n'a donc aucun effet.",
+        "kept_other": "Les rôles {{roles}} restent en place : ils donnent toujours accès à tous les sites : la limite au site n'a donc aucun effet."
+      },
       "confirm": "Attribuer"
     },
     "user": {
@@ -1059,7 +1170,7 @@
       "unlockBody": "Le compte a été verrouillé après des échecs de connexion. Le déverrouillage remet le compteur à zéro.",
       "disable": "Désactiver",
       "disableTitle": "Désactiver le compte de {{name}} ?",
-      "disableBody": "La personne ne pourra plus se connecter. Le compte et tout son historique (OT, validations, signatures) sont conservés et il pourra être réactivé.",
+      "disableBody": "La personne ne pourra plus se connecter. Le compte et tout son historique (OT, validations, signatures) sont conservés et il pourra être réactivé. Les OT et demandes encore affectés à cette personne restent à son nom : réaffectez-les depuis Ordres de travail (filtre « Assigné à »).",
       "enable": "Réactiver",
       "enableTitle": "Réactiver le compte de {{name}} ?",
       "enableBody": "La personne pourra de nouveau se connecter avec ses rôles actuels.",
@@ -1080,6 +1191,7 @@
       "validUntil": "jusqu'au {{date}}"
     },
     "sessions": {
+      "showOlder": "Afficher les {{count}} sessions plus anciennes",
       "hint": "Sessions ouvertes sur cet ordinateur.",
       "none": "Aucune session ouverte.",
       "unknownDevice": "Appareil non enregistré",
@@ -1115,6 +1227,7 @@
       "role_retired": "Rôle « {{target}} » retiré du service",
       "role_assigned": "Rôle attribué : {{target}}",
       "role_revoked": "Rôle retiré : {{target}}",
+      "role_replaced": "Rôle sur toute l'usine terminé, remplacé par un rôle limité à une partie de l'usine : {{target}}",
       "emergency_grant_created": "Accès d'urgence accordé : {{target}}",
       "permission_created": "Permission personnalisée créée : {{target}}"
     },
@@ -1130,6 +1243,7 @@
       "user_reactivated": "Compte réactivé",
       "role_assigned": "Rôle attribué",
       "role_revoked": "Rôle retiré",
+      "role_replaced": "Rôle usine entière remplacé",
       "session_revoked": "Session fermée",
       "emergency_grant_created": "Accès d'urgence accordé",
       "emergency_grant_revoked": "Accès d'urgence retiré",
@@ -1172,6 +1286,26 @@
       "unsavedTitle": "Abandonner les modifications ?",
       "unsavedBody": "Le rôle « {{name}} » a des modifications non enregistrées (droits ou description). Elles seront perdues si vous ouvrez un autre rôle.",
       "discardChanges": "Abandonner les modifications",
+      "unsavedNewBody": "Le rôle « {{name}} » a des modifications non enregistrées (droits ou description). Elles seront perdues si vous créez ou dupliquez un rôle. Enregistrez-les d'abord pour les garder.",
+      "unsavedSummary": "Modifications non enregistrées : {{added}} droit(s) ajouté(s), {{removed}} retiré(s)",
+      "saveBar": "Enregistrer les modifications du rôle",
+      "wholeGroup": "Tout le groupe",
+      "sensitiveGroupTitle": "Droits sensibles du groupe {{group}}",
+      "sensitiveGroupBody_one": "Les autres droits du groupe sont cochés. Ce droit sensible ne l'est pas : cochez-le seulement si ce rôle en a vraiment besoin.",
+      "sensitiveGroupBody_other": "Les autres droits du groupe sont cochés. Ces {{count}} droits sensibles ne le sont pas : cochez-les seulement si ce rôle en a vraiment besoin.",
+      "sensitiveGroupConfirm": "Cocher aussi",
+      "sensitiveGroupKeepOut": "Les laisser décochés",
+      "formerRoles_one": "Ancien rôle ({{count}})",
+      "formerRoles_other": "Anciens rôles ({{count}})",
+      "formerRolesHint": "Rôles d'une version précédente, gardés pour les comptes qui les ont. Ils ne sont plus proposés quand on donne un rôle. Ouvrez-les pour voir leurs droits et qui les a.",
+      "autoAdded": "Ajouté car nécessaire à {{perms}}",
+      "needs": "« {{perm}} » a besoin de « {{required}} »",
+      "notAddedTitle": "Droits nécessaires non cochés à votre place",
+      "notAddedHint": "Ces droits permettent d'agir, d'approuver ou de délivrer un permis : ils ne sont jamais cochés automatiquement. Cochez-les vous-même si c'est voulu ; sinon le rôle ne pourra pas être enregistré.",
+      "dependentsTitle": "Des droits cochés ont besoin de ce que vous venez de retirer",
+      "dependentsHint": "Ils restent cochés. Retirez-les aussi, ou recochez ce qu'il leur faut : sinon le rôle ne pourra pas être enregistré.",
+      "noticeDismiss": "Compris",
+      "wholeGroupToggle": "Cocher ou décocher tous les droits du groupe {{group}}",
       "new": "Nouveau",
       "holders": "Comptes actifs ayant ce rôle",
       "holdersCount_one": "{{count}} compte actif",
@@ -1210,8 +1344,8 @@
       "loadError": "Les rôles n'ont pas pu être chargés.",
       "validationError": "La vérification des dépendances n'a pas pu être effectuée. Le serveur la refait à l'enregistrement.",
       "templateUnreadable": "Ce modèle de rôle est illisible : le rôle n'a pas été créé. Choisissez un autre modèle ou aucun modèle.",
-      "hiddenRetained_one": "{{count}} droit non utilisé dans cette version conservé",
-      "hiddenRetained_other": "{{count}} droits non utilisés dans cette version conservés"
+      "hiddenRetained_one": "{{count}} droit de plus est prévu pour une fonction absente de cette version : il n'est pas affiché, ne donne accès à rien aujourd'hui et reste en place, même après un enregistrement.",
+      "hiddenRetained_other": "{{count}} droits de plus sont prévus pour des fonctions absentes de cette version : ils ne sont pas affichés, ne donnent accès à rien aujourd'hui et restent en place, même après un enregistrement."
     },
     "choicesLoadError": "Les listes de rôles et de sites n'ont pas pu être chargées : les filtres par rôle et par site et l'attribution de rôles sont indisponibles.",
     "usersLoadError": "Les comptes n'ont pas pu être chargés."
@@ -1226,5 +1360,74 @@
     "saved": "Verrouillage enregistré.",
     "saveError": "Échec de l'enregistrement du verrouillage.",
     "loadError": "La politique de verrouillage n'a pas pu être chargée."
+  },
+  "phones": {
+    "title": "Téléphones",
+    "slots": "{{active}} / {{max}} téléphones utilisés",
+    "noLicence": "La licence ne comprend pas de téléphones : demandez-en à votre fournisseur.",
+    "pendingRevocations": "Téléphones à révoquer dès que ce poste sera en ligne : {{names}}",
+    "loadError": "La liste des téléphones n'a pas pu être chargée.",
+    "empty": "Aucun téléphone enrôlé",
+    "never": "Jamais",
+    "columns": {
+      "person": "Personne",
+      "site": "Site",
+      "enrolledBy": "Enrôlé par",
+      "enrolledAt": "Enrôlé le",
+      "lastSync": "Dernière synchro",
+      "status": "État"
+    },
+    "status": {
+      "active": "Actif",
+      "wipePending": "Retiré, en attente d'effacement",
+      "unknown": "Inconnu"
+    },
+    "revoke": {
+      "action": "Révoquer",
+      "title": "Révoquer ce téléphone ?",
+      "confirm": "Le téléphone de {{person}} ne pourra plus se connecter. Son travail en attente est envoyé à sa prochaine connexion, puis ses données sont effacées.",
+      "lost": "Téléphone perdu ou volé : il est coupé tout de suite, sans envoi du travail en attente",
+      "done": "Téléphone révoqué."
+    },
+    "enrol": {
+      "action": "Enrôler un téléphone",
+      "title": "Enrôler un téléphone",
+      "person": "Personne",
+      "personPlaceholder": "Choisir une personne",
+      "site": "Site",
+      "sitePlaceholder": "Choisir un site",
+      "noPerson": "Aucune personne ne peut recevoir de téléphone : il faut un compte actif avec son propre mot de passe.",
+      "noSite": "Aucun site disponible.",
+      "candidatesError": "Les personnes et les sites n'ont pas pu être chargés.",
+      "create": "Créer le QR code",
+      "help": "Le technicien ouvre Maintafox Terrain sur son téléphone et scanne ce QR code (ou saisit le code). Il se connecte ensuite avec son propre mot de passe.",
+      "qrError": "Le QR code n'a pas pu être affiché. Utilisez le code à saisir.",
+      "unknown": "Statut inconnu.",
+      "qrAlt": "QR code d'enrôlement",
+      "code": "Code à saisir : {{code}}",
+      "validFor": "Valable encore {{time}}",
+      "for": "{{person}} · {{site}}",
+      "cancelQr": "Annuler ce QR code",
+      "enrolled": "Téléphone enrôlé pour {{person}} ✓",
+      "expired": "Ce QR code a expiré.",
+      "cancelled": "Ce QR code a été annulé.",
+      "newQr": "Créer un nouveau QR code"
+    }
+  },
+  "errors": {
+    "MOBILE_ENROL_NOT_LICENSED": "La licence ne comprend pas de téléphones : demandez-en à votre fournisseur.",
+    "MOBILE_ENROL_NO_FREE_SLOT": "Tous les téléphones de la licence sont utilisés : révoquez un téléphone, ou demandez-en davantage à votre fournisseur.",
+    "MOBILE_ENROL_NOT_FOUND": "Le serveur de licence ne connaît pas cet enrôlement ou ce téléphone.",
+    "MOBILE_ENROL_SERVER_REFUSED": "Le serveur de licence a refusé la demande. Vérifiez que l’application est à jour, puis réessayez ; si le refus continue, contactez votre fournisseur.",
+    "MOBILE_ENROL_SERVER_PC_REFUSED": "Le serveur de licence ne reconnaît pas ce poste. Vérifiez que sa licence est active (Paramètres › Système & Sync › Licence, ou demandez à un administrateur) ; si elle l’est, contactez votre fournisseur.",
+    "MOBILE_ENROL_SERVER_FAULT": "Le serveur de licence a un problème passager. Réessayez dans quelques minutes ; si cela continue, contactez votre fournisseur.",
+    "MOBILE_ENROL_OFFLINE": "Le serveur de licence est injoignable. Les téléphones se gèrent en ligne : vérifiez la connexion puis réessayez.",
+    "MOBILE_ENROL_PC_NOT_ACTIVATED": "Ce poste n'a pas de licence active : les téléphones ne peuvent pas y être gérés.",
+    "MOBILE_ENROL_DESKTOP_ONLY": "Les téléphones se gèrent depuis un poste de bureau.",
+    "MOBILE_ENROL_ACTOR_UNKNOWN": "Votre compte n'est pas encore connu des autres postes : synchronisez, puis réessayez.",
+    "MOBILE_ENROL_PERSON_INVALID": "Cette personne ne peut pas recevoir de téléphone : son compte doit être actif et se connecter avec son propre mot de passe.",
+    "MOBILE_ENROL_SITE_INVALID": "Ce site ne peut pas être choisi pour un téléphone.",
+    "MOBILE_ENROL_ID_INVALID": "Cet identifiant n'est pas valable.",
+    "MOBILE_ENROL_SERVER_ANSWER_INVALID": "La réponse du serveur de licence n'a pas pu être lue."
   }
 }

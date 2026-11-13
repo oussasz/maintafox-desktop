@@ -24,6 +24,11 @@ export interface UrgencySelectProps {
   className?: string;
   "aria-invalid"?: boolean;
   "aria-describedby"?: string;
+  /**
+   * Least urgent rank that may be chosen (1 = most urgent): the less urgent levels are shown
+   * disabled (a request flagged "sécurité" is urgent at least).
+   */
+  leastUrgentRank?: number;
 }
 
 export function UrgencySelect({
@@ -35,6 +40,7 @@ export function UrgencySelect({
   className,
   "aria-invalid": ariaInvalid,
   "aria-describedby": ariaDescribedBy,
+  leastUrgentRank,
 }: UrgencySelectProps) {
   const { t } = useTranslation("common");
   const { levels, loading, error, language } = useUrgencyScale();
@@ -58,7 +64,11 @@ export function UrgencySelect({
         </SelectTrigger>
         <SelectContent>
           {levels.map((level) => (
-            <SelectItem key={level.code} value={level.code}>
+            <SelectItem
+              key={level.code}
+              value={level.code}
+              disabled={leastUrgentRank != null && level.rank > leastUrgentRank}
+            >
               <span className="flex flex-col">
                 <span>{urgencyLevelLabel(level, language)}</span>
                 {level.response_target_hours != null && level.completion_target_hours != null ? (

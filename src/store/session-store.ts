@@ -234,7 +234,8 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
       set({
         isLoading: false,
         // A lockout keeps its end, not the server's English sentence (`sessionErrorText`).
-        error: locked ? null : message,
+        // The server's French sentence without its English "Authentication error:" prefix.
+        error: locked ? null : message.replace(/^Authentication error:\s*/, ""),
         errorCode: code,
         lockedUntil: locked ? lockoutUntil(e) : null,
       });

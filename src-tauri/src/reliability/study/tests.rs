@@ -13,7 +13,7 @@ use crate::reliability::study::domain::{
     CreateDecisionInput, CreateStudyInput, DecideDecisionInput, FleetViewFilter, LifeAnalysisRequest,
     SaveStudyCostsInput, SetStudyRecordInput, UpdateStudyInput,
 };
-use crate::reliability::study::fleet_view::fleet_view;
+use crate::reliability::study::fleet_view::{asset_figures, fleet_view};
 use crate::reliability::study::life::{analyse_life, LifeInputs};
 use crate::reliability::study::records::build_dataset;
 use crate::reliability::study::store::{
@@ -227,12 +227,17 @@ async fn scenario(f: &Fixture) -> i64 {
             period_start: "2025-02-01T00:00:00Z".into(),
             period_end: "2025-12-31T00:00:00Z".into(),
             failure_mode_id: Some(f.mode_id),
+            accept_mixed_classes: false,
         },
         f.admin,
     )
     .await
     .expect("study");
-    assert_eq!(study.title, "P-101, P-102 · Rupture roulement");
+    assert!(
+        study.title.starts_with("P-101, P-102 · Rupture roulement · 20"),
+        "default name: equipment, mode and creation day ({})",
+        study.title
+    );
     assert_eq!(study.assets.len(), 2);
     study.id
 }
@@ -246,6 +251,43 @@ fn rec<'a>(
         .iter()
         .find(|r| r.key.starts_with(key_prefix) && r.event_at.starts_with(tag_at))
         .unwrap_or_else(|| panic!("record {key_prefix} at {tag_at}"))
+}
+
+/// L2-10: a study's default selection is decided live from the record: a failure with a mode is in
+/// by default even when its cause is "not determined" or its stored flag says not eligible.
+#[tokio::test]
+async fn study_default_selection_is_live_from_the_record() {
+    let f = setup().await;
+    let study_id = scenario(&f).await;
+    let m = Some(f.mode_id);
+    failure(&f.db, "nd", f.p101, "2025-10-01T00:00:00Z", None, m, None, 2.0).await;
+    failure(&f.db, "frozen", f.p101, "2025-11-01T00:00:00Z", None, m, None, 2.0).await;
+    exec(
+        &f.db,
+        &format!(
+            "UPDATE failure_events SET cause_not_determined = 1, eligible_flags_json = '{NOT_ELIGIBLE}' \
+             WHERE entity_sync_id = 'st-fe-nd'"
+        ),
+    )
+    .await;
+    exec(
+        &f.db,
+        &format!(
+            "UPDATE failure_events SET eligible_flags_json = '{NOT_ELIGIBLE}' WHERE entity_sync_id = 'st-fe-frozen'"
+        ),
+    )
+    .await;
+    let d = build_dataset(&f.db, study_id).await.expect("dataset").dataset;
+    for at in ["2025-10-01", "2025-11-01"] {
+        let r = rec(&d, "failure:", at);
+        assert!(r.included, "{at}: in by default");
+        assert_eq!(r.state_reason, None, "{at}");
+    }
+    // Still out by default: no failure mode.
+    assert_eq!(
+        rec(&d, "failure:", "2025-09-01").state_reason.as_deref(),
+        Some("not_eligible")
+    );
 }
 
 #[tokio::test]
@@ -408,6 +450,7 @@ async fn run_hours_meter_gives_operating_ages() {
             period_start: "2025-02-01T00:00:00Z".into(),
             period_end: "2025-12-31T00:00:00Z".into(),
             failure_mode_id: m,
+            accept_mixed_classes: false,
         },
         f.admin,
     )
@@ -439,6 +482,7 @@ async fn run_hours_meter_gives_operating_ages() {
             pm_plan_id: None,
             clear_pm_plan: false,
             equipment_ids: None,
+            accept_mixed_classes: false,
             status: None,
         },
     )
@@ -482,6 +526,7 @@ async fn life_fixture(f: &Fixture) -> i64 {
             period_start: "2025-01-02T00:00:00Z".into(),
             period_end: day.and_hms_opt(0, 0, 0).expect("t").and_utc().to_rfc3339(),
             failure_mode_id: m,
+            accept_mixed_classes: false,
         },
         f.admin,
     )
@@ -750,7 +795,7 @@ async fn decision_creates_a_pm_revision_with_the_new_interval_then_a_work_order(
         approver_id: None,
         fmeca_item_id: None,
         rcm_decision_id: None,
-        justification: None,
+        justification: Some("Taux de défaillance relevé par l'étude".into()),
         planned_cost: None,
         failure_cost: None,
     };
@@ -1052,7 +1097,7 @@ async fn the_decision_site_comes_from_the_resolved_equipment_and_the_strictest_s
         approver_id: Some(f.admin),
         fmeca_item_id: None,
         rcm_decision_id: None,
-        justification: None,
+        justification: Some("Taux de défaillance relevé par l'étude".into()),
         planned_cost: None,
         failure_cost: None,
     };
@@ -1430,27 +1475,49 @@ async fn fleet_view_ranks_equipment_by_downtime_with_pooled_kpis() {
             equipment_class_id: Some(f.class_id),
             limit: None,
             offset: None,
+            ..FleetViewFilter::default()
         },
     )
     .await
     .expect("fleet");
     assert_eq!(v.kpis.equipment_count, 2);
+    assert!(!v.kpis.window_too_short);
     // P-101: F1 10 h + F2 6 h; P-102: 4 + 4 + 2 h.
     assert_eq!(v.kpis.failure_count, 5);
     close(v.kpis.downtime_hours, 26.0, 1e-9);
     assert_eq!(v.rows[0].asset_code, "P-101");
     close(v.rows[0].downtime_share, 16.0 / 26.0, 1e-12);
     let hours = 333.0 * 24.0;
+    close(v.kpis.exposure_hours, 2.0 * hours, 1e-6);
+    // MTBF over every unplanned failure (F5 has no failure mode: it still counts).
     close(v.rows[0].mtbf_hours.expect("mtbf"), hours / 2.0, 1e-6);
-    close(v.rows[0].mttr_hours.expect("mttr"), 8.0 / 2.0, 1e-12);
-    close(v.kpis.mtbf_hours.expect("fleet mtbf"), 2.0 * hours / 5.0, 1e-6);
-    close(
-        v.kpis.availability_operational.expect("ao"),
-        2.0 * hours / (2.0 * hours + 26.0),
-        1e-12,
+    assert_eq!(
+        (v.kpis.eligible_failure_count, v.kpis.mtbf_excluded_missing_date),
+        (5, 0)
     );
+    close(v.kpis.mtbf_hours.expect("fleet mtbf"), 2.0 * hours / 5.0, 1e-6);
+    // MTTR = time to restore: only F1 has both times (10:00 -> 20:00); F2..F5 lack restored_at.
+    // julianday() arithmetic is precise to about a millisecond.
+    close(v.rows[0].mttr_hours.expect("mttr"), 10.0, 1e-6);
+    close(v.kpis.mttr_hours.expect("fleet mttr"), 10.0, 1e-6);
+    assert_eq!(v.kpis.restore_count, 1);
+    assert_eq!(v.kpis.restore_excluded_missing_restored_at, 4);
+    assert_eq!(v.kpis.restore_excluded_missing_failed_at, 0);
+    // Mean active repair (separate figure): 5 + 3 + 2 + 2 + 1 h over 5 failures.
+    close(v.kpis.mean_active_repair_hours.expect("repair"), 13.0 / 5.0, 1e-9);
+    assert_eq!(
+        (v.kpis.active_repair_count, v.kpis.repair_excluded_missing_hours),
+        (5, 0)
+    );
+    // A_o = MTBF / (MTBF + MTTR restore).
+    let mtbf = 2.0 * hours / 5.0;
+    close(v.kpis.availability_operational.expect("ao"), mtbf / (mtbf + 10.0), 1e-9);
+    // Nothing has a cause or mechanism: no record is complete.
     close(v.kpis.data_quality.expect("dq"), 0.0, 1e-12);
     assert_eq!(v.kpis.records_missing_mode, 1);
+    assert_eq!(v.kpis.records_missing_cause, 5);
+    assert_eq!(v.kpis.records_missing_mechanism, 5);
+    assert_eq!((v.kpis.operating_basis_count, v.kpis.calendar_basis_count), (0, 2));
     assert_eq!(v.rows[0].data_quality, "no_operating_hours");
     assert!(v.rows[0].last_study_id.is_some());
     assert!(v.equipment_classes.iter().any(|c| c.id == f.class_id));
@@ -1466,6 +1533,7 @@ async fn fleet_view_ranks_equipment_by_downtime_with_pooled_kpis() {
             equipment_class_id: Some(f.class_id),
             limit: Some(1),
             offset: Some(1),
+            ..FleetViewFilter::default()
         },
     )
     .await
@@ -1488,6 +1556,567 @@ async fn fleet_view_ranks_equipment_by_downtime_with_pooled_kpis() {
     assert!(other.rows.is_empty() && other.kpis.data_quality.is_none());
 }
 
+/// L2-17 / L2-22: the ranking can be ordered by a column before it is paged, an unknown column is
+/// refused with its GATE_ code, and one equipment's figures are the fleet row's.
+#[tokio::test]
+async fn fleet_view_sorts_by_column_and_asset_figures_match_the_row() {
+    let f = setup().await;
+    scenario(&f).await;
+    let filter = |sort_by: &str, sort_desc: Option<bool>| FleetViewFilter {
+        period_start: "2025-02-01T00:00:00Z".into(),
+        period_end: "2025-12-31T00:00:00Z".into(),
+        org_node_id: Some(1),
+        equipment_class_id: Some(f.class_id),
+        sort_by: Some(sort_by.into()),
+        sort_desc,
+        ..FleetViewFilter::default()
+    };
+    // P-101: 2 failures, 16 h; P-102: 3 failures, 10 h.
+    let by_failures = fleet_view(&f.db, filter("failures", None)).await.expect("failures");
+    assert_eq!(by_failures.rows[0].asset_code, "P-102");
+    let ascending = fleet_view(&f.db, filter("failures", Some(false)))
+        .await
+        .expect("failures asc");
+    assert_eq!(ascending.rows[0].asset_code, "P-101");
+    let refused = fleet_view(&f.db, filter("colour", None)).await;
+    match refused {
+        Err(AppError::ValidationFailed(m)) => assert!(m[0].starts_with("GATE_REL_FLEET_SORT_INVALID")),
+        _ => panic!("an unknown sort column must be refused"),
+    }
+    let figures = asset_figures(
+        &f.db,
+        by_failures.rows[0].equipment_id,
+        "2025-02-01T00:00:00Z",
+        "2025-12-31T00:00:00Z",
+    )
+    .await
+    .expect("asset figures");
+    assert_eq!(figures.failures, by_failures.rows[0].failures);
+    close(figures.downtime_hours, by_failures.rows[0].downtime_hours, 1e-9);
+}
+
+/// Sets cause "not determined" and a mechanism on the failure record `tag` (complete coding).
+async fn code_completely(f: &Fixture, tag: &str, mechanism: i64) {
+    exec(
+        &f.db,
+        &format!(
+            "UPDATE failure_events SET cause_not_determined = 1, failure_mechanism_id = {mechanism} \
+             WHERE entity_sync_id = 'st-fe-{tag}'"
+        ),
+    )
+    .await;
+}
+
+async fn mechanism_id(f: &Fixture) -> i64 {
+    crate::wo::closeout_reference_catalog::ensure_value(
+        &f.db,
+        "WORK.FAILURE_MECHANISMS",
+        "ST_WEAR",
+        "Usure",
+        None,
+        None,
+        90,
+    )
+    .await
+    .expect("mechanism");
+    scalar(
+        &f.db,
+        "SELECT v.id FROM reference_values v JOIN reference_sets s ON s.id = v.set_id \
+         JOIN reference_domains d ON d.id = s.domain_id WHERE d.code = 'WORK.FAILURE_MECHANISMS' AND v.code = 'ST_WEAR'",
+    )
+    .await
+}
+
+fn quality_filter(class: Option<i64>, org: Option<i64>) -> crate::reliability::study::data_quality::DataQualityFilter {
+    crate::reliability::study::data_quality::DataQualityFilter {
+        period_start: "2025-02-01T00:00:00Z".into(),
+        period_end: "2025-12-31T00:00:00Z".into(),
+        org_node_id: org,
+        equipment_class_id: class,
+    }
+}
+
+fn fleet_filter(class: Option<i64>, org: Option<i64>) -> FleetViewFilter {
+    FleetViewFilter {
+        period_start: "2025-02-01T00:00:00Z".into(),
+        period_end: "2025-12-31T00:00:00Z".into(),
+        org_node_id: org,
+        equipment_class_id: class,
+        limit: None,
+        offset: None,
+        ..FleetViewFilter::default()
+    }
+}
+
+/// L2-11: the RAMS home card and the quality page count complete records with one predicate
+/// (mode + cause or not determined + mechanism, close-out coding as fallback) under the same
+/// period, class and site.
+#[tokio::test]
+async fn home_card_and_quality_page_share_the_completeness_predicate() {
+    let f = setup().await;
+    scenario(&f).await;
+    let mech = mechanism_id(&f).await;
+    // F2 coded on the record itself; F1 (from OT-2025-0412) coded on its close-out only.
+    code_completely(&f, "f2", mech).await;
+    exec(
+        &f.db,
+        &format!(
+            "INSERT INTO work_order_failure_details (work_order_id, failure_mode_id, cause_not_determined, \
+             failure_mechanism_id) VALUES ((SELECT id FROM work_orders WHERE code = 'OT-2025-0412'), {}, 1, {mech})",
+            f.mode_id
+        ),
+    )
+    .await;
+    // F4: mode and cause (not determined) but no mechanism -> incomplete.
+    exec(
+        &f.db,
+        "UPDATE failure_events SET cause_not_determined = 1 WHERE entity_sync_id = 'st-fe-f4'",
+    )
+    .await;
+    let admin = i32::try_from(f.admin).expect("id");
+
+    for (class, org) in [(None, None), (Some(f.class_id), Some(1)), (Some(f.class_id), None)] {
+        let home = fleet_view(&f.db, fleet_filter(class, org)).await.expect("fleet").kpis;
+        let page = crate::reliability::study::data_quality::data_quality(&f.db, &quality_filter(class, org), admin)
+            .await
+            .expect("quality");
+        assert_eq!(
+            (home.failure_count, home.records_complete),
+            (page.records, page.records_complete)
+        );
+        assert_eq!((page.records, page.records_complete), (5, 2), "{class:?} {org:?}");
+        assert_eq!(
+            (
+                home.records_missing_mode,
+                home.records_missing_cause,
+                home.records_missing_mechanism
+            ),
+            (
+                page.records_missing_mode,
+                page.records_missing_cause,
+                page.records_missing_mechanism
+            )
+        );
+        assert_eq!(
+            (
+                page.records_missing_mode,
+                page.records_missing_cause,
+                page.records_missing_mechanism
+            ),
+            (1, 2, 3)
+        );
+        close(home.data_quality.expect("dq"), 2.0 / 5.0, 1e-12);
+        // F1 is complete through its close-out coding: it is not in the gap list.
+        assert!(page.coding_gaps.iter().all(|g| g.work_order_code != "OT-2025-0412"));
+    }
+
+    // Another class, another site: both screens are empty.
+    exec(
+        &f.db,
+        "INSERT INTO equipment_classes (entity_sync_id, code, name, parent_id, level, is_active, created_at, updated_at) \
+         VALUES ('st-class-fan', 'ST_FAN', 'Ventilateur', NULL, 'class', 1, datetime('now'), datetime('now'))",
+    )
+    .await;
+    let fan = scalar(&f.db, "SELECT id FROM equipment_classes WHERE code = 'ST_FAN'").await;
+    let home = fleet_view(&f.db, fleet_filter(Some(fan), None))
+        .await
+        .expect("fleet")
+        .kpis;
+    let page = crate::reliability::study::data_quality::data_quality(&f.db, &quality_filter(Some(fan), None), admin)
+        .await
+        .expect("quality");
+    assert_eq!((home.failure_count, page.records, page.records_complete), (0, 0, 0));
+    assert!(home.data_quality.is_none() && page.coding_gaps.is_empty() && page.no_operating_hours.is_empty());
+
+    // The gap list names the first missing field of an incomplete record raised from a work order.
+    exec(
+        &f.db,
+        "UPDATE work_order_failure_details SET failure_mechanism_id = NULL \
+         WHERE work_order_id = (SELECT id FROM work_orders WHERE code = 'OT-2025-0412')",
+    )
+    .await;
+    let page = crate::reliability::study::data_quality::data_quality(&f.db, &quality_filter(None, None), admin)
+        .await
+        .expect("quality");
+    let gap = page
+        .coding_gaps
+        .iter()
+        .find(|g| g.work_order_code == "OT-2025-0412")
+        .expect("F1 listed");
+    assert_eq!(gap.gap, "mechanism_missing");
+    assert_eq!(page.records_complete, 1);
+}
+
+/// MTBF counts every unplanned failure; MTTR is the time to restore over failures with both times;
+/// the excluded records are counted under the first reason that applies.
+#[tokio::test]
+async fn fleet_kpis_eligibility_restore_and_exclusions() {
+    use crate::reliability::study::fleet_kpis::{fleet_kpis, FleetScope};
+    let f = setup().await;
+    let m = Some(f.mode_id);
+    // P-101: restored after 4 h (active repair 1 h); restored after 8 h (active repair 3 h).
+    failure(
+        &f.db,
+        "a",
+        f.p101,
+        "2025-03-01T00:00:00Z",
+        Some("2025-03-01T04:00:00Z"),
+        m,
+        None,
+        2.0,
+    )
+    .await;
+    failure(
+        &f.db,
+        "b",
+        f.p101,
+        "2025-04-01T00:00:00Z",
+        Some("2025-04-01T08:00:00Z"),
+        m,
+        None,
+        6.0,
+    )
+    .await;
+    // P-102: not eligible (no mode), restored after 6 h; restored before it failed; no repair hours.
+    failure(
+        &f.db,
+        "c",
+        f.p102,
+        "2025-05-01T00:00:00Z",
+        Some("2025-05-01T06:00:00Z"),
+        None,
+        None,
+        2.0,
+    )
+    .await;
+    failure(
+        &f.db,
+        "d",
+        f.p102,
+        "2025-06-01T10:00:00Z",
+        Some("2025-06-01T09:00:00Z"),
+        m,
+        None,
+        0.0,
+    )
+    .await;
+    // An eligible record without failure time (dated by detection).
+    failure(&f.db, "e", f.p102, "2025-07-01T00:00:00Z", None, m, None, 4.0).await;
+    exec(
+        &f.db,
+        "UPDATE failure_events SET failed_at = NULL WHERE entity_sync_id = 'st-fe-e'",
+    )
+    .await;
+    // A record whose flags are not valid JSON is not eligible (no SQL error).
+    failure(&f.db, "g", f.p101, "2025-08-01T00:00:00Z", None, m, None, 2.0).await;
+    exec(
+        &f.db,
+        "UPDATE failure_events SET eligible_flags_json = 'not json' WHERE entity_sync_id = 'st-fe-g'",
+    )
+    .await;
+    // A planned stop is never a failure.
+    failure(
+        &f.db,
+        "p",
+        f.p101,
+        "2025-09-01T00:00:00Z",
+        Some("2025-09-01T05:00:00Z"),
+        m,
+        None,
+        5.0,
+    )
+    .await;
+    exec(
+        &f.db,
+        "UPDATE failure_events SET is_planned = 1 WHERE entity_sync_id = 'st-fe-p'",
+    )
+    .await;
+
+    let scope = FleetScope::new("2025-02-01T00:00:00Z", "2025-12-31T00:00:00Z", Some(f.class_id), None).expect("scope");
+    let k = fleet_kpis(&f.db, &scope).await.expect("kpis");
+    assert_eq!(k.failure_count, 6);
+    // Every unplanned failure counts in the MTBF, whatever its coding or its frozen flag (c has no
+    // mode, g has unreadable flags).
+    assert_eq!((k.eligible_failure_count, k.mtbf_excluded_missing_date), (6, 0));
+    let hours = 333.0 * 24.0 * 2.0;
+    close(k.mtbf_hours.expect("mtbf"), hours / 6.0, 1e-6);
+    // Restore: a 4 h, b 8 h, c 6 h; d restored before failing; e without failure time; g not restored.
+    assert_eq!(k.restore_count, 3);
+    close(k.mttr_hours.expect("mttr"), 18.0 / 3.0, 1e-9);
+    assert_eq!(
+        (
+            k.restore_excluded_missing_failed_at,
+            k.restore_excluded_missing_restored_at,
+            k.restore_excluded_inconsistent
+        ),
+        (1, 1, 1)
+    );
+    // Active repair (downtime / 2 in the fixture): 1, 3, 1, 2, 1 h; d has none recorded.
+    close(k.mean_active_repair_hours.expect("repair"), 8.0 / 5.0, 1e-9);
+    assert_eq!((k.active_repair_count, k.repair_excluded_missing_hours), (5, 1));
+    let mtbf = hours / 6.0;
+    close(k.availability_operational.expect("ao"), mtbf / (mtbf + 6.0), 1e-12);
+
+    // Windows under 90 days give counts only.
+    let short = FleetScope::new("2025-03-01T00:00:00Z", "2025-03-31T00:00:00Z", Some(f.class_id), None).expect("scope");
+    let k = fleet_kpis(&f.db, &short).await.expect("kpis");
+    assert!(k.window_too_short);
+    assert_eq!(k.failure_count, 1);
+    assert!(k.mtbf_hours.is_none() && k.mttr_hours.is_none());
+    assert!(k.mean_active_repair_hours.is_none() && k.availability_operational.is_none());
+    let rows = fleet_view(
+        &f.db,
+        FleetViewFilter {
+            period_start: "2025-03-01T00:00:00Z".into(),
+            period_end: "2025-03-31T00:00:00Z".into(),
+            ..FleetViewFilter::default()
+        },
+    )
+    .await
+    .expect("fleet")
+    .rows;
+    assert!(rows.iter().all(|r| r.mtbf_hours.is_none() && r.mttr_hours.is_none()));
+}
+
+/// Hours per equipment: operating hours where run-hour data exists, calendar otherwise; the mix is
+/// counted and MTBF uses the hours of every equipment of the fleet.
+#[test]
+fn fleet_kpis_hours_mix_counts() {
+    use std::collections::HashMap;
+
+    use crate::reliability::study::clock::{SOURCE_CALENDAR, SOURCE_METER, SOURCE_RUNTIME_LOGS};
+    use crate::reliability::study::fleet_kpis::{kpis_of, AssetAgg, AssetHours, FleetScope};
+    let scope = FleetScope::new("2025-01-01T00:00:00Z", "2025-12-31T00:00:00Z", None, None).expect("scope");
+    let hours: HashMap<i64, AssetHours> = [
+        (
+            1,
+            AssetHours {
+                hours: 4000.0,
+                source: SOURCE_METER,
+            },
+        ),
+        (
+            2,
+            AssetHours {
+                hours: 2000.0,
+                source: SOURCE_RUNTIME_LOGS,
+            },
+        ),
+        (
+            3,
+            AssetHours {
+                hours: 8736.0,
+                source: SOURCE_CALENDAR,
+            },
+        ),
+    ]
+    .into_iter()
+    .collect();
+    let aggs = vec![AssetAgg {
+        equipment_id: 1,
+        failures: 3,
+        restore_hours: 9.0,
+        restore_count: 3,
+        repair_hours: 4.5,
+        repair_count: 3,
+        ..AssetAgg::default()
+    }];
+    let k = kpis_of(&scope, &aggs, &hours, 0, 0);
+    assert_eq!(
+        (k.equipment_count, k.operating_basis_count, k.calendar_basis_count),
+        (3, 2, 1)
+    );
+    close(k.exposure_hours, 14736.0, 1e-9);
+    close(k.mtbf_hours.expect("mtbf"), 14736.0 / 3.0, 1e-9);
+    close(k.mttr_hours.expect("mttr"), 3.0, 1e-12);
+    close(k.mean_active_repair_hours.expect("repair"), 1.5, 1e-12);
+    // No failure: no MTBF and no A_o (never a made-up 100 %).
+    let k = kpis_of(&scope, &[], &hours, 0, 0);
+    assert!(k.mtbf_hours.is_none() && k.availability_operational.is_none());
+    assert_eq!(k.calendar_basis_count, 1);
+}
+
+/// CMMS Advisor ruling 2026-11-05: MTBF eligibility is evaluated live; every unplanned failure
+/// with an equipment and a readable date counts, whatever its coding; a missing date is excluded
+/// and counted.
+#[tokio::test]
+async fn fleet_kpis_mtbf_counts_every_unplanned_failure() {
+    use crate::reliability::study::fleet_kpis::{fleet_kpis, FleetScope};
+    let f = setup().await;
+    let m = Some(f.mode_id);
+    let mech = mechanism_id(&f).await;
+    // Cause "not determined", fully coded: counts, complete.
+    failure(&f.db, "nd", f.p101, "2025-03-01T00:00:00Z", None, m, None, 2.0).await;
+    code_completely(&f, "nd", mech).await;
+    // No mode at all: counts, but is not complete.
+    failure(&f.db, "nomode", f.p101, "2025-04-01T00:00:00Z", None, None, None, 2.0).await;
+    // Coded after close: written without a mode (frozen flag false), mode added later: counts.
+    failure(&f.db, "late", f.p102, "2025-05-01T00:00:00Z", None, None, None, 2.0).await;
+    exec(
+        &f.db,
+        &format!(
+            "UPDATE failure_events SET failure_mode_id = {} WHERE entity_sync_id = 'st-fe-late'",
+            f.mode_id
+        ),
+    )
+    .await;
+    // No readable failure date: belongs to no window, excluded from the MTBF and counted.
+    failure(&f.db, "nodate", f.p102, "2025-06-01T00:00:00Z", None, m, None, 2.0).await;
+    exec(
+        &f.db,
+        "UPDATE failure_events SET failed_at = NULL, detected_at = NULL, created_at = 'inconnue' \
+         WHERE entity_sync_id = 'st-fe-nodate'",
+    )
+    .await;
+
+    let scope = FleetScope::new("2025-02-01T00:00:00Z", "2025-12-31T00:00:00Z", Some(f.class_id), None).expect("scope");
+    let k = fleet_kpis(&f.db, &scope).await.expect("kpis");
+    assert_eq!(k.failure_count, 3);
+    assert_eq!((k.eligible_failure_count, k.mtbf_excluded_missing_date), (3, 1));
+    close(k.mtbf_hours.expect("mtbf"), 333.0 * 24.0 * 2.0 / 3.0, 1e-6);
+    assert_eq!((k.records_complete, k.records_missing_mode), (1, 1));
+}
+
+/// Hours of each equipment cover only the part of the window it was in service
+/// (commissioning date, decommissioning date); out of service all window: not in the fleet.
+#[tokio::test]
+async fn fleet_hours_clip_to_commissioning_and_decommissioning() {
+    use crate::reliability::study::fleet_kpis::{fleet_kpis, FleetScope};
+    let f = setup().await;
+    failure(
+        &f.db,
+        "a",
+        f.p101,
+        "2025-08-01T00:00:00Z",
+        None,
+        Some(f.mode_id),
+        None,
+        2.0,
+    )
+    .await;
+    // P-101 commissioned mid-window (bare date), P-102 decommissioned mid-window.
+    exec(
+        &f.db,
+        &format!(
+            "UPDATE equipment SET commissioning_date = '2025-07-01' WHERE id = {}",
+            f.p101
+        ),
+    )
+    .await;
+    exec(
+        &f.db,
+        &format!(
+            "UPDATE equipment SET decommissioned_at = '2025-04-01T00:00:00Z' WHERE id = {}",
+            f.p102
+        ),
+    )
+    .await;
+    let scope = FleetScope::new("2025-02-01T00:00:00Z", "2025-12-31T00:00:00Z", Some(f.class_id), None).expect("scope");
+    let k = fleet_kpis(&f.db, &scope).await.expect("kpis");
+    // P-101: Jul 1 → Dec 31 = 183 days; P-102: Feb 1 → Apr 1 = 59 days.
+    assert_eq!(k.equipment_count, 2);
+    close(k.exposure_hours, (183.0 + 59.0) * 24.0, 1e-6);
+    close(k.mtbf_hours.expect("mtbf"), (183.0 + 59.0) * 24.0, 1e-6);
+
+    // Decommissioned before the window: not part of the fleet, no hours.
+    exec(
+        &f.db,
+        &format!(
+            "UPDATE equipment SET decommissioned_at = '2025-01-15T00:00:00Z' WHERE id = {}",
+            f.p102
+        ),
+    )
+    .await;
+    let k = fleet_kpis(&f.db, &scope).await.expect("kpis");
+    assert_eq!(k.equipment_count, 1);
+    close(k.exposure_hours, 183.0 * 24.0, 1e-6);
+}
+
+/// Failures count only inside their equipment's service period (the window of its hours); the
+/// others are out of every figure and counted in `mtbf_excluded_outside_service`.
+#[tokio::test]
+async fn fleet_failures_limited_to_the_service_period() {
+    use crate::reliability::study::fleet_kpis::{coding_counts, fleet_kpis, FleetScope};
+    let f = setup().await;
+    let m = Some(f.mode_id);
+    // P-101 commissioned Jul 1 (bare date): two failures before (b2 one hour before), two from it
+    // on (a1 at the commissioning instant).
+    for (tag, at) in [
+        ("b1", "2025-03-01T00:00:00Z"),
+        ("b2", "2025-06-30T23:00:00Z"),
+        ("a1", "2025-07-01T00:00:00Z"),
+        ("a2", "2025-09-01T00:00:00Z"),
+    ] {
+        failure(&f.db, tag, f.p101, at, Some(at), m, None, 2.0).await;
+    }
+    // P-102 decommissioned before the window, with failures inside the window.
+    failure(&f.db, "d1", f.p102, "2025-04-01T00:00:00Z", None, m, None, 2.0).await;
+    failure(&f.db, "d2", f.p102, "2025-05-01T00:00:00Z", None, m, None, 2.0).await;
+    exec(
+        &f.db,
+        &format!(
+            "UPDATE equipment SET commissioning_date = '2025-07-01' WHERE id = {}",
+            f.p101
+        ),
+    )
+    .await;
+    exec(
+        &f.db,
+        &format!(
+            "UPDATE equipment SET decommissioned_at = '2025-01-15T00:00:00Z' WHERE id = {}",
+            f.p102
+        ),
+    )
+    .await;
+    let scope = FleetScope::new("2025-02-01T00:00:00Z", "2025-12-31T00:00:00Z", Some(f.class_id), None).expect("scope");
+    let k = fleet_kpis(&f.db, &scope).await.expect("kpis");
+    assert_eq!(k.equipment_count, 1);
+    assert_eq!((k.failure_count, k.eligible_failure_count), (2, 2));
+    assert_eq!(k.mtbf_excluded_outside_service, 4);
+    // P-101: Jul 1 → Dec 31 = 183 days over its two failures.
+    close(k.mtbf_hours.expect("mtbf"), 183.0 * 24.0 / 2.0, 1e-6);
+    close(k.downtime_hours, 4.0, 1e-9);
+    // The quality page reads the same scope.
+    assert_eq!(coding_counts(&f.db, &scope).await.expect("coding").records, 2);
+
+    // Per equipment: P-102 is not ranked at all (no zero-hours MTBF).
+    let rows = fleet_view(
+        &f.db,
+        FleetViewFilter {
+            period_start: "2025-02-01T00:00:00Z".into(),
+            period_end: "2025-12-31T00:00:00Z".into(),
+            equipment_class_id: Some(f.class_id),
+            ..FleetViewFilter::default()
+        },
+    )
+    .await
+    .expect("fleet")
+    .rows;
+    assert_eq!(rows.len(), 1);
+    assert_eq!((rows[0].equipment_id, rows[0].failures), (f.p101, 2));
+    close(rows[0].mtbf_hours.expect("mtbf"), 183.0 * 24.0 / 2.0, 1e-6);
+}
+
+/// A meter that does not cover the equipment's window gives calendar hours, counted on the
+/// calendar basis; a meter covering it gives its operating hours.
+#[test]
+fn asset_hours_fall_back_to_calendar_when_the_meter_does_not_cover_the_window() {
+    use chrono::TimeZone;
+
+    use crate::reliability::study::clock::{StudyClock, SOURCE_CALENDAR, SOURCE_METER};
+    use crate::reliability::study::fleet_kpis::asset_hours;
+    let day = |d: u32| chrono::Utc.with_ymd_and_hms(2025, 1, d, 0, 0, 0).unwrap();
+    // 12 h of running per day, readings on Jan 1 and Jan 11.
+    let clock = StudyClock::Meter(vec![(day(1), 0.0), (day(11), 120.0)]);
+    let covered = asset_hours(&clock, day(1), day(11));
+    assert_eq!(covered.source, SOURCE_METER);
+    close(covered.hours, 120.0, 1e-9);
+    // Window Jan 1 → Jan 21: the meter covers half of it -> calendar hours of the whole window.
+    let uncovered = asset_hours(&clock, day(1), day(21));
+    assert_eq!(uncovered.source, SOURCE_CALENDAR);
+    close(uncovered.hours, 20.0 * 24.0, 1e-9);
+}
+
 // ── Part B: FMECA, RCM, system model, competing modes ───────────────────────────────────────
 
 fn update_basis(id: i64, row_version: i64, competing: Option<&str>) -> UpdateStudyInput {
@@ -1504,6 +2133,7 @@ fn update_basis(id: i64, row_version: i64, competing: Option<&str>) -> UpdateStu
         pm_plan_id: None,
         clear_pm_plan: false,
         equipment_ids: None,
+        accept_mixed_classes: false,
         status: None,
     }
 }
@@ -1647,6 +2277,55 @@ async fn fmeca_worksheet_proposes_modes_saves_rows_and_feeds_rcm_and_decisions()
         !r.prefilled.scheduled_restoration_feasible,
         "no fit: not pre-answered yes"
     );
+    // L2-15 (b): the RCM row is written with the logic in one transaction. With this row critical
+    // and the logic recommending run to failure, a save refused by the logic (redesign without a
+    // justification) and a save of run to failure both leave no RCM row behind.
+    let rcm_rows = |item: i64| {
+        let db = &f.db;
+        async move {
+            scalar(
+                db,
+                &format!("SELECT COUNT(*) FROM rcm_decisions WHERE fmeca_item_id = {item}"),
+            )
+            .await
+        }
+    };
+    assert_eq!(
+        crate::reliability::rcm_loop::recommend_tactic(&r.prefilled).recommended_tactic,
+        "run_to_failure"
+    );
+    exec(
+        &f.db,
+        &format!(
+            "UPDATE app_settings SET setting_value_json = '{}' WHERE setting_key = 'ram.fmeca_rpn_critical_threshold'",
+            row.rpn
+        ),
+    )
+    .await;
+    for (tactic, code) in [
+        ("redesign", "GATE_REL_TACTIC_JUSTIFICATION_REQUIRED"),
+        ("run_to_failure", "GATE_REL_RCM_RUN_TO_FAILURE_CRITICAL"),
+    ] {
+        assert_eq!(
+            refusal_code(
+                crate::reliability::study::rcm::save_decision(
+                    &f.db,
+                    crate::reliability::study::rcm::SaveRcmInput {
+                        study_id,
+                        fmeca_item_id: row.item_id,
+                        answers: r.prefilled.clone(),
+                        selected_tactic: Some(tactic.into()),
+                        justification: None,
+                        pf_interval_hours: None,
+                    },
+                    admin,
+                )
+                .await
+            ),
+            code
+        );
+        assert_eq!(rcm_rows(row.item_id).await, 0, "{tactic}: nothing stored");
+    }
     let mut answers = r.prefilled.clone();
     answers.on_condition_feasible = true;
     let rcm = crate::reliability::study::rcm::save_decision(
@@ -1669,6 +2348,82 @@ async fn fmeca_worksheet_proposes_modes_saves_rows_and_feeds_rcm_and_decisions()
     assert_eq!(r.inspection_interval_hours, Some(200.0));
     assert!(rcm.rcm_study_id.is_some());
 
+    // L2-15: with the plant's critical RPN at this row's RPN, running to failure is refused.
+    exec(
+        &f.db,
+        &format!(
+            "UPDATE app_settings SET setting_value_json = '{}' WHERE setting_key = 'ram.fmeca_rpn_critical_threshold'",
+            row.rpn
+        ),
+    )
+    .await;
+    let critical = crate::reliability::study::rcm::get_worksheet(&f.db, study_id)
+        .await
+        .expect("rcm");
+    assert_eq!(critical.rpn_threshold, row.rpn);
+    assert_eq!(
+        refusal_code(
+            crate::reliability::study::rcm::save_decision(
+                &f.db,
+                crate::reliability::study::rcm::SaveRcmInput {
+                    study_id,
+                    fmeca_item_id: row.item_id,
+                    answers: critical.rows[0].answers.clone(),
+                    selected_tactic: Some("run_to_failure".into()),
+                    justification: Some("Pièce de rechange en stock".into()),
+                    pf_interval_hours: Some(400.0),
+                },
+                admin,
+            )
+            .await
+        ),
+        "GATE_REL_RCM_RUN_TO_FAILURE_CRITICAL"
+    );
+    // L2-15 (a): the same rule in the shared RCM logic and in the RCM row edit (advanced RAMS
+    // commands), for a decision that answers this critical row.
+    assert_eq!(
+        refusal_code(
+            crate::reliability::rcm_loop::apply_rcm_decision_logic(
+                &f.db,
+                crate::reliability::rcm_loop::ApplyRcmLogicInput {
+                    decision_id: saved.decision_id,
+                    expected_row_version: saved.row_version,
+                    answers: critical.rows[0].answers.clone(),
+                    selected_tactic: Some("run_to_failure".into()),
+                    justification: Some("Pièce de rechange en stock".into()),
+                },
+            )
+            .await
+        ),
+        "GATE_REL_RCM_RUN_TO_FAILURE_CRITICAL"
+    );
+    assert_eq!(
+        refusal_code(
+            crate::reliability::advanced_rams::queries::upsert_rcm_decision(
+                &f.db,
+                crate::reliability::advanced_rams::domain::UpsertRcmDecisionInput {
+                    id: Some(saved.decision_id),
+                    study_id: rcm.rcm_study_id.expect("rcm study"),
+                    expected_row_version: Some(saved.row_version),
+                    function_description: None,
+                    functional_failure: None,
+                    failure_mode_id: None,
+                    consequence_category: None,
+                    selected_tactic: "run_to_failure".into(),
+                    justification: Some("Pièce de rechange en stock".into()),
+                    review_due_at: None,
+                    linked_pm_plan_id: None,
+                },
+            )
+            .await
+        ),
+        "GATE_REL_RCM_RUN_TO_FAILURE_CRITICAL"
+    );
+    let still = crate::reliability::rcm_loop::get_rcm_decision_logic(&f.db, saved.decision_id)
+        .await
+        .expect("logic");
+    assert_eq!(still.selected_tactic, "condition_based");
+
     // Step 6 decision linked to the FMECA row and the RCM decision.
     let d = create_decision(
         &f.db,
@@ -1683,7 +2438,7 @@ async fn fmeca_worksheet_proposes_modes_saves_rows_and_feeds_rcm_and_decisions()
             approver_id: None,
             fmeca_item_id: Some(row.item_id),
             rcm_decision_id: Some(saved.decision_id),
-            justification: None,
+            justification: Some("Taux de défaillance relevé par l'étude".into()),
             planned_cost: None,
             failure_cost: None,
         },
@@ -1776,7 +2531,7 @@ async fn fmeca_worksheet_proposes_modes_saves_rows_and_feeds_rcm_and_decisions()
             approver_id: None,
             fmeca_item_id: Some(placeholder),
             rcm_decision_id: None,
-            justification: None,
+            justification: Some("Taux de défaillance relevé par l'étude".into()),
             planned_cost: None,
             failure_cost: None,
         },
@@ -2071,7 +2826,7 @@ async fn a_received_decision_keeps_the_strictest_site_and_its_local_fields() {
             approver_id: None,
             fmeca_item_id: None,
             rcm_decision_id: None,
-            justification: None,
+            justification: Some("Taux de défaillance relevé par l'étude".into()),
             planned_cost: None,
             failure_cost: None,
         },
@@ -2150,7 +2905,7 @@ async fn a_received_decision_moved_to_the_copy_of_its_deleted_site_is_judged_on_
             approver_id: None,
             fmeca_item_id: None,
             rcm_decision_id: None,
-            justification: None,
+            justification: Some("Taux de défaillance relevé par l'étude".into()),
             planned_cost: None,
             failure_cost: None,
         },
@@ -2510,7 +3265,7 @@ async fn wo_decision(
             approver_id: approver,
             fmeca_item_id: None,
             rcm_decision_id: None,
-            justification: None,
+            justification: Some("Taux de défaillance relevé par l'étude".into()),
             planned_cost: None,
             failure_cost: None,
         },
@@ -2829,7 +3584,7 @@ async fn pm_decision(f: &Fixture, study_id: i64, plan_id: i64) -> crate::reliabi
             approver_id: None,
             fmeca_item_id: None,
             rcm_decision_id: None,
-            justification: None,
+            justification: Some("Taux de défaillance relevé par l'étude".into()),
             planned_cost: Some(1_000.0),
             failure_cost: Some(9_000.0),
         },
@@ -2962,6 +3717,243 @@ async fn a_pm_version_from_a_decision_is_published_only_once_the_decision_is_app
     );
     let published = publish(own).await.expect("publish the applied decision's draft");
     assert_eq!(published.status, "published");
+}
+
+/// L2-18: equipment of different classes are pooled only once the person acknowledged it.
+#[tokio::test]
+async fn a_study_of_mixed_classes_needs_the_acknowledgement() {
+    let f = setup().await;
+    exec(
+        &f.db,
+        "INSERT INTO equipment_classes (entity_sync_id, code, name, parent_id, level, is_active, created_at, updated_at)          VALUES ('st-class-crane', 'ST_CRANE', 'Pont roulant', NULL, 'class', 1, datetime('now'), datetime('now'))",
+    )
+    .await;
+    let crane_class = scalar(&f.db, "SELECT id FROM equipment_classes WHERE code = 'ST_CRANE'").await;
+    exec(
+        &f.db,
+        &format!(
+            "INSERT INTO equipment (entity_sync_id, asset_id_code, name, class_id, lifecycle_status,              installed_at_node_id, created_at, updated_at) VALUES ('st-PR-1', 'PR-1', 'Pont roulant 1', {crane_class},              'active_in_service', 1, datetime('now'), datetime('now'))"
+        ),
+    )
+    .await;
+    let crane = scalar(&f.db, "SELECT id FROM equipment WHERE asset_id_code = 'PR-1'").await;
+    let input = |accept: bool| CreateStudyInput {
+        title: None,
+        equipment_ids: vec![f.p101, crane],
+        period_start: "2025-02-01T00:00:00Z".into(),
+        period_end: "2025-12-31T00:00:00Z".into(),
+        failure_mode_id: None,
+        accept_mixed_classes: accept,
+    };
+    assert_eq!(
+        refusal_code(create_study(&f.db, input(false), f.admin).await),
+        "GATE_REL_STUDY_MIXED_CLASSES"
+    );
+    let study = create_study(&f.db, input(true), f.admin)
+        .await
+        .expect("acknowledged mixed study");
+    assert_eq!(study.assets.len(), 2);
+    // Same class: no acknowledgement needed; adding the crane later asks for it again.
+    let pumps = create_study(
+        &f.db,
+        CreateStudyInput {
+            equipment_ids: vec![f.p101, f.p102],
+            ..input(false)
+        },
+        f.admin,
+    )
+    .await
+    .expect("same class");
+    let mut grow = update_basis(pumps.id, pumps.row_version, None);
+    grow.equipment_ids = Some(vec![f.p101, f.p102, crane]);
+    assert_eq!(
+        refusal_code(update_study(&f.db, grow.clone()).await),
+        "GATE_REL_STUDY_MIXED_CLASSES"
+    );
+    grow.accept_mixed_classes = true;
+    assert_eq!(update_study(&f.db, grow).await.expect("acknowledged").assets.len(), 3);
+}
+
+/// L2-13: a study without a name is named after its equipment and its creation day, and can be
+/// renamed.
+#[tokio::test]
+async fn a_study_is_named_at_creation_and_can_be_renamed() {
+    let f = setup().await;
+    let study_id = scenario(&f).await;
+    let study = crate::reliability::study::store::get_study(&f.db, study_id)
+        .await
+        .expect("study");
+    let day = crate::clock::now().format("%Y-%m-%d").to_string();
+    assert!(study.title.ends_with(&day), "{} names its day", study.title);
+    let mut rename = update_basis(study_id, study.row_version, None);
+    rename.title = Some("  Roulements pompes de transfert  ".into());
+    let renamed = update_study(&f.db, rename).await.expect("rename");
+    assert_eq!(renamed.title, "Roulements pompes de transfert");
+}
+
+/// L2-16: a decision always says why; its proposer edits it by recording the corrected decision,
+/// the one it replaces being withdrawn with the reason; nobody else edits it, nor once decided.
+#[tokio::test]
+async fn a_decision_needs_a_justification_and_is_edited_by_its_proposer() {
+    let f = setup().await;
+    let study_id = scenario(&f).await;
+    let blank = |justification: Option<&str>| CreateDecisionInput {
+        study_id,
+        title: "Contrôle d'alignement P-101".into(),
+        action_kind: "one_off_wo".into(),
+        equipment_id: Some(f.p101),
+        pm_plan_id: None,
+        proposed_interval_hours: None,
+        wo_type_code: Some("corrective".into()),
+        approver_id: None,
+        fmeca_item_id: None,
+        rcm_decision_id: None,
+        justification: justification.map(str::to_string),
+        planned_cost: None,
+        failure_cost: None,
+    };
+    for missing in [None, Some("   ")] {
+        assert_eq!(
+            refusal_code(create_decision(&f.db, blank(missing), f.admin).await),
+            "GATE_REL_DECISION_JUSTIFICATION_REQUIRED"
+        );
+    }
+    let first = wo_decision(&f, study_id, None).await;
+    let revise = |d: &crate::reliability::study::domain::StudyDecision, reason: &str| {
+        crate::reliability::study::domain::ReviseDecisionInput {
+            decision_id: d.id,
+            expected_row_version: d.row_version,
+            reason: reason.into(),
+            decision: CreateDecisionInput {
+                title: "Contrôle d'alignement et de jeu P-101".into(),
+                ..blank(Some("Deux ruptures en six mois"))
+            },
+        }
+    };
+    use crate::reliability::study::decisions::revise_decision;
+    assert_eq!(
+        refusal_code(revise_decision(&f.db, revise(&first, " "), f.admin).await),
+        "GATE_REL_DECISION_REVISE_REASON_REQUIRED"
+    );
+    assert_eq!(
+        refusal_code(revise_decision(&f.db, revise(&first, "Titre précisé"), f.reviewer).await),
+        "GATE_REL_DECISION_REVISE_NOT_PROPOSER"
+    );
+    let second = revise_decision(&f.db, revise(&first, "Titre précisé"), f.admin)
+        .await
+        .expect("revise");
+    assert_eq!(second.status, "proposed");
+    assert_eq!(second.title, "Contrôle d'alignement et de jeu P-101");
+    assert_eq!(second.justification, "Deux ruptures en six mois");
+    assert_eq!(decision_status(&f, first.id).await, "rejected");
+    let replaced = crate::reliability::study::decisions::get_decision(&f.db, first.id)
+        .await
+        .expect("replaced");
+    assert_eq!(replaced.decision_note.as_deref(), Some("Titre précisé"));
+    assert_eq!(replaced.decided_by_id, Some(f.admin));
+    // The replaced one cannot be edited again; a stale edit leaves a single proposal open.
+    assert_eq!(
+        refusal_code(revise_decision(&f.db, revise(&replaced, "Encore"), f.admin).await),
+        "GATE_REL_DECISION_ALREADY_DECIDED"
+    );
+    let stale = crate::reliability::study::domain::ReviseDecisionInput {
+        expected_row_version: second.row_version + 7,
+        ..revise(&second, "Version périmée")
+    };
+    assert_eq!(
+        refusal_code(revise_decision(&f.db, stale, f.admin).await),
+        "DECISION_STALE"
+    );
+    let open = list_decisions(&f.db, study_id)
+        .await
+        .expect("list")
+        .into_iter()
+        .filter(|d| d.status == "proposed")
+        .count();
+    assert_eq!(open, 1, "a refused edit records nothing");
+    let total = list_decisions(&f.db, study_id).await.expect("list").len();
+    assert_eq!(total, 2, "the replaced decision and its correction only");
+}
+
+/// L2-21: a RAMS failure figure opens the OT list behind it. The list's RAMS filter reuses the
+/// figure's own failure records (period, class, site, unplanned, in service), so it holds exactly
+/// the work orders the figure counts; a ranking row adds its equipment.
+#[tokio::test]
+async fn rams_failure_figure_lists_the_work_orders_it_counts() {
+    use crate::reliability::study::fleet_kpis::{fleet_kpis, FleetScope};
+    use crate::wo::queries::{list_work_orders, WoListFilter, WoRamsFailureScope};
+
+    let f = setup().await;
+    let m = Some(f.mode_id);
+    let w1 = wo_from_di(&f, "OT-R1", f.p101, "2025-03-01T00:00:00Z").await;
+    let w2 = wo_from_di(&f, "OT-R2", f.p102, "2025-04-01T00:00:00Z").await;
+    let w_old = wo_from_di(&f, "OT-R3", f.p101, "2024-01-01T00:00:00Z").await;
+    let w_planned = wo_from_di(&f, "OT-R4", f.p101, "2025-05-01T00:00:00Z").await;
+    failure(&f.db, "r1", f.p101, "2025-03-01T02:00:00Z", None, m, Some(w1), 1.0).await;
+    failure(&f.db, "r2", f.p102, "2025-04-01T02:00:00Z", None, m, Some(w2), 1.0).await;
+    failure(&f.db, "r3", f.p101, "2024-01-01T02:00:00Z", None, m, Some(w_old), 1.0).await;
+    failure(
+        &f.db,
+        "r4",
+        f.p101,
+        "2025-05-01T02:00:00Z",
+        None,
+        m,
+        Some(w_planned),
+        1.0,
+    )
+    .await;
+    exec(
+        &f.db,
+        "UPDATE failure_events SET is_planned = 1 WHERE entity_sync_id = 'st-fe-r4'",
+    )
+    .await;
+    // A failure recorded without a work order counts in the figure but has no OT to list.
+    failure(&f.db, "r5", f.p102, "2025-06-01T02:00:00Z", None, m, None, 1.0).await;
+
+    let (start, end) = ("2025-02-01T00:00:00Z", "2025-12-31T00:00:00Z");
+    let scope = FleetScope::new(start, end, Some(f.class_id), None).expect("scope");
+    assert_eq!(fleet_kpis(&f.db, &scope).await.expect("kpis").failure_count, 3);
+
+    let rams = WoRamsFailureScope {
+        period_start: start.into(),
+        period_end: end.into(),
+        equipment_class_id: Some(f.class_id),
+        org_node_id: None,
+    };
+    let listed = |equipment_id: Option<i64>| {
+        let rams = rams.clone();
+        let db = f.db.clone();
+        async move {
+            let page = list_work_orders(
+                &db,
+                WoListFilter {
+                    rams_failures: Some(rams),
+                    equipment_id,
+                    limit: 50,
+                    offset: 0,
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("list");
+            let mut ids: Vec<i64> = page.items.iter().map(|w| w.id).collect();
+            ids.sort_unstable();
+            (page.total, ids)
+        }
+    };
+    let mut both = vec![w1, w2];
+    both.sort_unstable();
+    assert_eq!(
+        listed(None).await,
+        (2, both),
+        "outside the period and planned stops are left out"
+    );
+    assert_eq!(
+        listed(Some(f.p101)).await,
+        (1, vec![w1]),
+        "a ranking row adds its equipment"
+    );
 }
 
 #[path = "decision_sync_tests.rs"]

@@ -169,7 +169,9 @@ describe("role editor permission names", () => {
     fireEvent.click(await screen.findByRole("button", { name: /Magasinier/ }));
 
     expect(
-      await screen.findByText("2 droits non utilisés dans cette version conservés"),
+      await screen.findByText(
+        "2 droits de plus sont prévus pour des fonctions absentes de cette version : ils ne sont pas affichés, ne donnent accès à rien aujourd'hui et restent en place, même après un enregistrement.",
+      ),
     ).toBeInTheDocument();
 
     fireEvent.click(
@@ -276,6 +278,10 @@ describe("account Permissions tab", () => {
     expect(screen.queryByText(HIDDEN)).not.toBeInTheDocument();
     expect(screen.getByText(/^2 permissions effectives/)).toBeInTheDocument();
     // The one left out is still counted, read-only.
-    expect(screen.getByText("1 droit non utilisé dans cette version conservé")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "1 droit de plus est prévu pour une fonction absente de cette version : il n'est pas affiché, ne donne accès à rien aujourd'hui et reste en place, même après un enregistrement.",
+      ),
+    ).toBeInTheDocument();
   });
 });

@@ -1,6 +1,8 @@
 {
   "page": {
-    "title": "Planning"
+    "title": "Planning",
+    "counter": "engagés {{committed}} · à engager {{proposed}}",
+    "counterTitle": "{{committed}} OT engagé(s) et {{proposed}} OT planifié(s) mais pas encore engagé(s) sur la période affichée"
   },
   "views": {
     "gantt": "Tableau Gantt",
@@ -48,18 +50,18 @@
     "horizonDays": "{{count}} jours",
     "sourceTypes": {
       "work_order": "Ordre de travail",
-      "pm_occurrence": "Occurrence PM",
+      "pm_occurrence": "Occurrence MP",
       "inspection_follow_up": "Demande approuvée"
     }
   },
   "actions": {
     "refreshBacklog": "Rafraîchir le backlog",
-    "freezePeriod": "Geler la période",
+    "lockPeriod": "Verrouiller une période (fenêtre / arrêt)",
     "exportPdf": "Exporter le Gantt PDF",
     "commit": "Créer l'engagement",
     "notifyTeams": "Notifier les équipes",
     "plannerTools": "Outils planificateur",
-    "requiresCommitments": "Disponible une fois du travail engagé sur ce tableau"
+    "requiresCommitments": "Aucun OT engagé sur la période Du–Au : engagez un OT du backlog, ou élargissez les dates, pour utiliser cet outil."
   },
   "state": {
     "loading": "Chargement des données planning..."
@@ -70,7 +72,7 @@
     "readinessScore": "Disponibilité",
     "skillMatch": "Adéquation compétences",
     "risk": "Risque",
-    "emptyReady": "Aucun candidat prêt.",
+    "emptyReady": "Aucun OT prêt à planifier. Seuls les OT au statut « Prêt à planifier » (ou planifiés, assignés) apparaissent ici ; un OT en brouillon ou en cours n'y figure pas.",
     "emptyBlocked": "Aucun candidat bloqué.",
     "readyHint": "Cliquez une carte Prêt pour l'engager au planning.",
     "blockedHint": "Ouvrez un élément bloqué pour lever ses blocages dans l'ordre de travail ou la demande.",
@@ -139,6 +141,7 @@
     "capacityBasis": {
       "roster": "selon les classes horaires",
       "rest_day": "jour de repos",
+      "site_rest_day": "repos du site",
       "holiday": "jour férié",
       "no_schedule": "aucune classe horaire",
       "no_members": "équipe sans membre"
@@ -170,7 +173,7 @@
       "budgetInvalid": "Le seuil budgétaire doit être un nombre positif ou nul.",
       "capacityExceededDay": "Capacité insuffisante le {{day}} : {{share}} h nécessaires, {{remaining}} h libres."
     },
-    "notEstimated": "Ce travail n'est pas estimé : saisissez sa durée et son effectif sur l'OT ou le PM avant de l'engager.",
+    "notEstimated": "Ce travail n'est pas estimé : saisissez sa durée et son effectif sur l'OT ou le MP avant de l'engager.",
     "labourHours": "{{hours}} h de main-d'œuvre ({{duration}} h × {{crew}} pers.)",
     "shiftTimeShort": "Chaque personne travaille {{duration}} h, mais le créneau ne contient que {{shift}} h de poste : allongez le créneau ou prévoyez des heures supplémentaires.",
     "capacityByDay": "{{day}} : {{share}} h de ce travail, {{remaining}} h libres sur {{available}} h"
@@ -236,13 +239,14 @@
     "signatureHint": "L'approbateur signe en saisissant son mot de passe sur ce poste. Un break-in urgent, ou qui force un contrôle bloquant (charge de l'équipe, fenêtre verrouillée, arrêt, préparation), doit être signé.",
     "noApprovers": "Personne d'autre ne détient plan.confirm sur le site de cette équipe : un break-in urgent ne peut pas être signé. Un travail d'urgence passe par un OT non planifié.",
     "inserted": "Ajouté en semaine gelée :",
-    "syncRefused": "refusé (sync)"
-  },
-  "freeze": {
-    "title": "Geler la période de planning",
-    "summary": "Geler les engagements du {{start}} au {{end}}.",
-    "reason": "Motif de gel",
-    "reasonPlaceholder": "Expliquez pourquoi cette période doit être gelée"
+    "syncRefused": "refusé (sync)",
+    "disabled": {
+      "noCommitment": "Choisissez l'engagement à déplacer.",
+      "noReason": "Choisissez le motif du break-in.",
+      "noApprover": "Choisissez l'approbateur qui signe ce break-in urgent.",
+      "noPassword": "L'approbateur doit saisir son mot de passe pour signer.",
+      "saving": "Enregistrement en cours…"
+    }
   },
   "override": {
     "title": "Déroger au double-booking",
@@ -284,6 +288,12 @@
   "dialogs": {
     "cancel": "Annuler",
     "close": "Fermer"
+  },
+  "proposed": {
+    "label": "À engager",
+    "tooltip": "OT planifié mais pas encore engagé : cliquez pour l'engager",
+    "tooltipWithTeam": "OT planifié mais pas encore engagé (équipe : {{team}}) : cliquez pour l'engager",
+    "noRight": "Vous n'avez pas le droit d'engager un OT."
   },
   "deepLink": {
     "woNotInBacklog": "Cet ordre de travail n'est pas dans le backlog de planification (pas encore prêt à planifier, déjà engagé ou hors filtre).",
@@ -397,6 +407,8 @@
     "publish": "Publier aux équipes",
     "requestUnfreeze": "Demander le dégel",
     "freezeDue": "Gel automatique le {{at}}",
+    "freezeOverdue": "Gel automatique dû depuis le {{at}} : il s'applique au prochain passage de l'application, ou gelez la semaine vous-même.",
+    "freezeOverdueNoCrews": "Gel automatique prévu le {{at}} mais non appliqué : aucune équipe n'est rattachée à ce site.",
     "frozenAt": "Gelé le {{at}}",
     "frozenAutomatically": "Gelé automatiquement le {{at}}",
     "unfreezePending": "Dégel demandé le {{at}} : {{reason}}. Il doit être décidé par un autre planificateur.",
@@ -408,7 +420,7 @@
     "crew": "Équipe",
     "dayOff": "repos",
     "frozenJob": "Gelé",
-    "noCrews": "Aucune équipe active rattachée à ce site.",
+    "noCrews": "Aucune équipe active rattachée à ce site (les équipes sans site figurent dans l'encadré ci-dessus : rattachez-les à un site).",
     "history": "Historique de la semaine",
     "system": "Système",
     "events": {
@@ -435,7 +447,6 @@
     "breakInRecorded": "Break-in enregistré",
     "slotReleased": "Créneau libéré",
     "commitmentCancelled": "Engagement annulé",
-    "periodFrozen": "Période gelée",
     "teamsNotified": "Équipes notifiées",
     "weekApproved": "Semaine approuvée",
     "weekFrozen": "Semaine gelée",

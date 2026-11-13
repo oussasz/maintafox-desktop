@@ -89,6 +89,15 @@ describe("DashboardCustomizeDialog", () => {
     expect(onSaved).toHaveBeenCalledTimes(1);
   });
 
+  it("applies a role preset: the technician sees only his own work (L7-28)", async () => {
+    const { onSaved } = renderDialog();
+    fireEvent.click(screen.getByRole("button", { name: enDashboard.layout.presets.technician }));
+    fireEvent.click(screen.getByRole("button", { name: enDashboard.layout.save }));
+    await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1));
+    const saved = onSaved.mock.calls[0]?.[0] as { widgets: { id: string; visible: boolean }[] };
+    expect(saved.widgets.filter((w) => w.visible).map((w) => w.id)).toEqual(["my_work"]);
+  });
+
   it("closes without saving on cancel", () => {
     const { onOpenChange } = renderDialog();
     fireEvent.click(screen.getByRole("button", { name: enDashboard.layout.cancel }));
