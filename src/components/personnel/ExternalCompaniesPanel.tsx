@@ -147,7 +147,10 @@ export function ExternalCompanyDialog({
         );
         // The create call takes the identity and contract dates; the contract number and amount,
         // the referencing (onboarding) and insurance statuses typed in the same form are saved
-        // right after, so the create form has the same fields as the edit form (UX L3-18).
+        // right after, so the create form has the same fields as the edit form (UX L3-18). The
+        // draft takes the new id first: if that second call fails, a retry updates the company
+        // instead of creating it twice.
+        setDraft((d) => ({ ...d, id: created.id }));
         saved = (await updateExternalCompany({
           id: created.id,
           name: created.name,
