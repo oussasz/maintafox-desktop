@@ -21,6 +21,7 @@ pub mod recovery_code;
 pub mod scope;
 pub(crate) mod second_signer;
 pub mod session_manager;
+pub mod signing_keys;
 
 #[cfg(test)]
 mod auth_integration_tests;

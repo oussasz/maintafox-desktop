@@ -400,6 +400,16 @@ pub const LOCAL_ONLY_TABLES: &[LocalOnlyTable] = &[
         table: "sync_capture_suppression",
         category: LocalOnlyCategory::SyncControl,
     },
+    // Per-user signing (migration 297): who is acting in the current write transaction.
+    LocalOnlyTable {
+        table: "sync_capture_actor",
+        category: LocalOnlyCategory::SyncControl,
+    },
+    // Per-user signing keys of this PC, wrapped under each user's password (migration 297).
+    LocalOnlyTable {
+        table: "user_signing_keys_local",
+        category: LocalOnlyCategory::Secrets,
+    },
     LocalOnlyTable {
         table: "sync_capture_baseline",
         category: LocalOnlyCategory::SyncControl,
