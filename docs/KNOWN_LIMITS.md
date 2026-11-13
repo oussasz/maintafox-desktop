@@ -12,11 +12,57 @@ record can be wrong, incomplete or need review) · **UX** (slower or less conven
 plant owner · **Release** = must be done when the version is released · **Accepted** = accepted by
 design, documented.
 
-Last updated: 2026-10-25 (planning four-eyes: break-ins signed by a second planner at the crew's site, unfreeze decided at the site, both re-checked on arrival; permit requirement from a safety-flagged request; close-out gates re-checked on received completions and closes; negative stock flagged on the stock screens; four-eyes on permit approval; notice to the settings administrators when a safety rule changed on another PC).
+Last updated: 2026-11-13 (0.9.3 release action list: server first, rights to grant, label reprint, what migrations 266–296 change; earlier: planning four-eyes: break-ins signed by a second planner at the crew's site, unfreeze decided at the site, both re-checked on arrival; permit requirement from a safety-flagged request; close-out gates re-checked on received completions and closes; negative stock flagged on the stock screens; four-eyes on permit approval; notice to the settings administrators when a safety rule changed on another PC).
 
 ---
 
 ## Release actions (must be done at release)
+
+### 0.9.3 release action list (in this order)
+
+1. **Sync server first.** Deploy the vendor-console change that adds the 7 new synced record types
+   (229 → 236: `asset_corrective_actions`, `asset_five_why_analyses`, `equipment_isolation_points`,
+   `permit_gas_tests`, `permit_personal_locks`, `permit_workers`, `wo_history_records`), regenerated
+   from the desktop registry. Do this before any PC installs 0.9.3. Otherwise the server refuses
+   those rows as `unknown_entity_type`.
+2. **All PCs of a plant upgrade the same day**, after the server. A PC still on 0.9.2 cannot apply
+   the new records (it refuses received history failure events as conflicts, for example), and a
+   permit issued on a PC still on 0.9.2 is applied without being judged again (ruling 4 row below).
+   Do the first sync only once every PC is on 0.9.3.
+3. **Grant the new rights after the upgrade** (Administration → Rôles):
+   - `ptw.hse_approve` to the HSE approvers. Without it, permit issuers (`ptw.issue`) can no longer
+     give the HSE approval.
+   - `ptw.lock_own` to the workers who place their own padlock on a permit's group lock box.
+   - Purchase approval (`inv.approve`, migration 269): only Administrator, Superadmin and the
+     supervisor system roles keep approval. Every other role that held `inv.procure` (buyers,
+     planners, custom roles) keeps creating requests and orders but **no longer approves**. Grant
+     `inv.approve` and an approval limit where the plant wants it. Roles that held `inv.procure`
+     receive `inv.receive`, so goods receipts continue.
+4. **Reprint the equipment QR labels** printed before the asset-code labels. Scanning an old label is
+   refused with "Étiquette à réimprimer". Reprint from each equipment record; there is no bulk
+   reprint yet.
+5. **What the upgrade itself changes (migrations 266 to 296, run on each PC, nothing is sent):**
+   - Work on equipment of criticality A now needs a consignation permit (rule `CRITICITE_A`,
+     migration 278). Open work orders on such equipment are flagged at the first start, so starting
+     or resuming them needs a live LOTO permit, or a person with the permit-issue right clears the
+     flag with a reason. To change or remove the rule: Données de référence → permit rules.
+   - Every permit type that the plant's rules give a work order is now required to start it
+     (migration 279). Existing orders get the set of their one rule type.
+   - The top organisation level labelled "Root Organization" becomes "Entreprise", unless the plant
+     renamed it (migration 268).
+   - A new permit type "Travail en hauteur" is shipped (migration 274). Review it under Permis →
+     Types de permis.
+   - A permit cancelled from now on needs a reason. Verifying an isolation needs the zero-energy
+     confirmation and a comment (migrations 272 and 283).
+   - Everything else is new columns or tables with no change to existing values: meter reading
+     cancellation, parts to issue, the dépannage path, history import, document control and
+     versions, characteristics and thresholds, permit content and gas tests, non-stock purchase,
+     nested PM plans, contractors and returns, permit workers, warranty claims.
+6. **Review the "à revoir" values** listed in the rows below (units, symptoms, LOTO texts,
+   personnel/document lists, permit hand-over roles) if not done at 0.9.2.
+7. **Production gate (not for 0.9.3):** the sync server still cannot prove which user made a
+   change (rows on per-site self-approval, three-person setting, attachment deletes). 0.9.3 stays a
+   test version for internal PCs until per-user signed changes exist.
 
 | Limit | Impact | Handled in |
 |---|---|---|
