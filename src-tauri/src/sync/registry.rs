@@ -20,6 +20,7 @@ use std::sync::OnceLock;
 use serde::Serialize;
 
 use crate::errors::{AppError, AppResult};
+use crate::sync::signing_rules::{author_payload_key, signing_rule, SERVER_ONLY_TYPES};
 
 /// Who receives a replicated row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -718,6 +719,24 @@ struct ExportedEntity {
     sync_status: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     note: Option<&'static str>,
+    /// Per-user signing (`sync::signing_rules`): right the maker needs plant-wide.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    authority: Option<&'static str>,
+    /// Per-user signing: payload keys naming who made the change, with the keys they vouch for.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    author_fields: Vec<ExportedAuthorField>,
+}
+
+#[derive(Debug, Serialize)]
+struct ExportedAuthorField {
+    field: String,
+    guards: Vec<&'static str>,
+}
+
+#[derive(Debug, Serialize)]
+struct ExportedServerOnlyType {
+    entity_type: &'static str,
+    scope: &'static str,
 }
 
 #[derive(Debug, Serialize)]
@@ -727,10 +746,12 @@ struct ExportedRegistry {
     registry_version: u32,
     entities: Vec<ExportedEntity>,
     local_only_tables: BTreeMap<&'static str, LocalOnlyCategory>,
+    /// Types the server publishes but no device pushes (never staged here).
+    server_only_types: Vec<ExportedServerOnlyType>,
 }
 
 /// Bump when the exported shape changes (not when entries are added).
-const REGISTRY_EXPORT_VERSION: u32 = 1;
+const REGISTRY_EXPORT_VERSION: u32 = 2;
 
 /// Pretty JSON written to `shared/sync/entity-registry.json` for the control-plane allowlist.
 pub fn registry_export_json() -> AppResult<String> {
@@ -744,6 +765,18 @@ pub fn registry_export_json() -> AppResult<String> {
             parents: e.parents.to_vec(),
             sync_status: e.sync_status(),
             note: e.note,
+            authority: signing_rule(e.entity_type).and_then(|r| r.authority),
+            author_fields: signing_rule(e.entity_type)
+                .map(|r| {
+                    r.author_fields
+                        .iter()
+                        .map(|f| ExportedAuthorField {
+                            field: author_payload_key(f),
+                            guards: f.guards.to_vec(),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
         })
         .collect();
     let export = ExportedRegistry {
@@ -751,6 +784,10 @@ pub fn registry_export_json() -> AppResult<String> {
         registry_version: REGISTRY_EXPORT_VERSION,
         entities,
         local_only_tables: LOCAL_ONLY_TABLES.iter().map(|t| (t.table, t.category)).collect(),
+        server_only_types: SERVER_ONLY_TYPES
+            .iter()
+            .map(|&(entity_type, scope)| ExportedServerOnlyType { entity_type, scope })
+            .collect(),
     };
     let mut json = serde_json::to_string_pretty(&export)?;
     json.push('\n');
