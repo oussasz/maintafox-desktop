@@ -1097,7 +1097,8 @@
           "field": "approved_by_sync_id",
           "guards": [
             "approved_at",
-            "approval_note"
+            "approval_note",
+            "self_approved"
           ]
         },
         {
@@ -1627,7 +1628,8 @@
         "org_structure_models",
         "org_node_types"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "authority": "org.admin"
     },
     {
       "entity_type": "org_structure_models",
@@ -3417,7 +3419,8 @@
         {
           "field": "approved_by_sync_id",
           "guards": [
-            "approved_at"
+            "approved_at",
+            "self_approved"
           ]
         },
         {
@@ -3430,7 +3433,8 @@
           "field": "hse_approved_by_sync_id",
           "guards": [
             "hse_approved_at",
-            "hse_approval_note"
+            "hse_approval_note",
+            "hse_self_approved"
           ]
         }
       ]

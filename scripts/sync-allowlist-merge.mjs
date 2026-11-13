@@ -32,6 +32,34 @@ function desktopSigning(entity) {
 
 const SIGNING_KEYS = ["authority", "author_fields"];
 
+/**
+ * What replacing the server's signing contract of `entry` with the desktop's `signing` would
+ * weaken: an authority removed or changed, an author field dropped, or a guard dropped from one.
+ * Such a change is never applied silently (review F9): it is reported as a problem, so a stale or
+ * wrong desktop list cannot loosen what the server judges.
+ */
+function signingWeakenings(entry, signing) {
+  const out = [];
+  const type = entry.entity_type;
+  if (entry.authority !== undefined && entry.authority !== null && entry.authority !== signing.authority) {
+    out.push(`${type}: allowlist authority ${entry.authority}, desktop ${signing.authority ?? "none"}`);
+  }
+  const desktopFields = new Map((signing.author_fields ?? []).map((a) => [a.field, a]));
+  for (const author of entry.author_fields ?? []) {
+    const mine = desktopFields.get(author.field);
+    if (mine === undefined) {
+      out.push(`${type}: author field ${author.field} is in the allowlist, not on the desktop`);
+      continue;
+    }
+    for (const guard of author.guards ?? []) {
+      if (!mine.guards.includes(guard)) {
+        out.push(`${type}: guard ${guard} of ${author.field} is in the allowlist, not on the desktop`);
+      }
+    }
+  }
+  return out;
+}
+
 /** Replaces the signing keys of `entry` (in place) with `signing`; true when anything changed. */
 function setSigning(entry, signing) {
   let changed = false;
@@ -47,11 +75,13 @@ function setSigning(entry, signing) {
 /**
  * Brings `server.entity_types` (in place) in line with the desktop registry:
  * - appends every staged desktop type it does not list yet, with its signing contract;
- * - refreshes the signing contract (`author_fields`, `authority`) of listed staged types;
+ * - refreshes the signing contract (`author_fields`, `authority`) of listed staged types, only
+ *   to make it stricter or equal: a contract the desktop would weaken is a problem;
  * - appends every desktop `server_only_types` entry with `server_only: true`.
  * Returns `{ added, updated, problems }`. `problems` lists entries whose scope, `append_only` or
- * `server_only` flag disagrees with the desktop registry; nothing is changed then, because those
- * parts of an entry are never rewritten.
+ * `server_only` flag disagrees with the desktop registry, or whose signing contract the desktop
+ * would weaken; nothing is changed then, because those parts of an entry are never rewritten
+ * (or loosened) by a merge.
  */
 export function appendStagedTypes(registry, server) {
   const listed = new Map(server.entity_types.map((e) => [e.entity_type, e]));
@@ -81,6 +111,7 @@ export function appendStagedTypes(registry, server) {
     if (entry.server_only === true) {
       problems.push(`${entity.entity_type}: server-only in the allowlist, staged by the desktop`);
     }
+    problems.push(...signingWeakenings(entry, desktopSigning(entity)));
   }
   for (const so of serverOnly) {
     if (stagedTypes.has(so.entity_type)) {

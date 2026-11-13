@@ -313,7 +313,9 @@ pub static SIGNING_RULES: &[SigningRule] = &[
         entity_type: "inventory_count_lines",
         author_fields: &[
             author("counted_by_id", &["counted_qty"]),
-            author("approved_by_id", &["approved_at", "approval_note"]),
+            // `self_approved`: the counter approved their own variance (four-eyes opt-out, m259):
+            // only the approver may set or clear it (review F6).
+            author("approved_by_id", &["approved_at", "approval_note", "self_approved"]),
             author("second_approved_by_id", &["second_approved_at", "second_approval_note"]),
         ],
         not_attribution: &[],
@@ -440,6 +442,14 @@ pub static SIGNING_RULES: &[SigningRule] = &[
     },
     SigningRule {
         entity_type: "org_node_types",
+        author_fields: &[],
+        not_attribution: &[],
+        authority: Some(permissions::ORG_ADMIN),
+    },
+    // The org tree decides what a site-scoped grant covers (RBAC resolver): moving or changing a
+    // node is judged as an organisation-administration act (design §11 implementation check).
+    SigningRule {
+        entity_type: "org_nodes",
         author_fields: &[],
         not_attribution: &[],
         authority: Some(permissions::ORG_ADMIN),
@@ -972,9 +982,14 @@ pub static SIGNING_RULES: &[SigningRule] = &[
         author_fields: &[
             author("created_by_id", &[]),
             author("submitted_by_id", &["submitted_at"]),
-            author("approved_by_id", &["approved_at"]),
+            // The self-approval flags (four-eyes opt-out, m244 / m294) are vouched for by their
+            // approver: no other signer may set or clear them (review F6).
+            author("approved_by_id", &["approved_at", "self_approved"]),
             author("cancelled_by_id", &["cancelled_at"]),
-            author("hse_approved_by_id", &["hse_approved_at", "hse_approval_note"]),
+            author(
+                "hse_approved_by_id",
+                &["hse_approved_at", "hse_approval_note", "hse_self_approved"],
+            ),
         ],
         not_attribution: &[],
         authority: None,

@@ -179,6 +179,7 @@ fn signing_rules_are_well_formed() {
         ("delegated_admin_policies", permissions::ADM_USERS),
         ("roles", permissions::ADM_ROLES),
         ("role_permissions", permissions::ADM_ROLES),
+        ("org_nodes", permissions::ORG_ADMIN),
     ] {
         assert_eq!(
             signing_rule(entity_type).and_then(|r| r.authority),

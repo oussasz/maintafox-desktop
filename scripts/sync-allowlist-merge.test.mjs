@@ -80,7 +80,7 @@ describe("appendStagedTypes", () => {
     expect(server).toEqual(before);
   });
 
-  it("copies the signing contract onto new and existing entries, and removes a stale one", () => {
+  it("copies the signing contract onto new and existing entries when it is stricter or equal", () => {
     const authorFields = [{ field: "approved_by_sync_id", guards: ["approved_at"] }];
     const registry = {
       entities: [
@@ -99,19 +99,13 @@ describe("appendStagedTypes", () => {
           append_only: false,
           authority: "test.authority.roles",
         },
-        {
-          entity_type: "notes",
-          scope: "tenant",
-          append_only: false,
-          authority: "test.authority.users",
-          author_fields: authorFields,
-        },
+        { entity_type: "notes", scope: "tenant", append_only: false },
       ],
     };
     const { added, updated, problems } = appendStagedTypes(registry, server);
     expect(problems).toEqual([]);
     expect(added).toEqual(["events (tenant, append-only)"]);
-    expect(updated).toEqual(["permits (signing contract)", "notes (signing contract)"]);
+    expect(updated).toEqual(["permits (signing contract)"]);
     expect(server.entity_types).toEqual([
       { entity_type: "permits", scope: "tenant", append_only: false, author_fields: authorFields },
       {
@@ -123,6 +117,44 @@ describe("appendStagedTypes", () => {
       { entity_type: "notes", scope: "tenant", append_only: false },
       { entity_type: "events", scope: "tenant", append_only: true, author_fields: authorFields },
     ]);
+  });
+
+  it("never weakens the server's signing contract: a dropped authority, author or guard is a problem", () => {
+    const registry = {
+      entities: [
+        entity("notes", "last_write_wins"),
+        entity("permits", "last_write_wins", {
+          author_fields: [{ field: "approved_by_sync_id", guards: [] }],
+        }),
+      ],
+    };
+    const server = {
+      entity_types: [
+        {
+          entity_type: "notes",
+          scope: "tenant",
+          append_only: false,
+          authority: "test.authority.users",
+          author_fields: [{ field: "made_by_sync_id", guards: [] }],
+        },
+        {
+          entity_type: "permits",
+          scope: "tenant",
+          append_only: false,
+          author_fields: [{ field: "approved_by_sync_id", guards: ["approved_at"] }],
+        },
+      ],
+    };
+    const before = structuredClone(server);
+    const { added, updated, problems } = appendStagedTypes(registry, server);
+    expect(added).toEqual([]);
+    expect(updated).toEqual([]);
+    expect(problems).toEqual([
+      "notes: allowlist authority test.authority.users, desktop none",
+      "notes: author field made_by_sync_id is in the allowlist, not on the desktop",
+      "permits: guard approved_at of approved_by_sync_id is in the allowlist, not on the desktop",
+    ]);
+    expect(server).toEqual(before);
   });
 
   it("adds the desktop's server-only types once, never as staged types", () => {
