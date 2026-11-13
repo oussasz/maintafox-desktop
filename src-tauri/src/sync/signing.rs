@@ -9,7 +9,10 @@
 //!   password was typed for it in this session.
 //! - **Holding back**: an item with a maker that is not signed by them yet is not sent, nor are
 //!   the later changes of the same record (they are built on it). It waits for the maker's next
-//!   sign-in on this PC.
+//!   sign-in on this PC. Likewise an item that sets or changes an author field (or what that
+//!   field vouches for) naming someone other than its maker is held until that person signed it
+//!   (`sync_outbox.awaiting_signers_json`, design §9 "never sent"; the server's rule 4 would
+//!   refuse it).
 
 use std::collections::HashSet;
 
@@ -26,14 +29,17 @@ use crate::sync::transport::wire::WireSignature;
 const MAX_SIGNATURES: usize = 8;
 
 /// SQL over the outbox alias `o`: an earlier or this unsent change of the same record still waits
-/// for its maker's signature.
+/// for its maker's signature, or for a second signer it names ([`sign_pending_items`] writes
+/// `awaiting_signers_json`: `'[]'` when nobody else must sign, NULL while not judged yet, so an
+/// item never judged is held, never sent).
 pub(crate) const AWAITING_MAKER_SIGNATURE_SQL: &str = "EXISTS (
     SELECT 1 FROM sync_outbox w
     WHERE w.entity_type = o.entity_type AND w.entity_sync_id = o.entity_sync_id AND w.id <= o.id
       AND w.status IN ('pending', 'in_flight') AND w.maker_user_sync_id IS NOT NULL
-      AND NOT EXISTS (
-          SELECT 1 FROM json_each(COALESCE(w.signatures_json, '[]')) s
-          WHERE json_extract(s.value, '$.user_sync_id') = w.maker_user_sync_id))";
+      AND (COALESCE(w.awaiting_signers_json, 'unjudged') <> '[]'
+           OR NOT EXISTS (
+               SELECT 1 FROM json_each(COALESCE(w.signatures_json, '[]')) s
+               WHERE json_extract(s.value, '$.user_sync_id') = w.maker_user_sync_id)))";
 
 async fn key_is_enrolled(conn: &impl ConnectionTrait, key_id: &str) -> AppResult<bool> {
     Ok(conn
@@ -61,6 +67,91 @@ fn author_values(entity_type: &str, payload_json: &str) -> Vec<String> {
         .filter(|v| !v.trim().is_empty())
         .map(str::to_string)
         .collect()
+}
+
+fn blank(value: Option<&Value>) -> bool {
+    match value {
+        None | Some(Value::Null) => true,
+        Some(Value::String(s)) => s.trim().is_empty(),
+        Some(_) => false,
+    }
+}
+
+fn same(a: Option<&Value>, b: Option<&Value>) -> bool {
+    (blank(a) && blank(b)) || a == b
+}
+
+/// The people other than `maker` whose signature the server's rule 4 requires on this payload:
+/// each author field that is set or changed against `previous` (or whose guarded columns
+/// changed) and names someone else. `previous = None`: the record is new to the server.
+pub(crate) fn required_cosigners(
+    entity_type: &str,
+    payload_json: &str,
+    previous_json: Option<&str>,
+    maker: &str,
+) -> Vec<String> {
+    let Some(rule) = signing_rule(entity_type) else {
+        return Vec::new();
+    };
+    let Ok(Value::Object(payload)) = serde_json::from_str::<Value>(payload_json) else {
+        return Vec::new();
+    };
+    let previous = previous_json.and_then(|p| match serde_json::from_str::<Value>(p) {
+        Ok(Value::Object(map)) => Some(map),
+        _ => None,
+    });
+    let before = |key: &str| previous.as_ref().and_then(|p| p.get(key));
+    let mut required: Vec<String> = Vec::new();
+    for field in rule.author_fields {
+        let key = author_payload_key(field);
+        let value = payload.get(&key);
+        let changed = !same(value, before(&key)) || field.guards.iter().any(|g| !same(payload.get(*g), before(g)));
+        if !changed {
+            continue;
+        }
+        if let Some(named) = value.and_then(Value::as_str).filter(|v| !v.trim().is_empty()) {
+            if named != maker && !required.iter().any(|r| r == named) {
+                required.push(named.to_string());
+            }
+        }
+    }
+    required
+}
+
+/// The payload of the version this item was built on, as the server last knew it from this PC:
+/// the latest earlier outbox item of the record, or the latest version received from the server,
+/// whichever is newer. `None` when the record is new to the server (or its last version deletes it).
+async fn previous_payload(conn: &impl ConnectionTrait, item: &PendingItem) -> AppResult<Option<String>> {
+    let row = conn
+        .query_one(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "SELECT payload_json, operation FROM (
+                 SELECT payload_json, operation, row_version, 0 AS source FROM sync_outbox
+                 WHERE entity_type = ? AND entity_sync_id = ? AND id < ?
+                   AND status IN ('pending', 'in_flight', 'acked')
+                 UNION ALL
+                 SELECT payload_json, operation, row_version, 1 AS source FROM sync_inbox
+                 WHERE entity_type = ? AND entity_sync_id = ? AND apply_status = 'applied'
+             )
+             ORDER BY row_version DESC, source ASC LIMIT 1",
+            [
+                item.entity_type.clone().into(),
+                item.entity_sync_id.clone().into(),
+                item.id.into(),
+                item.entity_type.clone().into(),
+                item.entity_sync_id.clone().into(),
+            ],
+        ))
+        .await?;
+    let read = |e: sea_orm::DbErr| AppError::SyncError(format!("sync signing previous version: {e}"));
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let operation: String = row.try_get("", "operation").map_err(read)?;
+    if operation == "delete" {
+        return Ok(None);
+    }
+    Ok(Some(row.try_get("", "payload_json").map_err(read)?))
 }
 
 struct PendingItem {
@@ -102,6 +193,7 @@ pub async fn sign_pending_items(conn: &impl ConnectionTrait, tenant_id: &str) ->
             DatabaseBackend::Sqlite,
             "SELECT id, entity_type, entity_sync_id, operation, row_version, base_row_version, payload_json,
                     maker_user_sync_id, signatures_json
+                    , awaiting_signers_json
              FROM sync_outbox
              WHERE status = 'pending' AND maker_user_sync_id IS NOT NULL
              ORDER BY id"
@@ -139,15 +231,23 @@ pub async fn sign_pending_items(conn: &impl ConnectionTrait, tenant_id: &str) ->
                 }
             }
         }
-        // A second signer co-signs only an item of the session that names them in an author field.
+        // A second signer co-signs only the item of their action that names them in an author field.
         if has(&signatures, &item.maker) {
             for named in author_values(&item.entity_type, &item.payload_json) {
                 if named == item.maker || has(&signatures, &named) || signatures.len() >= MAX_SIGNATURES {
                     continue;
                 }
-                let Some(key) = signing_keys::cosigner_key(&named) else {
+                // Only the key bound to this very record and maker (the committed action its
+                // password was typed for) co-signs (review F2).
+                let Some((key, grant)) = signing_keys::cosigner_key(&named) else {
                     continue;
                 };
+                if grant.entity_type != item.entity_type
+                    || grant.entity_sync_id != item.entity_sync_id
+                    || grant.maker_user_sync_id != item.maker
+                {
+                    continue;
+                }
                 if key_is_enrolled(conn, key.key_id()).await? {
                     signatures.push(sign_item(&item, tenant_id, &key)?);
                     used_cosigners.insert(named);
@@ -155,14 +255,38 @@ pub async fn sign_pending_items(conn: &impl ConnectionTrait, tenant_id: &str) ->
                 }
             }
         }
-        if changed {
+        // Who else must still sign before the item may be sent (server rule 4, review F3). A
+        // delete carries no author field to vouch for.
+        let awaiting: Vec<String> = if item.operation == "delete" {
+            Vec::new()
+        } else {
+            let previous = previous_payload(conn, &item).await?;
+            required_cosigners(&item.entity_type, &item.payload_json, previous.as_deref(), &item.maker)
+                .into_iter()
+                .filter(|named| !has(&signatures, named))
+                .collect()
+        };
+        let awaiting_json = serde_json::to_string(&awaiting)?;
+        let stored_awaiting: Option<String> = row.try_get("", "awaiting_signers_json").map_err(read)?;
+        if changed || stored_awaiting.as_deref() != Some(awaiting_json.as_str()) {
             conn.execute(Statement::from_sql_and_values(
                 DatabaseBackend::Sqlite,
-                "UPDATE sync_outbox SET signatures_json = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+                "UPDATE sync_outbox SET signatures_json = ?, awaiting_signers_json = ?,
+                        updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
                  WHERE id = ? AND status = 'pending'",
-                [serde_json::to_string(&signatures)?.into(), item.id.into()],
+                [
+                    if signatures.is_empty() {
+                        None::<String>.into()
+                    } else {
+                        Some(serde_json::to_string(&signatures)?).into()
+                    },
+                    awaiting_json.into(),
+                    item.id.into(),
+                ],
             ))
             .await?;
+        }
+        if changed {
             signed_items += 1;
         }
     }
@@ -170,6 +294,26 @@ pub async fn sign_pending_items(conn: &impl ConnectionTrait, tenant_id: &str) ->
         signing_keys::release_cosigner_key(&user);
     }
     Ok(signed_items)
+}
+
+// ── Session end (review F1) ─────────────────────────────────────────────────────────────────
+
+/// Ends per-user signing for a session that ended, however it ended (sign-out, stored-state check,
+/// lockout, stale tenant claim, licence reset, failed sign-in): every held key and typed co-signer
+/// password is released, and the capture actor is cleared so nobody is the maker of later changes.
+/// Even if clearing the actor fails, it is inert once the session row is closed or past its expiry
+/// (`sync::capture::LIVE_CAPTURE_ACTOR_SQL`).
+pub async fn end_signing_session(db: &DatabaseConnection) -> AppResult<()> {
+    signing_keys::release_session_keys();
+    crate::auth::second_signer::release_pending_enrolments();
+    crate::sync::capture::set_capture_actor(db, None).await
+}
+
+/// [`end_signing_session`] for paths that must not fail on it (the session is already ended).
+pub async fn end_signing_session_logged(db: &DatabaseConnection, context: &'static str) {
+    if let Err(e) = end_signing_session(db).await {
+        tracing::error!(error = %e, context, "sync signing: capture actor not cleared at session end");
+    }
 }
 
 // ── Enrolment (design §4) ────────────────────────────────────────────────────────────────
@@ -203,13 +347,22 @@ pub async fn enrol_key(db: &DatabaseConnection, key: &UnlockedSigningKey, passwo
         key.key_id(),
         &claim.machine_fingerprint,
     ))?;
-    let body = serde_json::json!({
-        "user_sync_id": key.user_sync_id(),
-        "public_key": key.public_key_b64(),
-        "password": password,
-        "proof_signature": base64::engine::general_purpose::STANDARD.encode(proof),
-    })
-    .to_string();
+    // Serialised straight from borrowed fields: the request body is the only copy of the password
+    // made here (no intermediate JSON value). That body is handed to the HTTP client, which owns
+    // and frees it (review F8; it cannot be wiped from here).
+    #[derive(serde::Serialize)]
+    struct EnrolBody<'a> {
+        user_sync_id: &'a str,
+        public_key: String,
+        password: &'a str,
+        proof_signature: String,
+    }
+    let body = serde_json::to_string(&EnrolBody {
+        user_sync_id: key.user_sync_id(),
+        public_key: key.public_key_b64(),
+        password,
+        proof_signature: base64::engine::general_purpose::STANDARD.encode(proof),
+    })?;
     let client = crate::sync::transport::client::ControlPlaneClient::new(
         env!("MAINTAFOX_CONTROL_PLANE_API_BASE_URL"),
         crate::sync::transport::SyncTiming::production().timeouts,
@@ -253,7 +406,7 @@ pub fn spawn_enrolment_if_needed(db: DatabaseConnection, key: std::sync::Arc<Unl
     });
 }
 
-fn wipe_string(s: &mut String) {
+pub(crate) fn wipe_string(s: &mut String) {
     // SAFETY: zero bytes are valid UTF-8, so the string stays valid while it is overwritten.
     for b in unsafe { s.as_bytes_mut() } {
         // SAFETY: `b` is a valid, exclusive reference into the string's buffer.

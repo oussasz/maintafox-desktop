@@ -2013,6 +2013,7 @@ pub async fn create_schedule_break_in(
                 signer,
                 password_checked,
                 Some(input.schedule_commitment_id),
+                None,
             )
             .await?;
             return Err(e);
@@ -2020,8 +2021,15 @@ pub async fn create_schedule_break_in(
     };
     tx.commit().await?;
     // Committed: a failure to count the password outcome is logged, never turned into an error.
-    if let Err(e) =
-        break_in_approval::record_signer_outcome(db, actor_id, signer, password_checked, Some(current.id)).await
+    if let Err(e) = break_in_approval::record_signer_outcome(
+        db,
+        actor_id,
+        signer,
+        password_checked,
+        Some(current.id),
+        Some(break_in_id),
+    )
+    .await
     {
         tracing::error!(error = %e, commitment_id = current.id, "break-in: approver password outcome not recorded");
     }
@@ -2331,13 +2339,17 @@ pub async fn create_schedule_commitment(
         Ok(done) => done,
         Err(e) => {
             tx.rollback().await?;
-            break_in_approval::record_signer_outcome(db, actor_id, signer, password_checked, None).await?;
+            break_in_approval::record_signer_outcome(db, actor_id, signer, password_checked, None, None).await?;
             return Err(e);
         }
     };
     tx.commit().await?;
     // Committed: a failure to count the password outcome is logged, never turned into an error.
-    if let Err(e) = break_in_approval::record_signer_outcome(db, actor_id, signer, password_checked, Some(id)).await {
+    let committed_break_in = inserted_break_in.as_ref().map(|b| b.0);
+    if let Err(e) =
+        break_in_approval::record_signer_outcome(db, actor_id, signer, password_checked, Some(id), committed_break_in)
+            .await
+    {
         tracing::error!(error = %e, commitment_id = id, "break-in: approver password outcome not recorded");
     }
     if let Some(outcome) = wo_sync {

@@ -1,10 +1,56 @@
 //! Per-user signing, capture side (design v9 §9): every staged change records whose session made
 //! it, the outbox never merges two makers, and a change made while nobody is signed in has none.
 
+use chrono::{TimeDelta, Utc};
 use sea_orm::DatabaseConnection;
 
-use super::capture::{current_capture_actor, drain_capture_journal, set_capture_actor};
+use super::capture::{current_capture_actor, drain_capture_journal, set_capture_actor, CaptureActor};
 use super::test_support::{exec, started_device_db, RowFactory};
+
+/// Local account id used for a test user sync id (the stored session row names it).
+fn local_id(user_sync_id: &str) -> i64 {
+    match user_sync_id {
+        "user-v" => 101,
+        "user-u" => 102,
+        "user-n" => 103,
+        "user-b" => 104,
+        _ => 199,
+    }
+}
+
+/// `user_sync_id` signs in on this PC: an open stored session, and capture for that user.
+async fn sign_in(db: &DatabaseConnection, user_sync_id: &str) {
+    sign_in_until(db, user_sync_id, Utc::now() + TimeDelta::hours(1)).await;
+}
+
+async fn sign_in_until(db: &DatabaseConnection, user_sync_id: &str, expires_at: chrono::DateTime<Utc>) {
+    let user_id = local_id(user_sync_id);
+    exec(
+        db,
+        "INSERT OR REPLACE INTO app_sessions (id, user_id, created_at, expires_at, last_activity_at, is_revoked)
+         VALUES (?, ?, '2026-01-01T00:00:00Z', ?, NULL, 0)",
+        vec![
+            format!("session-{user_id}").into(),
+            user_id.to_string().into(),
+            expires_at.to_rfc3339().into(),
+        ],
+    )
+    .await;
+    set_capture_actor(
+        db,
+        Some(&CaptureActor {
+            user_sync_id,
+            user_id,
+            expires_at,
+        }),
+    )
+    .await
+    .expect("sign in");
+}
+
+fn session_end() -> chrono::DateTime<Utc> {
+    Utc::now() + TimeDelta::hours(1)
+}
 
 async fn makers(db: &DatabaseConnection, entity_sync_id: &str) -> Vec<(i64, Option<String>)> {
     use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
@@ -44,14 +90,14 @@ async fn only_the_session_user_is_the_maker_and_makers_never_merge() {
     // Made while nobody is signed in (startup seeders, background jobs): no maker, nobody signs.
     assert_eq!(makers(&db, &row.entity_sync_id).await, vec![(1, None)]);
 
-    set_capture_actor(&db, Some("user-v")).await.expect("V signs in");
+    sign_in(&db, "user-v").await;
     assert_eq!(
         current_capture_actor(&db).await.expect("actor").as_deref(),
         Some("user-v")
     );
     set_reference(&db, row.rowid, "x").await;
     // V signs out and U signs in before any push: V's change is staged as V's first.
-    set_capture_actor(&db, Some("user-u")).await.expect("U signs in");
+    sign_in(&db, "user-u").await;
     set_reference(&db, row.rowid, "y").await;
     set_capture_actor(&db, None).await.expect("U signs out");
 
@@ -73,7 +119,7 @@ async fn suppressed_writes_are_not_captured_for_the_session_user() {
     let db = started_device_db().await;
     let mut factory = RowFactory::new();
     let row = factory.create(&db, "user_scope_assignments").await.expect("row");
-    set_capture_actor(&db, Some("user-u")).await.expect("U signs in");
+    sign_in(&db, "user-u").await;
     exec(&db, "INSERT INTO sync_capture_suppression (id) VALUES (1)", vec![]).await;
     set_reference(&db, row.rowid, "z").await;
     exec(&db, "DELETE FROM sync_capture_suppression", vec![]).await;
@@ -167,15 +213,15 @@ async fn only_the_makers_key_signs_and_unsigned_items_wait() {
     let u_key = user_with_key(&db, "user-u", true).await;
     let mut factory = RowFactory::new();
     let row = factory.create(&db, "user_scope_assignments").await.expect("row");
-    set_capture_actor(&db, Some("user-v")).await.expect("V");
+    sign_in(&db, "user-v").await;
     set_reference(&db, row.rowid, "x").await;
-    set_capture_actor(&db, Some("user-u")).await.expect("U");
+    sign_in(&db, "user-u").await;
     set_reference(&db, row.rowid, "y").await;
     set_capture_actor(&db, None).await.expect("none");
 
     // U is signed in (V is not): U's key does not sign V's item, so V's and U's items wait.
     release_session_keys();
-    hold_session_key(u_key);
+    hold_session_key(u_key, session_end());
     super::signing::sign_pending_items(&db, "tenant-1").await.expect("sign");
     let sigs = signatures(&db, &row.entity_sync_id).await;
     assert!(sigs[1].is_empty(), "V's change is not signed by U");
@@ -183,7 +229,7 @@ async fn only_the_makers_key_signs_and_unsigned_items_wait() {
     assert_eq!(awaiting(&db, &row.entity_sync_id).await, vec![false, true, true]);
 
     // V signs in: V's item is signed by V's key, and nothing waits any more.
-    hold_session_key(v_key);
+    hold_session_key(v_key, session_end());
     super::signing::sign_pending_items(&db, "tenant-1").await.expect("sign");
     let sigs = signatures(&db, &row.entity_sync_id).await;
     assert_eq!(sigs[1].len(), 1);
@@ -227,12 +273,181 @@ async fn an_unenrolled_key_does_not_sign() {
     let key = user_with_key(&db, "user-n", false).await;
     let mut factory = RowFactory::new();
     let row = factory.create(&db, "user_scope_assignments").await.expect("row");
-    set_capture_actor(&db, Some("user-n")).await.expect("N");
+    sign_in(&db, "user-n").await;
     set_reference(&db, row.rowid, "x").await;
     set_capture_actor(&db, None).await.expect("none");
 
-    crate::auth::signing_keys::hold_session_key(key);
+    crate::auth::signing_keys::hold_session_key(key, session_end());
     super::signing::sign_pending_items(&db, "tenant-1").await.expect("sign");
     assert!(signatures(&db, &row.entity_sync_id).await[1].is_empty());
     assert_eq!(awaiting(&db, &row.entity_sync_id).await[1], true);
+}
+
+/// A session that expired or was closed without a sign-out (expiry, deactivation, password reset
+/// elsewhere, a clear that failed) makes nobody the maker of later changes (review F1).
+#[tokio::test]
+async fn an_expired_or_closed_session_captures_nobody() {
+    let db = started_device_db().await;
+    let mut factory = RowFactory::new();
+    let row = factory.create(&db, "user_scope_assignments").await.expect("row");
+
+    sign_in(&db, "user-u").await;
+    exec(&db, "UPDATE app_sessions SET is_revoked = 1", vec![]).await;
+    assert_eq!(current_capture_actor(&db).await.expect("actor"), None);
+    set_reference(&db, row.rowid, "closed").await;
+
+    sign_in_until(&db, "user-u", Utc::now() - TimeDelta::minutes(1)).await;
+    assert_eq!(current_capture_actor(&db).await.expect("actor"), None);
+    set_reference(&db, row.rowid, "expired").await;
+    drain_capture_journal(&db).await.expect("drain");
+
+    assert!(makers(&db, &row.entity_sync_id)
+        .await
+        .iter()
+        .all(|(_, maker)| maker.is_none()));
+}
+
+/// A held key past its session's expiry never signs (review F1).
+#[tokio::test]
+async fn a_key_past_its_session_expiry_does_not_sign() {
+    let db = started_device_db().await;
+    let key = user_with_key(&db, "user-u", true).await;
+    let mut factory = RowFactory::new();
+    let row = factory.create(&db, "user_scope_assignments").await.expect("row");
+    sign_in(&db, "user-u").await;
+    set_reference(&db, row.rowid, "x").await;
+    set_capture_actor(&db, None).await.expect("none");
+
+    crate::auth::signing_keys::hold_session_key(key, Utc::now() - TimeDelta::seconds(1));
+    assert!(crate::auth::signing_keys::held_key("user-u").is_none());
+    super::signing::sign_pending_items(&db, "tenant-1").await.expect("sign");
+    assert!(signatures(&db, &row.entity_sync_id).await[1].is_empty());
+    assert!(awaiting(&db, &row.entity_sync_id).await[1]);
+}
+
+/// A second signer's key signs nothing until it is bound to the committed action's record, and
+/// then only items of that record made by that maker (review F2).
+#[tokio::test]
+async fn a_cosigner_key_is_bound_to_one_record_and_maker() {
+    use crate::auth::signing_keys::{
+        bind_cosigner_key, cosigner_key, hold_cosigner_key, release_session_keys, CosignGrant,
+    };
+    let db = started_device_db().await;
+    let key = user_with_key(&db, "user-b", true).await;
+    hold_cosigner_key(key);
+    assert!(cosigner_key("user-b").is_none(), "an unbound key co-signs nothing");
+    let grant = CosignGrant {
+        entity_type: "work_orders".to_string(),
+        entity_sync_id: "wo-1".to_string(),
+        maker_user_sync_id: "user-v".to_string(),
+    };
+    assert!(bind_cosigner_key("user-b", grant.clone()).is_some());
+    let (_, bound) = cosigner_key("user-b").expect("bound");
+    assert_eq!(bound, grant);
+    release_session_keys();
+    assert!(cosigner_key("user-b").is_none());
+}
+
+/// An item that sets or changes an author field naming someone other than its maker is held until
+/// that person signed it; an unchanged author field named in the payload is not (review F3).
+#[test]
+fn required_cosigners_follow_set_or_changed_author_fields() {
+    use super::signing::required_cosigners;
+    let before = r#"{"assigned_by_sync_id":"user-x","scope_reference":"a"}"#;
+    // Unchanged author (made by someone earlier): nobody else must sign.
+    let edit = r#"{"assigned_by_sync_id":"user-x","scope_reference":"b"}"#;
+    assert!(required_cosigners("user_scope_assignments", edit, Some(before), "user-v").is_empty());
+    // Changed to another person: that person must sign.
+    let other = r#"{"assigned_by_sync_id":"user-b","scope_reference":"a"}"#;
+    assert_eq!(
+        required_cosigners("user_scope_assignments", other, Some(before), "user-v"),
+        vec!["user-b".to_string()]
+    );
+    // Changed to the maker: the maker's own signature is enough.
+    let own = r#"{"assigned_by_sync_id":"user-v","scope_reference":"a"}"#;
+    assert!(required_cosigners("user_scope_assignments", own, Some(before), "user-v").is_empty());
+    // New to the server: every author it names is set.
+    assert_eq!(
+        required_cosigners("user_scope_assignments", before, None, "user-v"),
+        vec!["user-x".to_string()]
+    );
+}
+
+/// The push holds back an item naming a second signer who has not signed it, even when its maker
+/// did, and the later changes of the same record with it (review F3).
+#[tokio::test]
+async fn an_item_naming_an_unsigned_second_person_is_held() {
+    use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
+    let db = started_device_db().await;
+    let v_key = user_with_key(&db, "user-v", true).await;
+    let _b_key = user_with_key(&db, "user-b", true).await;
+    let b_local: i64 = db
+        .query_one(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "SELECT id FROM user_accounts WHERE entity_sync_id = 'user-b'",
+            [],
+        ))
+        .await
+        .expect("select")
+        .expect("user")
+        .try_get("", "id")
+        .expect("id");
+    let mut factory = RowFactory::new();
+    let row = factory.create(&db, "user_scope_assignments").await.expect("row");
+    sign_in(&db, "user-v").await;
+    exec(
+        &db,
+        "UPDATE user_scope_assignments SET assigned_by_id = ? WHERE id = ?",
+        vec![b_local.into(), row.rowid.into()],
+    )
+    .await;
+    set_reference(&db, row.rowid, "later").await;
+    drain_capture_journal(&db).await.expect("drain");
+
+    crate::auth::signing_keys::hold_session_key(v_key, session_end());
+    super::signing::sign_pending_items(&db, "tenant-1").await.expect("sign");
+    let sigs = signatures(&db, &row.entity_sync_id).await;
+    assert_eq!(sigs.last().expect("item")[0].user_sync_id, "user-v");
+    assert!(
+        *awaiting(&db, &row.entity_sync_id).await.last().expect("item"),
+        "B named, not signed: held"
+    );
+    crate::auth::signing_keys::release_session_keys();
+}
+
+/// A rewritten unsent item loses its signatures and is judged again (review F7).
+#[tokio::test]
+async fn a_rewritten_item_loses_its_signatures() {
+    use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
+    let db = started_device_db().await;
+    let key = user_with_key(&db, "user-u", true).await;
+    let mut factory = RowFactory::new();
+    let row = factory.create(&db, "user_scope_assignments").await.expect("row");
+    sign_in(&db, "user-u").await;
+    set_reference(&db, row.rowid, "x").await;
+    drain_capture_journal(&db).await.expect("drain");
+    crate::auth::signing_keys::hold_session_key(key, session_end());
+    super::signing::sign_pending_items(&db, "tenant-1").await.expect("sign");
+    assert!(!signatures(&db, &row.entity_sync_id).await[1].is_empty());
+
+    exec(
+        &db,
+        "UPDATE sync_outbox SET payload_json = '{}', payload_hash = 'rewritten' WHERE entity_sync_id = ? AND maker_user_sync_id = 'user-u'",
+        vec![row.entity_sync_id.clone().into()],
+    )
+    .await;
+    let cleared = db
+        .query_one(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "SELECT signatures_json IS NULL AND awaiting_signers_json IS NULL AS cleared FROM sync_outbox
+             WHERE entity_sync_id = ? AND maker_user_sync_id = 'user-u'",
+            [row.entity_sync_id.clone().into()],
+        ))
+        .await
+        .expect("select")
+        .expect("row")
+        .try_get::<bool>("", "cleared")
+        .expect("cleared");
+    assert!(cleared);
+    crate::auth::signing_keys::release_session_keys();
 }

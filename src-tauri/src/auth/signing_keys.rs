@@ -30,10 +30,12 @@ pub const CHANGE_SIGNATURE_TAG: &str = "mfx-sync-sig-v1";
 pub const ENROL_PROOF_TAG: &str = "mfx-user-key-enrol-v1";
 const WRAP_AAD_TAG: &str = "mfx-user-key-wrap-v1";
 
-/// Argon2id cost of the wrapping key (below the login hash cost: the password is already checked
-/// against the account hash before a key is unwrapped).
-const WRAP_MEMORY_KIB: u32 = 19 * 1024;
-const WRAP_TIME_COST: u32 = 2;
+/// Argon2id cost of the wrapping key: the same as the login hash (`auth::password`), so a copied
+/// `user_signing_keys_local` row is no cheaper a password oracle than the account hash (review
+/// F4). The cost is recorded with each wrapped key (`kdf_params`); a key wrapped under any other
+/// cost is refused (none was ever released).
+const WRAP_MEMORY_KIB: u32 = 64 * 1024;
+const WRAP_TIME_COST: u32 = 3;
 const WRAP_PARALLELISM: u32 = 1;
 const WRAP_SALT_BYTES: usize = 16;
 
@@ -143,8 +145,15 @@ impl Drop for UnlockedSigningKey {
 }
 
 impl UnlockedSigningKey {
-    fn from_pkcs8(user_sync_id: &str, pkcs8: Vec<u8>) -> AppResult<Self> {
-        let pair = Ed25519KeyPair::from_pkcs8(&pkcs8).map_err(|_| crypto_err("invalid private key"))?;
+    fn from_pkcs8(user_sync_id: &str, mut pkcs8: Vec<u8>) -> AppResult<Self> {
+        let pair = match Ed25519KeyPair::from_pkcs8(&pkcs8) {
+            Ok(pair) => pair,
+            Err(_) => {
+                // Not a usable key, but still private material: wiped before it is freed.
+                wipe(&mut pkcs8);
+                return Err(crypto_err("invalid private key"));
+            }
+        };
         let public_key = pair.public_key().as_ref().to_vec();
         Ok(Self {
             user_sync_id: user_sync_id.to_string(),
@@ -293,7 +302,30 @@ pub fn unwrap_key(
 // (`SessionManager`); dropping the last reference wipes it. Tests keep one store per thread
 // (each `#[tokio::test]` runs on its own thread), so parallel tests never share keys.
 
-type KeyMap = std::collections::HashMap<String, std::sync::Arc<UnlockedSigningKey>>;
+/// A held key and the instant after which it may no longer sign (the session's absolute expiry,
+/// or the co-signature's short window): a key past it is dropped when looked up, so a session
+/// that expires without a sign-out never keeps signing (review F1).
+struct HeldKey {
+    key: std::sync::Arc<UnlockedSigningKey>,
+    deadline: chrono::DateTime<chrono::Utc>,
+    /// Co-signer keys only: the one change it may co-sign, bound once the action committed
+    /// (`bind_cosigner_key`). `None`: verified but not bound, signs nothing (review F2).
+    grant: Option<CosignGrant>,
+}
+
+/// The change a second signer's password was typed for: their key co-signs only the items of this
+/// record made by this maker.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CosignGrant {
+    pub entity_type: String,
+    pub entity_sync_id: String,
+    pub maker_user_sync_id: String,
+}
+
+type KeyMap = std::collections::HashMap<String, HeldKey>;
+
+/// How long a second signer's key stays usable after their password was typed for an action.
+const COSIGNER_WINDOW_MINUTES: i64 = 30;
 
 #[derive(Clone, Copy)]
 enum Store {
@@ -309,10 +341,12 @@ fn with_store<R>(store: Store, f: impl FnOnce(&mut KeyMap) -> R) -> Option<R> {
         Store::Session => &SESSION,
         Store::Cosigner => &COSIGNER,
     };
-    cell.get_or_init(Default::default)
+    // A poisoned lock still holds plain data: recover it, so a release is never skipped.
+    let mut keys = cell
+        .get_or_init(Default::default)
         .lock()
-        .ok()
-        .map(|mut keys| f(&mut keys))
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    Some(f(&mut keys))
 }
 
 #[cfg(test)]
@@ -328,36 +362,83 @@ fn with_store<R>(store: Store, f: impl FnOnce(&mut KeyMap) -> R) -> Option<R> {
     Some(cell.with(|keys| f(&mut keys.borrow_mut())))
 }
 
-/// Holds `key` for its user until the session ends.
-pub fn hold_session_key(key: UnlockedSigningKey) -> std::sync::Arc<UnlockedSigningKey> {
+/// The live entry of `user_sync_id` in `keys`; an entry past its deadline is removed.
+fn live_entry<'a>(keys: &'a mut KeyMap, user_sync_id: &str) -> Option<&'a HeldKey> {
+    if keys
+        .get(user_sync_id)
+        .is_some_and(|held| chrono::Utc::now() > held.deadline)
+    {
+        keys.remove(user_sync_id);
+    }
+    keys.get(user_sync_id)
+}
+
+/// Holds `key` for its user until the session ends or `session_expires_at` passes.
+pub fn hold_session_key(
+    key: UnlockedSigningKey,
+    session_expires_at: chrono::DateTime<chrono::Utc>,
+) -> std::sync::Arc<UnlockedSigningKey> {
     let key = std::sync::Arc::new(key);
     with_store(Store::Session, |keys| {
-        keys.insert(key.user_sync_id.clone(), key.clone())
+        keys.insert(
+            key.user_sync_id.clone(),
+            HeldKey {
+                key: key.clone(),
+                deadline: session_expires_at,
+                grant: None,
+            },
+        )
     });
     key
 }
 
-/// The held key of `user_sync_id`, if that user signed in in this session.
+/// The held key of `user_sync_id`, if that user signed in in this session and it has not expired.
 pub fn held_key(user_sync_id: &str) -> Option<std::sync::Arc<UnlockedSigningKey>> {
-    with_store(Store::Session, |keys| keys.get(user_sync_id).cloned()).flatten()
+    with_store(Store::Session, |keys| {
+        live_entry(keys, user_sync_id).map(|held| held.key.clone())
+    })
+    .flatten()
 }
 
 /// Holds a second signer's key after they typed their password for an action of this session
-/// (`auth::second_signer`): it co-signs the session's items that name them in an author field,
-/// and is released once it signed (or with the session).
+/// (`auth::second_signer`). It signs nothing until [`bind_cosigner_key`] binds it to the change
+/// that action committed; it is released once it signed, after a short window, or with the session.
 pub fn hold_cosigner_key(key: UnlockedSigningKey) {
     let key = std::sync::Arc::new(key);
     with_store(Store::Cosigner, |keys| {
-        keys.insert(key.user_sync_id.clone(), key.clone())
+        keys.insert(
+            key.user_sync_id.clone(),
+            HeldKey {
+                key,
+                deadline: chrono::Utc::now() + chrono::TimeDelta::minutes(COSIGNER_WINDOW_MINUTES),
+                grant: None,
+            },
+        )
     });
 }
 
-/// The held co-signer key of `user_sync_id`.
-pub fn cosigner_key(user_sync_id: &str) -> Option<std::sync::Arc<UnlockedSigningKey>> {
-    with_store(Store::Cosigner, |keys| keys.get(user_sync_id).cloned()).flatten()
+/// Binds the held co-signer key of `user_sync_id` to the one change its password was typed for.
+/// Returns the key when it was held (and still live).
+pub fn bind_cosigner_key(user_sync_id: &str, grant: CosignGrant) -> Option<std::sync::Arc<UnlockedSigningKey>> {
+    with_store(Store::Cosigner, |keys| {
+        live_entry(keys, user_sync_id)?;
+        let held = keys.get_mut(user_sync_id)?;
+        held.grant = Some(grant);
+        Some(held.key.clone())
+    })
+    .flatten()
 }
 
-/// Releases one co-signer key (it signed what it was typed for).
+/// The co-signer key of `user_sync_id` and the change it is bound to (unbound keys are not returned).
+pub fn cosigner_key(user_sync_id: &str) -> Option<(std::sync::Arc<UnlockedSigningKey>, CosignGrant)> {
+    with_store(Store::Cosigner, |keys| {
+        let held = live_entry(keys, user_sync_id)?;
+        Some((held.key.clone(), held.grant.clone()?))
+    })
+    .flatten()
+}
+
+/// Releases one co-signer key (it signed what it was typed for, or the action did not commit).
 pub fn release_cosigner_key(user_sync_id: &str) {
     with_store(Store::Cosigner, |keys| keys.remove(user_sync_id));
 }

@@ -264,13 +264,14 @@ fn trigger_sql(layout: &EntityLayout, present: &[String], records_actor: bool) -
     let name = |suffix: &str| quote(&format!("{TRIGGER_PREFIX}{}_{suffix}", layout.table()));
     // The session user each change is captured for (migration 297). Only an upgrade test that
     // starts the capture of an earlier version builds triggers without it (`records_actor`).
+    // A recorded session that expired or was closed captures nobody (`LIVE_CAPTURE_ACTOR_SQL`).
     let (actor_column, actor) = if records_actor {
         (
             ", captured_session_user_sync_id",
-            ", (SELECT a.user_sync_id FROM sync_capture_actor a WHERE a.id = 1)",
+            format!(", (SELECT a.user_sync_id FROM sync_capture_actor a WHERE a.id = 1 AND {LIVE_CAPTURE_ACTOR_SQL})"),
         )
     } else {
-        ("", "")
+        ("", String::new())
     };
     let journal = format!(
         "INSERT INTO sync_capture_journal (entity_type, entity_sync_id, natural_key_json, operation, owner_user_sync_id{actor_column})"
@@ -954,12 +955,30 @@ pub(crate) async fn restage_current_state(
     Ok(())
 }
 
-/// The session user changes are captured for (`sync_capture_actor`), if any.
+/// SQL over `sync_capture_actor a`: the recorded session is still live, i.e. not past its absolute
+/// expiry and its user still has an open stored session (`app_sessions`, not revoked). A session
+/// that ended without a sign-out (expiry, deactivation, password reset elsewhere, a failed clear)
+/// therefore never makes anyone the maker of later changes (design v9 §9, review F1).
+pub(crate) const LIVE_CAPTURE_ACTOR_SQL: &str = "a.user_sync_id IS NOT NULL AND a.user_id IS NOT NULL
+    AND a.expires_at IS NOT NULL AND a.expires_at > strftime('%Y-%m-%dT%H:%M:%SZ','now')
+    AND EXISTS (SELECT 1 FROM app_sessions s WHERE s.user_id = a.user_id AND s.is_revoked = 0)";
+
+/// The signed-in session changes are captured for.
+#[derive(Debug, Clone)]
+pub struct CaptureActor<'a> {
+    pub user_sync_id: &'a str,
+    /// Local `user_accounts.id` (matched against `app_sessions.user_id`).
+    pub user_id: i64,
+    /// The session's absolute expiry.
+    pub expires_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// The session user changes are captured for (`sync_capture_actor`), if that session is live.
 pub async fn current_capture_actor(conn: &impl ConnectionTrait) -> AppResult<Option<String>> {
     Ok(conn
         .query_one(Statement::from_string(
             DatabaseBackend::Sqlite,
-            "SELECT user_sync_id FROM sync_capture_actor WHERE id = 1".to_string(),
+            format!("SELECT a.user_sync_id FROM sync_capture_actor a WHERE a.id = 1 AND {LIVE_CAPTURE_ACTOR_SQL}"),
         ))
         .await?
         .and_then(|r| r.try_get::<Option<String>>("", "user_sync_id").ok().flatten())
@@ -970,15 +989,22 @@ pub async fn current_capture_actor(conn: &impl ConnectionTrait) -> AppResult<Opt
 /// sign-in, cleared at sign-out and at startup. Changes captured so far are staged first, with
 /// their own maker, so the outbox never merges the changes of two makers: only the maker's key
 /// signs an item (at drain), and a change made while nobody is signed in has no maker.
-pub async fn set_capture_actor(db: &DatabaseConnection, user_sync_id: Option<&str>) -> AppResult<()> {
+pub async fn set_capture_actor(db: &DatabaseConnection, actor: Option<&CaptureActor<'_>>) -> AppResult<()> {
     // One transaction: no change is captured between the drain and the switch.
     let txn = db.begin().await?;
     drain_capture_journal(&txn).await?;
     txn.execute(Statement::from_sql_and_values(
         DatabaseBackend::Sqlite,
-        "INSERT INTO sync_capture_actor (id, user_sync_id) VALUES (1, ?)
-         ON CONFLICT(id) DO UPDATE SET user_sync_id = excluded.user_sync_id",
-        [user_sync_id.map(str::to_string).into()],
+        "INSERT INTO sync_capture_actor (id, user_sync_id, user_id, expires_at) VALUES (1, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET user_sync_id = excluded.user_sync_id, user_id = excluded.user_id,
+                                       expires_at = excluded.expires_at",
+        [
+            actor.map(|a| a.user_sync_id.to_string()).into(),
+            actor.map(|a| a.user_id.to_string()).into(),
+            actor
+                .map(|a| a.expires_at.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+                .into(),
+        ],
     ))
     .await?;
     txn.commit().await?;

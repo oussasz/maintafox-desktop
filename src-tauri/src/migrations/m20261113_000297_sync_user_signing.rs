@@ -4,12 +4,16 @@
 //! - `user_signing_keys_local`: one Ed25519 key per (user, PC), the private key wrapped with
 //!   AES-256-GCM under an Argon2id key of the user's password (`auth::signing_keys`). A key is
 //!   bound to the password hash it was made under; a retired key is kept for the record.
-//! - `sync_capture_actor`: one row naming the user acting in the current write transaction
-//!   (`sync::capture::with_actor`), read by the capture triggers, cleared before commit.
+//! - `sync_capture_actor`: one row naming the signed-in session user (design v9.1 §9: set at
+//!   sign-in, cleared at every session end), with the local `user_id` and the session's absolute
+//!   expiry; the capture triggers record it only while that session is live
+//!   (`sync::capture::LIVE_CAPTURE_ACTOR_SQL`).
 //! - `sync_capture_journal.captured_session_user_sync_id`: who made the captured change (NULL for
 //!   background, scheduler and inbound writes).
 //! - `sync_outbox.maker_user_sync_id`: whose key must sign the item (the outbox never merges the
-//!   changes of two makers); `sync_outbox.signatures_json`: the signatures collected for the
+//!   changes of two makers); `sync_outbox.awaiting_signers_json`: the second signers it names
+//!   who have not signed it yet (`'[]'`: none; NULL: not judged yet, held);
+//!   `sync_outbox.signatures_json`: the signatures collected for the
 //!   item's exact row version and payload (maker first, then co-signers).
 //!
 //! Unsent outbox rows from before the upgrade have no maker; they are attributed at the next
@@ -82,6 +86,13 @@ impl MigrationTrait for Migration {
         .await?;
         txn.execute_unprepared("INSERT OR IGNORE INTO sync_capture_actor (id, user_sync_id) VALUES (1, NULL)")
             .await?;
+        add_column(&txn, "sync_capture_actor", "user_id", "TEXT NULL").await?;
+        add_column(&txn, "sync_capture_actor", "expires_at", "TEXT NULL").await?;
+        // Every captured write checks that the recorded user still has an open session.
+        txn.execute_unprepared(
+            "CREATE INDEX IF NOT EXISTS idx_app_sessions_user_open ON app_sessions(user_id, is_revoked)",
+        )
+        .await?;
         add_column(
             &txn,
             "sync_capture_journal",
@@ -91,6 +102,21 @@ impl MigrationTrait for Migration {
         .await?;
         add_column(&txn, "sync_outbox", "maker_user_sync_id", "TEXT NULL").await?;
         add_column(&txn, "sync_outbox", "signatures_json", "TEXT NULL").await?;
+        add_column(&txn, "sync_outbox", "awaiting_signers_json", "TEXT NULL").await?;
+        // A signature covers one exact version and payload (design §7): any rewrite of an unsent
+        // item drops its signatures and its judgement, so it is signed and judged again (or waits)
+        // instead of being sent with a signature that no longer verifies (review F7).
+        txn.execute_unprepared(
+            "CREATE TRIGGER IF NOT EXISTS sync_outbox_rewrite_clears_signatures
+             AFTER UPDATE OF payload_json, payload_hash, row_version, base_row_version, operation ON sync_outbox
+             WHEN NEW.payload_hash IS NOT OLD.payload_hash OR NEW.payload_json IS NOT OLD.payload_json
+               OR NEW.row_version IS NOT OLD.row_version OR NEW.base_row_version IS NOT OLD.base_row_version
+               OR NEW.operation IS NOT OLD.operation
+             BEGIN
+                UPDATE sync_outbox SET signatures_json = NULL, awaiting_signers_json = NULL WHERE id = NEW.id;
+             END",
+        )
+        .await?;
         txn.commit().await
     }
 

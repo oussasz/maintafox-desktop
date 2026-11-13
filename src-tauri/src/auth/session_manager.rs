@@ -331,8 +331,11 @@ impl SessionManager {
     pub fn clear_session(&mut self) -> Option<String> {
         let session_id = self.current.as_ref().map(|s| s.session_db_id.clone());
         self.current = None;
-        // Per-user signing: no key outlives the session that unlocked it.
+        // Per-user signing: no key (nor typed co-signer password) outlives the session that
+        // unlocked it. The capture actor is cleared by the async callers
+        // (`sync::signing::end_signing_session`) and is inert once the session row is closed.
         crate::auth::signing_keys::release_session_keys();
+        crate::auth::second_signer::release_pending_enrolments();
         session_id
     }
 
@@ -756,6 +759,9 @@ pub async fn enforce_session_alive(
             }
             current
         };
+        if was_current {
+            crate::sync::signing::end_signing_session_logged(db, "stored_state_check").await;
+        }
         tracing::warn!(
             user_id = user.user_id,
             session_id = session_db_id.unwrap_or("-"),
@@ -965,6 +971,7 @@ pub async fn store_session_or_clear(
         }
         Err(e) => {
             manager.clear_session();
+            crate::sync::signing::end_signing_session_logged(db, "session_store_failed").await;
             Err(e)
         }
     }

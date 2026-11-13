@@ -70,15 +70,34 @@ pub(crate) async fn verify_user_password(
 }
 
 /// Passwords of second signers whose key must still be enrolled, by user sync id: taken by
-/// [`record_outcome`] once the action's transaction is over (enrolment needs the network).
-fn pending_enrolments() -> &'static std::sync::Mutex<std::collections::HashMap<String, String>> {
+/// [`record_outcome`] once the action committed (enrolment needs the network), wiped otherwise.
+fn with_pending_enrolments<R>(f: impl FnOnce(&mut std::collections::HashMap<String, String>) -> R) -> R {
     static PENDING: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, String>>> =
         std::sync::OnceLock::new();
-    PENDING.get_or_init(Default::default)
+    // A poisoned lock still holds plain data: recover it, so a wipe is never skipped.
+    let mut pending = PENDING
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    f(&mut pending)
+}
+
+fn take_pending_enrolment(sync_id: &str) -> Option<String> {
+    with_pending_enrolments(|pending| pending.remove(sync_id))
+}
+
+/// Wipes every second signer password still waiting for an enrolment (session end).
+pub(crate) fn release_pending_enrolments() {
+    with_pending_enrolments(|pending| {
+        for (_, mut password) in pending.drain() {
+            crate::sync::signing::wipe_string(&mut password);
+        }
+    });
 }
 
 /// Per-user signing (design v9 §9): the second signer's key, unlocked (or made) with the password
-/// they just typed, co-signs this session's change that names them. Never fails the action.
+/// they just typed. It co-signs nothing until the action commits and [`record_outcome`] binds it
+/// to that action's record (review F2). Never fails the action.
 async fn hold_signer_key(db: &impl ConnectionTrait, user_id: i64, password_raw: &str, hash: &str) {
     let sync_id = match crate::sync::identity::optional_entity_sync_id(db, "user_accounts", user_id).await {
         Ok(Some(id)) => id,
@@ -87,11 +106,56 @@ async fn hold_signer_key(db: &impl ConnectionTrait, user_id: i64, password_raw: 
     match crate::auth::signing_keys::unlock_or_create(db, user_id, &sync_id, password_raw, hash).await {
         Ok(key) => {
             crate::auth::signing_keys::hold_cosigner_key(key);
-            if let Ok(mut pending) = pending_enrolments().lock() {
-                pending.insert(sync_id, password_raw.to_string());
+            let previous = with_pending_enrolments(|pending| pending.insert(sync_id, password_raw.to_string()));
+            if let Some(mut previous) = previous {
+                crate::sync::signing::wipe_string(&mut previous);
             }
         }
         Err(e) => tracing::warn!(error = %e, "second signer: signing key not unlocked"),
+    }
+}
+
+/// The record a committed action wrote with the second signer named in an author field: their key
+/// co-signs only the changes of this record made by the signed-in user.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct CosignedRecord {
+    pub entity_type: &'static str,
+    /// Local row id of the record.
+    pub row_id: i64,
+}
+
+/// Binds the second signer's held key to `record` and starts its enrolment if needed. Without a
+/// record (the action did not commit) or when the record or maker cannot be read, the key and the
+/// typed password are dropped instead.
+async fn bind_or_release_cosigner(db: &DatabaseConnection, sync_id: &str, record: Option<CosignedRecord>) {
+    let password = take_pending_enrolment(sync_id);
+    let grant = match record {
+        Some(record) => {
+            let entity = crate::sync::identity::optional_entity_sync_id(db, record.entity_type, record.row_id).await;
+            let maker = crate::sync::capture::current_capture_actor(db).await;
+            match (entity, maker) {
+                (Ok(Some(entity_sync_id)), Ok(Some(maker_user_sync_id))) => {
+                    Some(crate::auth::signing_keys::CosignGrant {
+                        entity_type: record.entity_type.to_string(),
+                        entity_sync_id,
+                        maker_user_sync_id,
+                    })
+                }
+                _ => None,
+            }
+        }
+        None => None,
+    };
+    let key = grant.and_then(|grant| crate::auth::signing_keys::bind_cosigner_key(sync_id, grant));
+    match (key, password) {
+        (Some(key), Some(password)) => crate::sync::signing::spawn_enrolment_if_needed(db.clone(), key, password),
+        (Some(_), None) => {}
+        (None, rest) => {
+            crate::auth::signing_keys::release_cosigner_key(sync_id);
+            if let Some(mut rest) = rest {
+                crate::sync::signing::wipe_string(&mut rest);
+            }
+        }
     }
 }
 
@@ -113,10 +177,14 @@ pub(crate) struct SignatureContext<'a> {
 /// A wrong password is audited like the other failed password checks (actor: the user acting;
 /// target: the signer's account). `checked = None`: not checked (no password, or locked out),
 /// nothing recorded.
+///
+/// `committed`: the record the committed action wrote naming the signer (`None` when the action
+/// was refused or rolled back): only then does the signer's key co-sign, and only that record.
 pub(crate) async fn record_outcome(
     db: &DatabaseConnection,
     signer: Option<i32>,
     checked: Option<bool>,
+    committed: Option<CosignedRecord>,
     ctx: &SignatureContext<'_>,
 ) -> AppResult<()> {
     let (Some(signer), Some(ok)) = (signer, checked) else {
@@ -126,10 +194,7 @@ pub(crate) async fn record_outcome(
         if let Ok(Some(sync_id)) =
             crate::sync::identity::optional_entity_sync_id(db, "user_accounts", i64::from(signer)).await
         {
-            let password = pending_enrolments().lock().ok().and_then(|mut p| p.remove(&sync_id));
-            if let (Some(key), Some(password)) = (crate::auth::signing_keys::cosigner_key(&sync_id), password) {
-                crate::sync::signing::spawn_enrolment_if_needed(db.clone(), key, password);
-            }
+            bind_or_release_cosigner(db, &sync_id, committed).await;
         }
         return crate::auth::lockout::clear_failed_attempts(db, signer).await;
     }

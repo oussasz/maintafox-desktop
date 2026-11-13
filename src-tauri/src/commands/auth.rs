@@ -223,6 +223,10 @@ pub(crate) async fn login_impl(
     let policy = password_policy::PasswordPolicy::load(&state.db).await;
     let mut effective_force_pw_change = force_pw_change;
     let mut password_expires_in_days: Option<i64> = None;
+    // Written once the signing session has started, so the synchronised account change is the
+    // user's own, signed with their key (review F5): written before, it had no maker and the
+    // server refuses an unsigned account change.
+    let mut force_change_reason: Option<(&'static str, &'static str)> = None;
     let pin_configured = session_manager::get_pin_hash_for_user(&state.db, user_id)
         .await?
         .is_some();
@@ -234,57 +238,14 @@ pub(crate) async fn login_impl(
         }
         password_policy::PasswordExpiryStatus::Expired => {
             effective_force_pw_change = true;
-            let now = chrono::Utc::now().to_rfc3339();
-            state
-                .db
-                .execute(sea_orm::Statement::from_sql_and_values(
-                    sea_orm::DbBackend::Sqlite,
-                    r"UPDATE user_accounts
-                       SET force_password_change = 1,
-                           updated_at = ?
-                       WHERE id = ?",
-                    [now.into(), user_id.into()],
-                ))
-                .await?;
-
-            crate::audit::emit(
-                &state.db,
-                crate::audit::AuditEvent {
-                    event_type: crate::audit::event_type::FORCE_CHANGE_SET,
-                    actor_id: Some(user_id),
-                    summary: "Force password change set due to password expiry",
-                    detail_json: Some(r#"{"reason":"expired"}"#.to_string()),
-                    ..Default::default()
-                },
-            )
-            .await;
+            force_change_reason = Some(("expired", "Force password change set due to password expiry"));
         }
         password_policy::PasswordExpiryStatus::NeverSet => {
             effective_force_pw_change = true;
-            let now = chrono::Utc::now().to_rfc3339();
-            state
-                .db
-                .execute(sea_orm::Statement::from_sql_and_values(
-                    sea_orm::DbBackend::Sqlite,
-                    r"UPDATE user_accounts
-                       SET force_password_change = 1,
-                           updated_at = ?
-                       WHERE id = ?",
-                    [now.into(), user_id.into()],
-                ))
-                .await?;
-
-            crate::audit::emit(
-                &state.db,
-                crate::audit::AuditEvent {
-                    event_type: crate::audit::event_type::FORCE_CHANGE_SET,
-                    actor_id: Some(user_id),
-                    summary: "Force password change set due to missing password_changed_at",
-                    detail_json: Some(r#"{"reason":"never_set"}"#.to_string()),
-                    ..Default::default()
-                },
-            )
-            .await;
+            force_change_reason = Some((
+                "never_set",
+                "Force password change set due to missing password_changed_at",
+            ));
         }
     }
 
@@ -318,8 +279,8 @@ pub(crate) async fn login_impl(
     }
 
     // Capture data before further mutation
-    let (session_id, expires_rfc3339) = match session_guard.current.as_ref() {
-        Some(s) => (s.session_db_id.clone(), s.expires_at.to_rfc3339()),
+    let (session_id, expires_rfc3339, session_expires_at) = match session_guard.current.as_ref() {
+        Some(s) => (s.session_db_id.clone(), s.expires_at.to_rfc3339(), s.expires_at),
         None => {
             return Err(AppError::Auth("Impossible de créer la session utilisateur.".into()));
         }
@@ -335,9 +296,54 @@ pub(crate) async fn login_impl(
     drop(session_guard);
 
     // Per-user signing (sync-signing-design.md v9 §3, §9): unlock (or create) this user's key with
-    // the password just verified, and capture this session's changes as theirs. Never blocks the
-    // sign-in: without a key their changes wait in the sync outbox until it can sign them.
-    start_signing_session(&state.db, user_id, &payload.password, &stored_hash).await;
+    // the password just verified, and capture this session's changes as theirs. A missing key
+    // never blocks the sign-in (their changes wait in the sync outbox until it can sign them); a
+    // capture actor that cannot be switched does: the sign-in fails closed (review F1).
+    if let Err(e) = start_signing_session(&state.db, user_id, &payload.password, &stored_hash, session_expires_at).await
+    {
+        tracing::error!(error = %e, "auth::signing session not started; sign-in refused");
+        state.session.write().await.clear_session();
+        if let Err(e) = state
+            .db
+            .execute(sea_orm::Statement::from_sql_and_values(
+                sea_orm::DbBackend::Sqlite,
+                "UPDATE app_sessions SET is_revoked = 1 WHERE id = ?",
+                [session_id.clone().into()],
+            ))
+            .await
+        {
+            tracing::error!(error = %e, "auth::signing stored session not closed");
+        }
+        return Err(AppError::Auth(
+            "Impossible de d\u{00e9}marrer la session : r\u{00e9}essayez de vous connecter.".into(),
+        ));
+    }
+
+    if let Some((reason, summary)) = force_change_reason {
+        let now = chrono::Utc::now().to_rfc3339();
+        state
+            .db
+            .execute(sea_orm::Statement::from_sql_and_values(
+                sea_orm::DbBackend::Sqlite,
+                r"UPDATE user_accounts
+                   SET force_password_change = 1,
+                       updated_at = ?
+                   WHERE id = ?",
+                [now.into(), user_id.into()],
+            ))
+            .await?;
+        crate::audit::emit(
+            &state.db,
+            crate::audit::AuditEvent {
+                event_type: crate::audit::event_type::FORCE_CHANGE_SET,
+                actor_id: Some(user_id),
+                summary,
+                detail_json: Some(serde_json::json!({ "reason": reason }).to_string()),
+                ..Default::default()
+            },
+        )
+        .await;
+    }
 
     // ── Audit: successful login ───────────────────────────────────────
     crate::audit::emit(
@@ -359,9 +365,17 @@ pub(crate) async fn login_impl(
 }
 
 /// Per-user signing at sign-in: the user's key is unlocked (or made) with the password they just
-/// proved and held for the session, and the changes captured from now on are theirs. Failures are
-/// logged, never block the sign-in: the user's changes then wait in the outbox, unsigned.
-async fn start_signing_session(db: &sea_orm::DatabaseConnection, user_id: i32, password: &str, password_hash: &str) {
+/// proved and held until the session ends or expires, and the changes captured from now on are
+/// theirs. A key that cannot be unlocked is logged (the user's changes wait in the outbox,
+/// unsigned). Every other failure clears the capture actor and is returned: the caller refuses the
+/// sign-in, so a previous user is never left as the maker of this session's changes (review F1).
+async fn start_signing_session(
+    db: &sea_orm::DatabaseConnection,
+    user_id: i32,
+    password: &str,
+    password_hash: &str,
+    session_expires_at: chrono::DateTime<chrono::Utc>,
+) -> AppResult<()> {
     let user_sync_id =
         match crate::sync::identity::optional_entity_sync_id(db, "user_accounts", i64::from(user_id)).await {
             Ok(Some(id)) => id,
@@ -370,28 +384,33 @@ async fn start_signing_session(db: &sea_orm::DatabaseConnection, user_id: i32, p
                     user_id,
                     "auth::signing account has no sync identity; changes stay unsigned"
                 );
-                if let Err(e) = crate::sync::capture::set_capture_actor(db, None).await {
-                    tracing::warn!(error = %e, "auth::signing capture actor not cleared");
-                }
-                return;
+                return crate::sync::capture::set_capture_actor(db, None).await;
             }
             Err(e) => {
                 tracing::warn!(error = %e, "auth::signing sync identity unreadable");
-                return;
+                crate::sync::capture::set_capture_actor(db, None).await?;
+                return Err(e);
             }
         };
     match crate::auth::signing_keys::unlock_or_create(db, i64::from(user_id), &user_sync_id, password, password_hash)
         .await
     {
         Ok(key) => {
-            let key = crate::auth::signing_keys::hold_session_key(key);
+            let key = crate::auth::signing_keys::hold_session_key(key, session_expires_at);
             crate::sync::signing::spawn_enrolment_if_needed(db.clone(), key, password.to_string());
         }
         Err(e) => tracing::warn!(error = %e, "auth::signing key not unlocked; changes stay unsigned"),
     }
-    if let Err(e) = crate::sync::capture::set_capture_actor(db, Some(&user_sync_id)).await {
-        tracing::warn!(error = %e, "auth::signing capture actor not set");
+    let actor = crate::sync::capture::CaptureActor {
+        user_sync_id: &user_sync_id,
+        user_id: i64::from(user_id),
+        expires_at: session_expires_at,
+    };
+    if let Err(e) = crate::sync::capture::set_capture_actor(db, Some(&actor)).await {
+        crate::sync::signing::end_signing_session_logged(db, "sign_in_actor_switch_failed").await;
+        return Err(e);
     }
+    Ok(())
 }
 
 /// Log the current user out and clear the active session.
@@ -408,15 +427,32 @@ pub(crate) async fn logout_impl(state: &AppState) -> AppResult<()> {
     let actor_id = state.session.read().await.current.as_ref().map(|s| s.user.user_id);
 
     // The user's captured changes are staged as theirs before the session (and their key) ends.
-    if let Err(e) = crate::sync::capture::set_capture_actor(&state.db, None).await {
-        tracing::warn!(error = %e, "auth::logout capture actor not cleared");
-    }
+    let actor_cleared = crate::sync::signing::end_signing_session(&state.db).await;
 
     let mut session_guard = state.session.write().await;
-    if let Some(session_id) = session_guard.clear_session() {
+    let ended = session_guard.clear_session();
+    drop(session_guard);
+    if let Some(session_id) = &ended {
         tracing::info!(session_id = %session_id, "auth::logout");
     }
-    drop(session_guard);
+    // Never blocks the sign-out (AU-109). If the capture actor could not be cleared, the stored
+    // session row is closed instead, which makes the recorded actor inert (review F1).
+    if let Err(e) = actor_cleared {
+        tracing::error!(error = %e, "auth::logout capture actor not cleared; closing the stored session");
+        if let Some(session_id) = ended {
+            if let Err(e) = state
+                .db
+                .execute(sea_orm::Statement::from_sql_and_values(
+                    sea_orm::DbBackend::Sqlite,
+                    "UPDATE app_sessions SET is_revoked = 1 WHERE id = ?",
+                    [session_id.into()],
+                ))
+                .await
+            {
+                tracing::error!(error = %e, "auth::logout stored session not closed");
+            }
+        }
+    }
 
     crate::audit::emit(
         &state.db,
@@ -456,6 +492,7 @@ pub async fn get_session_info(state: State<'_, AppState>) -> AppResult<session_m
             let mut session_guard = state.session.write().await;
             session_guard.clear_session();
         }
+        crate::sync::signing::end_signing_session_logged(&state.db, "stale_tenant_claim").await;
         return Err(AppError::SessionClaimInvalid(
             "Session tenant claim is stale. Please sign in again for the currently activated tenant.".into(),
         ));
@@ -763,6 +800,9 @@ async fn end_session_after_lockout(state: &AppState, user: &session_manager::Aut
         }
         current
     };
+    if was_current {
+        crate::sync::signing::end_signing_session_logged(&state.db, "lockout").await;
+    }
     // The in-memory session is already gone (fail closed); the stored row is closed too.
     if let Err(e) = state
         .db
