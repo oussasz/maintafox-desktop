@@ -12,7 +12,7 @@ record can be wrong, incomplete or need review) · **UX** (slower or less conven
 plant owner · **Release** = must be done when the version is released · **Accepted** = accepted by
 design, documented.
 
-Last updated: 2026-11-13 (0.9.3 release action list: server first, rights to grant, label reprint, what migrations 266–296 change; earlier: planning four-eyes: break-ins signed by a second planner at the crew's site, unfreeze decided at the site, both re-checked on arrival; permit requirement from a safety-flagged request; close-out gates re-checked on received completions and closes; negative stock flagged on the stock screens; four-eyes on permit approval; notice to the settings administrators when a safety rule changed on another PC).
+Last updated: 2026-11-14 (0.9.3 release action list with per-user signed sync; server first, rights to grant, label reprint, what migrations 266–296 change; earlier: planning four-eyes: break-ins signed by a second planner at the crew's site, unfreeze decided at the site, both re-checked on arrival; permit requirement from a safety-flagged request; close-out gates re-checked on received completions and closes; negative stock flagged on the stock screens; four-eyes on permit approval; notice to the settings administrators when a safety rule changed on another PC).
 
 ---
 
@@ -35,8 +35,9 @@ Last updated: 2026-11-13 (0.9.3 release action list: server first, rights to gra
    the new records (it refuses received history failure events as conflicts, for example), and a
    permit issued on a PC still on 0.9.2 is applied without being judged again (ruling 4 row below).
    Do the first sync only once every PC is on 0.9.3. From the server deploy on, a PC still on 0.9.2
-   has its changes to accounts, grants, roles, permit-type safety settings, site rules and
-   attachments refused ("mettre à jour ce PC"); its ordinary records keep syncing.
+   has refused ("mettre à jour ce PC") every change to a record that names who did, decided or
+   approved something (work orders, requests, permits, stock movements, analyses…) and every change
+   to accounts, rights, organisation and settings; only records that name nobody keep syncing.
    **Each user signs in once on each upgraded PC**: that enrols their signing key (desktop migration
    297), and their changes made on that PC wait there until they sign in (rows "Per-user signed
    sync" under Administration).
@@ -75,8 +76,10 @@ Last updated: 2026-11-13 (0.9.3 release action list: server first, rights to gra
 6. **Review the "à revoir" values** listed in the rows below (units, symptoms, LOTO texts,
    personnel/document lists, permit hand-over roles) if not done at 0.9.2.
 7. **Per-user signed changes are in 0.9.3** (desktop migration 297, server migration 022): the
-   server now checks who made a change to accounts, rights, permit-type safety settings, site rules
-   and attachments. Its remaining limits are the "Per-user signed sync" rows under Administration.
+   server now checks who made every change to a record that names who did, decided or approved
+   something, and to accounts, rights, organisation and settings. Its remaining limits are the
+   "Per-user signed sync" rows under Administration. Rows below that still name "production gate:
+   per-user signed changes" must be re-assessed against it before a production release.
 
 | Limit | Impact | Handled in |
 |---|---|---|
