@@ -17,12 +17,20 @@
 //!   person or rights giving it are still arriving, and is a conflict otherwise
 //!   ([`DECISION_APPROVER_UNAUTHORISED`]); an approval already accepted here is not judged again
 //!   when the decision moves on to applied;
+//! - an approval not accepted here yet (a decision new here, or held here undecided) waits until
+//!   the record of that approval is here: the audit event `decisions::APPROVED_EVENT` naming the
+//!   decision, made by the person the decision names as decider, with the same seal (any seal when
+//!   the sender is older than the seal). The sync server accepts that event only signed by its
+//!   actor, and never a rewrite of it, whereas the decision's status may change unsigned (its
+//!   decider guards only the time and the note): a rejection cannot arrive here turned into an
+//!   approval in the name of the person who rejected it (docs/KNOWN_LIMITS.md row 39);
 //! - the person who applied it holds the rights of applying here, now (`ram.manage`, plus `pm.edit`
 //!   for a PM interval or `ot.create` for a work order), with the same waiting
 //!   ([`DECISION_APPLIER_UNAUTHORISED`]).
 //!
 //! The seal (`approval_seal`, migration 264) proves that the content did not change after the
-//! approval; it does not prove who approved: any PC can compute it (docs/KNOWN_LIMITS.md).
+//! approval; it does not prove who approved (any PC can compute it): the approval's audit event,
+//! signed by the approver, does.
 //!
 //! These conflicts are resolved only by "keep this PC's decision" or "escalate"
 //! ([`keep_this_pc_decision`], `sync::queries`): the decision is then marked refused
@@ -383,6 +391,56 @@ async fn holds_rights(
     Ok(Ok(true))
 }
 
+/// The approval's own record: a received decision decided here for the first time waits until the
+/// audit event of its approval (`decisions::APPROVED_EVENT`, written with the approval in one
+/// transaction) is here, naming the decision, made by the person the decision names as decider and
+/// carrying the same seal. The sync server accepts that event only signed by that person (its
+/// `actor_id` is an author field), whereas the decision's status may change unsigned while its
+/// decider, time and note stay: so a PC cannot turn a rejected decision approved in the name of the
+/// person who rejected it. `Some`: the wait; `None`: the record is here.
+async fn approval_record_missing(
+    conn: &impl ConnectionTrait,
+    entity_sync_id: &str,
+    decider_sync: &str,
+    received: &Payload,
+    title: &str,
+) -> AppResult<Option<ApplyOutcome>> {
+    let Some(decider) = user_here(conn, decider_sync).await? else {
+        return Ok(Some(ApplyOutcome::Deferred {
+            code: crate::sync::materialize::DEFER_MISSING_PARENT.into(),
+            message: format!("approver {decider_sync} is not applied yet"),
+            waits_for: None,
+        }));
+    };
+    // An app version older than the seal sends no seal key: its event carries none either.
+    let seal = text(received, "approval_seal").map(str::to_string);
+    let found = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT 1 FROM audit_events \
+             WHERE action_code = ? AND target_id = ? AND actor_id = ? \
+               AND (? IS NULL OR json_extract(details_json, '$.approval_seal') = ?) \
+             LIMIT 1",
+            [
+                crate::reliability::study::decisions::APPROVED_EVENT.into(),
+                entity_sync_id.into(),
+                decider.into(),
+                seal.clone().into(),
+                seal.into(),
+            ],
+        ))
+        .await?
+        .is_some();
+    if found {
+        return Ok(None);
+    }
+    Ok(Some(ApplyOutcome::Deferred {
+        code: crate::sync::materialize::DEFER_MISSING_PARENT.into(),
+        message: format!("decision '{title}' waits for the record of its approval by {decider_sync}"),
+        waits_for: None,
+    }))
+}
+
 /// See the module documentation. Runs before `decisions::inbound_self_approval_check` for the
 /// refusal marks, after it for the rest (`sync::apply_hooks::before_upsert_checked`).
 pub(crate) async fn inbound_refusal_check(
@@ -523,6 +581,9 @@ pub(crate) async fn inbound_approval_check(
                 )
             }
             Ok(true) => {}
+        }
+        if let Some(waiting) = approval_record_missing(conn, entity_sync_id, &decider, received, &title).await? {
+            return Ok(Some(waiting));
         }
     }
     if status == STATUS_APPLIED && held_status != STATUS_APPLIED {

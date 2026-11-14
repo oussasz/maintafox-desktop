@@ -185,6 +185,7 @@ async fn approving_seals_the_decision_and_the_seal_survives_the_round_trip() {
     // Applied on "PC B" as a decision new there (resealed with the meter), then re-encoded there.
     let (new_sid, mut b) = as_new(&wire, "roundtrip");
     b.insert("approval_seal".into(), local.clone().into());
+    record_approval(&f, &new_sid, &b).await;
     let outcome = apply_wire(&f, ENTITY, &new_sid, "upsert", &b).await;
     assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
     let b_id = scalar(
@@ -354,6 +355,7 @@ async fn the_approver_is_the_designated_one_and_holds_the_right_here() {
 
     // Through the inbox: a conflict; the right granted here later closes it by itself, audited.
     let (n, p) = as_new(&by_other, "retry");
+    record_approval(&f, &n, &p).await;
     inbox(&f, &n, &p, 1).await;
     materialize(&f).await;
     assert_eq!(open_conflict(&f, &n).await.2, "DECISION_APPROVER_UNAUTHORISED");
@@ -813,6 +815,7 @@ async fn full_precision_baselines_keep_the_seal_through_json_text() {
         assert_eq!(conflict_code(&o), None, "held, {mtbf}: {o:?}");
         // New here: the same decision as another PC first receives it.
         let (new_sid, p) = as_new(&wire, &format!("text-{n}"));
+        record_approval(&f, &new_sid, &p).await;
         let o = apply_wire(&f, ENTITY, &new_sid, "upsert", &through_text(&p)).await;
         assert!(matches!(o, ApplyOutcome::Applied), "new here, {mtbf}: {o:?}");
         // The seal recomputed on the receiving side is the one sent.
@@ -890,6 +893,7 @@ async fn an_unsealed_approval_accepted_over_the_proposal_is_sealed_here() {
     w.insert("decided_by_sync_id".into(), user_sync(&f, f.reviewer).await.into());
     w.insert("decided_at".into(), "2026-10-26T08:00:00+00:00".into());
     w.remove("approval_seal");
+    record_approval(&f, &sid, &w).await;
     let o = apply_wire(&f, ENTITY, &sid, "upsert", &through_text(&w)).await;
     assert!(matches!(o, ApplyOutcome::Applied), "{o:?}");
     let stored = text(&f, &format!("SELECT approval_seal FROM {ENTITY} WHERE id = {}", d.id)).await;
@@ -901,6 +905,7 @@ async fn an_unsealed_approval_accepted_over_the_proposal_is_sealed_here() {
     let sent = wire_of(&f, ENTITY, &sid).await;
     assert_eq!(sent.get("approval_seal").and_then(Value::as_str), Some(stored.as_str()));
     let (n, p) = as_new(&sent, "resealed");
+    record_approval(&f, &n, &p).await;
     let o = apply_wire(&f, ENTITY, &n, "upsert", &through_text(&p)).await;
     assert!(matches!(o, ApplyOutcome::Applied), "{o:?}");
 }
@@ -1249,6 +1254,7 @@ async fn the_backfill_resends_from_the_last_writer_and_the_wait_closes() {
         .await,
         "SENDER_OUTDATED"
     );
+    record_approval(&f, &n, &wire).await;
     inbox(&f, &n, &wire, 2).await;
     materialize(&f).await;
     assert_eq!(
@@ -1495,6 +1501,7 @@ async fn an_unsent_local_change_is_kept_and_sent_sealed_after_the_upgrade() {
         .is_some_and(|s| s.starts_with("v1:")));
     // Another PC (new there) accepts it applied: it can never apply it a second time.
     let (n, p) = as_new(&sealed, "other-pc");
+    record_approval(&f, &n, &p).await;
     let o = apply_wire(&f, ENTITY, &n, "upsert", &through_text(&p)).await;
     assert!(matches!(o, ApplyOutcome::Applied), "{o:?}");
     let there = scalar(&f.db, &format!("SELECT id FROM {ENTITY} WHERE entity_sync_id = '{n}'")).await;
@@ -1679,6 +1686,7 @@ async fn a_seal_only_resend_crossing_an_unsent_apply_settles_on_push() {
     assert_eq!(decision_status(&f, id).await, "applied");
     // B (and any PC) accepts A's version applied: no second apply anywhere.
     let (n, p) = as_new(&open[0].3, "pc-b");
+    record_approval(&f, &n, &p).await;
     let o = apply_wire(&f, ENTITY, &n, "upsert", &through_text(&p)).await;
     assert!(matches!(o, ApplyOutcome::Applied), "{o:?}");
     let there = scalar(&f.db, &format!("SELECT id FROM {ENTITY} WHERE entity_sync_id = '{n}'")).await;
@@ -2048,4 +2056,57 @@ async fn an_in_flight_change_is_kept_and_followed_by_its_sealed_version() {
         0,
         "not listed for the post-pull re-send"
     );
+}
+
+/// Row 39: a rejected decision whose status is turned to approved on the way (decider, time and
+/// note kept, seal recomputed, which any PC can do) is not applied here as approved by the person
+/// who rejected it: new here, it waits for the audit event of that person's approval, with that
+/// seal, which the sync server accepts only signed by them. An event by someone else, or with
+/// another seal, does not count.
+#[tokio::test]
+async fn a_rejection_turned_into_an_approval_waits_for_the_approvers_own_record() {
+    let f = setup().await;
+    let study_id = life_fixture(&f).await;
+    make_site(&f, 1).await;
+    grant_ram_manage(&f, f.reviewer).await;
+    let d = wo_decision(&f, study_id, None).await;
+    reject_decision(&f.db, decide(&d, Some("Pas maintenant")), f.reviewer)
+        .await
+        .expect("reject");
+    let sid = decision_sync_id(&f, d.id).await;
+    let mut flipped = wire_of(&f, ENTITY, &sid).await;
+    assert_eq!(flipped.get("status").and_then(Value::as_str), Some("rejected"));
+    flipped.insert("status".into(), "approved".into());
+    let flipped = resealed(flipped);
+    let seal = flipped
+        .get("approval_seal")
+        .and_then(Value::as_str)
+        .expect("seal")
+        .to_string();
+    let reviewer_sync = user_sync(&f, f.reviewer).await;
+    let (n, p) = as_new(&flipped, "flipped");
+
+    // Only the rejection is recorded: it waits.
+    let o = apply_wire(&f, ENTITY, &n, "upsert", &p).await;
+    assert_eq!(deferred_code(&o), Some("MISSING_PARENT"), "{o:?}");
+    // An approval recorded by someone else, or by the reviewer with another seal: still waits.
+    approval_event(&f, &n, &user_sync(&f, f.admin).await, Some(&seal), "other-actor").await;
+    approval_event(&f, &n, &reviewer_sync, Some("v1:another-seal"), "other-seal").await;
+    let o = apply_wire(&f, ENTITY, &n, "upsert", &p).await;
+    assert_eq!(deferred_code(&o), Some("MISSING_PARENT"), "{o:?}");
+    assert_eq!(
+        scalar(
+            &f.db,
+            &format!("SELECT COUNT(*) FROM {ENTITY} WHERE entity_sync_id = '{n}'")
+        )
+        .await,
+        0
+    );
+    // The reviewer's own approval with this seal arrives: applied.
+    approval_event(&f, &n, &reviewer_sync, Some(&seal), "own").await;
+    let o = apply_wire(&f, ENTITY, &n, "upsert", &p).await;
+    assert!(matches!(o, ApplyOutcome::Applied), "{o:?}");
+    // The PC that holds the rejection still refuses it (it never goes back or across).
+    let o = apply_wire(&f, ENTITY, &sid, "upsert", &flipped).await;
+    assert_eq!(conflict_code(&o), Some("DECISION_STATUS_REGRESSION"), "{o:?}");
 }
