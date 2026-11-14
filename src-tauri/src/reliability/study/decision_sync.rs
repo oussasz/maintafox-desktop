@@ -702,7 +702,9 @@ pub(crate) async fn after_refusal_received(conn: &impl ConnectionTrait, sync_id:
 
 /// After a received decision was written (`sync::apply_hooks::after_upsert`):
 /// - approved or applied, not refused, and without a seal here (an approval from a PC that does not
-///   seal yet, accepted over the proposal held here by comparison): sealed now from the content
+///   seal yet, accepted over the proposal held here by comparison and with its approval audit event,
+///   which only versions after the seal write: so in practice a sender that writes the event but no
+///   seal): sealed now from the content
 ///   judged here, as the backfill of migration 264 does, so this PC never sends it unsealed
 ///   (review S2); nothing is sent for it;
 /// - refused, new here or newly refused here: the work order or PM version it gave is told of

@@ -893,6 +893,8 @@ async fn an_unsealed_approval_accepted_over_the_proposal_is_sealed_here() {
     w.insert("decided_by_sync_id".into(), user_sync(&f, f.reviewer).await.into());
     w.insert("decided_at".into(), "2026-10-26T08:00:00+00:00".into());
     w.remove("approval_seal");
+    // Stands for a sender that writes the approval event but no seal (versions before the seal
+    // wrote no event: their approvals wait here indefinitely, KNOWN_LIMITS row 39).
     record_approval(&f, &sid, &w).await;
     let o = apply_wire(&f, ENTITY, &sid, "upsert", &through_text(&w)).await;
     assert!(matches!(o, ApplyOutcome::Applied), "{o:?}");
@@ -1254,6 +1256,8 @@ async fn the_backfill_resends_from_the_last_writer_and_the_wait_closes() {
         .await,
         "SENDER_OUTDATED"
     );
+    // The approval event as an approver on a sealing version writes it (one from before the seal
+    // wrote none: the decision would keep waiting here, KNOWN_LIMITS row 39).
     record_approval(&f, &n, &wire).await;
     inbox(&f, &n, &wire, 2).await;
     materialize(&f).await;
