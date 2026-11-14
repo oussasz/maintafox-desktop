@@ -1,3 +1,4 @@
+pub mod bulk_validation;
 pub mod catalog;
 pub mod domain;
 pub mod expiry_alerts;
@@ -9,6 +10,8 @@ pub mod requirements;
 pub(crate) mod sync_check;
 pub mod training;
 
+#[cfg(test)]
+mod bulk_validation_tests;
 #[cfg(test)]
 mod gate_tests;
 #[cfg(test)]

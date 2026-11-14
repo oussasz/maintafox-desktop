@@ -1,3 +1,7 @@
+// The phone build keeps only the no-op `apply_window_mode` / `restore_window_state`; the desktop
+// window bookkeeping below is unused there.
+#![cfg_attr(mobile, allow(dead_code, unused_imports))]
+
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -28,10 +32,14 @@ impl Default for WindowState {
     }
 }
 
-/// Size (logical pixels) of the compact window shown while licence activation, administrator
-/// setup and sign-in are on screen.
+/// Starting size (logical pixels) of the compact window shown while licence activation,
+/// administrator setup and sign-in are on screen. It can be resized and maximised (a small screen
+/// or a large display zoom must never hide a button); the page inside scrolls.
 pub const COMPACT_WIDTH: f64 = 560.0;
-pub const COMPACT_HEIGHT: f64 = 640.0;
+pub const COMPACT_HEIGHT: f64 = 700.0;
+/// Smallest size the compact window can be dragged to.
+const COMPACT_MIN_WIDTH: f64 = 480.0;
+const COMPACT_MIN_HEIGHT: f64 = 420.0;
 /// Minimum size of the main window (the same as `tauri.conf.json`).
 const MAIN_MIN_WIDTH: f64 = 1024.0;
 const MAIN_MIN_HEIGHT: f64 = 600.0;
@@ -60,7 +68,8 @@ fn persisting_state() -> bool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WindowMode {
-    /// Fixed-size, centred installer-style window (activation, administrator setup, sign-in).
+    /// Centred installer-style window (activation, administrator setup, sign-in): starts compact
+    /// but can be resized and maximised.
     Compact,
     /// The normal main window at its remembered size.
     Main,
@@ -70,7 +79,14 @@ fn window_err(e: &tauri::Error) -> crate::errors::AppError {
     crate::errors::AppError::Internal(anyhow::anyhow!("{e}"))
 }
 
+/// Phone: one full-screen window, no compact shape to switch to.
+#[cfg(mobile)]
+pub fn apply_window_mode(_app: &AppHandle, _mode: WindowMode) -> AppResult<()> {
+    Ok(())
+}
+
 /// Switches the main window between its compact and normal shapes.
+#[cfg(desktop)]
 pub fn apply_window_mode(app: &AppHandle, mode: WindowMode) -> AppResult<()> {
     let Some(window) = app.get_webview_window("main") else {
         return Ok(());
@@ -110,12 +126,18 @@ pub fn apply_window_mode(app: &AppHandle, mode: WindowMode) -> AppResult<()> {
                 if maximized {
                     window.unmaximize().map_err(|e| window_err(&e))?;
                 }
-                // The minimum is replaced first so the shrink is allowed, then the size is pinned.
-                window.set_min_size(Some(compact)).map_err(|e| window_err(&e))?;
-                window.set_max_size(Some(compact)).map_err(|e| window_err(&e))?;
+                // The minimum is replaced first so the shrink is allowed; the window stays
+                // resizable and maximisable so no button is ever out of reach.
+                window
+                    .set_min_size(Some(tauri::Size::Logical(tauri::LogicalSize {
+                        width: COMPACT_MIN_WIDTH,
+                        height: COMPACT_MIN_HEIGHT,
+                    })))
+                    .map_err(|e| window_err(&e))?;
+                window.set_max_size(None::<tauri::Size>).map_err(|e| window_err(&e))?;
                 window.set_size(compact).map_err(|e| window_err(&e))?;
-                window.set_resizable(false).map_err(|e| window_err(&e))?;
-                window.set_maximizable(false).map_err(|e| window_err(&e))?;
+                window.set_resizable(true).map_err(|e| window_err(&e))?;
+                window.set_maximizable(true).map_err(|e| window_err(&e))?;
                 window.center().map_err(|e| window_err(&e))?;
                 Ok(())
             };
@@ -133,6 +155,13 @@ pub fn apply_window_mode(app: &AppHandle, mode: WindowMode) -> AppResult<()> {
             let mut state = load_state(app);
             if state.width == 0 || state.height == 0 || state.x <= -30000 || state.y <= -30000 {
                 state = WindowState::default();
+            }
+            // The compact window may have been maximised: the remembered size only applies to a
+            // window in its normal state.
+            if window.is_maximized().unwrap_or(false) {
+                if let Err(e) = window.unmaximize() {
+                    warn!("Cannot unmaximize the compact window: {e}");
+                }
             }
             window.set_resizable(true).map_err(|e| window_err(&e))?;
             window.set_maximizable(true).map_err(|e| window_err(&e))?;
@@ -215,8 +244,15 @@ pub fn save_state(app: &AppHandle, state: &WindowState) {
     }
 }
 
+/// Phone: the system sizes the only window; there is no size or position to remember.
+#[cfg(mobile)]
+pub fn restore_window_state(_app: &mut tauri::App) -> AppResult<()> {
+    Ok(())
+}
+
 /// Called in the Tauri setup hook. Applies the saved state to the main window
 /// and registers event listeners to persist state on resize/move/close.
+#[cfg(desktop)]
 pub fn restore_window_state(app: &mut tauri::App) -> AppResult<()> {
     let mut state = load_state(&app.handle().clone());
     let handle = app.handle().clone();

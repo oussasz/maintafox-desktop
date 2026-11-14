@@ -63,48 +63,54 @@ pub struct DiAuditFilter {
 /// level but is NOT returned. This ensures that a transient audit-write failure
 /// never blocks the primary DI workflow.
 pub async fn record_di_change_event(db: &DatabaseConnection, input: DiAuditInput) {
-    let now = chrono::Utc::now().to_rfc3339();
-
-    let result = db
-        .execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            r"INSERT INTO di_change_events
-                   (di_id, action, actor_id, acted_at, summary, details_json, requires_step_up, apply_result)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            [
-                input
-                    .di_id
-                    .map(sea_orm::Value::from)
-                    .unwrap_or(sea_orm::Value::Int(None)),
-                input.action.clone().into(),
-                input
-                    .actor_id
-                    .map(sea_orm::Value::from)
-                    .unwrap_or(sea_orm::Value::Int(None)),
-                now.into(),
-                input
-                    .summary
-                    .map(sea_orm::Value::from)
-                    .unwrap_or(sea_orm::Value::String(None)),
-                input
-                    .details_json
-                    .map(sea_orm::Value::from)
-                    .unwrap_or(sea_orm::Value::String(None)),
-                i32::from(input.requires_step_up).into(),
-                input.apply_result.clone().into(),
-            ],
-        ))
-        .await;
-
-    if let Err(e) = result {
+    let (di_id, action, apply_result) = (input.di_id, input.action.clone(), input.apply_result.clone());
+    if let Err(e) = record_di_change_event_in(db, input).await {
         tracing::warn!(
-            di_id = ?input.di_id,
-            action = %input.action,
-            apply_result = %input.apply_result,
+            di_id = ?di_id,
+            action = %action,
+            apply_result = %apply_result,
             error = %e,
             "audit::record_di_change_event failed (non-fatal)"
         );
     }
+}
+
+/// [`record_di_change_event`] in the caller's transaction, its error returned: a change that must
+/// not happen unaudited (a request flagged "sécurité" validated less urgent than urgent) is
+/// undone with its audit row.
+pub async fn record_di_change_event_in(db: &impl ConnectionTrait, input: DiAuditInput) -> Result<(), sea_orm::DbErr> {
+    let now = crate::clock::now().to_rfc3339();
+
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        r"INSERT INTO di_change_events
+                   (di_id, action, actor_id, acted_at, summary, details_json, requires_step_up, apply_result)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            input
+                .di_id
+                .map(sea_orm::Value::from)
+                .unwrap_or(sea_orm::Value::Int(None)),
+            input.action.clone().into(),
+            input
+                .actor_id
+                .map(sea_orm::Value::from)
+                .unwrap_or(sea_orm::Value::Int(None)),
+            now.into(),
+            input
+                .summary
+                .map(sea_orm::Value::from)
+                .unwrap_or(sea_orm::Value::String(None)),
+            input
+                .details_json
+                .map(sea_orm::Value::from)
+                .unwrap_or(sea_orm::Value::String(None)),
+            i32::from(input.requires_step_up).into(),
+            input.apply_result.clone().into(),
+        ],
+    ))
+    .await?;
+    Ok(())
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

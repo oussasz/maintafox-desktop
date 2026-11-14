@@ -12,14 +12,20 @@
  * movement keeps the unit and quantity typed.
  */
 import type { ColumnDef } from "@tanstack/react-table";
-import { PackageCheck, ScanLine } from "lucide-react";
+import { PackageCheck, Printer, ScanLine } from "lucide-react";
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { PermissionGate } from "@/components/PermissionGate";
 import { DataTable } from "@/components/data/DataTable";
+import { printIssueSlip } from "@/components/inventory/IssueSlipPrint";
+import { PartsToIssuePanel } from "@/components/inventory/PartsToIssuePanel";
 import { WorkOrderReferencePicker } from "@/components/inventory/WorkOrderReferencePicker";
-import { toStockQuantity, useEntryFactor } from "@/components/inventory/entered-unit";
+import {
+  compatibleEntryUnits,
+  toStockQuantity,
+  useEntryFactor,
+} from "@/components/inventory/entered-unit";
 import {
   MeasureUnitSelect,
   unitSymbol,
@@ -39,6 +45,7 @@ import {
 import { StatusChip } from "@/components/ui/status-chip";
 import type { Tone } from "@/design-system/tone";
 import { useFormatters } from "@/hooks/use-formatters";
+import { cn } from "@/lib/utils";
 import {
   type InventoryArticleRow,
   type IssueOutcome,
@@ -52,6 +59,7 @@ import {
   listInventoryReservations,
   listInventoryStockBalances,
   resolveInventoryScan,
+  returnInventoryStock,
 } from "@/services/inventory-service";
 import { pushAppToast } from "@/store/app-toast-store";
 import type { InventoryStockBalance, StockReservation, WorkOrder } from "@shared/ipc-types";
@@ -91,8 +99,8 @@ export interface InventoryIssueDeskProps {
 }
 
 export function InventoryIssueDesk({ reloadToken = 0 }: InventoryIssueDeskProps) {
-  const { t } = useTranslation("inventory");
-  const { formatNumber, formatCurrency, formatDate } = useFormatters();
+  const { t, i18n } = useTranslation("inventory");
+  const { formatNumber, formatCurrency, formatDate, currencyCode } = useFormatters();
   const qty = useCallback(
     (v: number) => formatNumber(v, { maximumFractionDigits: 3 }),
     [formatNumber],
@@ -100,6 +108,8 @@ export function InventoryIssueDesk({ reloadToken = 0 }: InventoryIssueDeskProps)
 
   const scanRef = useRef<HTMLInputElement>(null);
   const [scanValue, setScanValue] = useState("");
+  // Bumped when a part "à sortir" is issued above: the stock figures below are read again.
+  const [stockVersion, setStockVersion] = useState(0);
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState<unknown>(null);
   const [scan, setScan] = useState<ScanResolution | null>(null);
@@ -110,6 +120,10 @@ export function InventoryIssueDesk({ reloadToken = 0 }: InventoryIssueDeskProps)
 
   const [balances, setBalances] = useState<InventoryStockBalance[]>([]);
   const [reservations, setReservations] = useState<StockReservation[]>([]);
+  // Parts already issued to the chosen work order: what can be returned to stock.
+  const [returnable, setReturnable] = useState<StockReservation[]>([]);
+  const [returnChoice, setReturnChoice] = useState("");
+  const [returning, setReturning] = useState(false);
   const [lots, setLots] = useState<LotStock[]>([]);
   const [contextError, setContextError] = useState<unknown>(null);
 
@@ -125,6 +139,8 @@ export function InventoryIssueDesk({ reloadToken = 0 }: InventoryIssueDeskProps)
   const [outcome, setOutcome] = useState<{
     result: IssueOutcome;
     articleCode: string;
+    articleName: string | null;
+    locationLabel: string | null;
     unit: string;
   } | null>(null);
 
@@ -160,7 +176,7 @@ export function InventoryIssueDesk({ reloadToken = 0 }: InventoryIssueDeskProps)
     return () => {
       cancelled = true;
     };
-  }, [expiryWindow, expiringVersion, reloadToken]);
+  }, [expiryWindow, expiringVersion, reloadToken, stockVersion]);
 
   // ── Stock of the scanned article ─────────────────────────────────────────────
   useEffect(() => {
@@ -197,19 +213,32 @@ export function InventoryIssueDesk({ reloadToken = 0 }: InventoryIssueDeskProps)
     return () => {
       cancelled = true;
     };
-  }, [scan, reloadToken]);
+  }, [scan, reloadToken, stockVersion]);
 
   // ── Planned parts of the work order for this article ─────────────────────────
   useEffect(() => {
     if (!scan || !workOrder) {
       setReservations([]);
+      setReturnable([]);
       setReservationChoice(DIRECT_ISSUE);
       return;
     }
     let cancelled = false;
-    listInventoryReservations({ article_id: scan.article_id, source_id: workOrder.id })
+    listInventoryReservations({
+      article_id: scan.article_id,
+      source_id: workOrder.id,
+      include_inactive: true,
+    })
       .then((rows) => {
         if (cancelled) return;
+        setReturnable(
+          rows.filter(
+            (r) =>
+              r.source_id === workOrder.id &&
+              WORK_ORDER_SOURCES.has(r.source_type) &&
+              r.quantity_issued > 0,
+          ),
+        );
         setReservations(
           rows.filter(
             (r) =>
@@ -226,7 +255,7 @@ export function InventoryIssueDesk({ reloadToken = 0 }: InventoryIssueDeskProps)
     return () => {
       cancelled = true;
     };
-  }, [scan, workOrder]);
+  }, [scan, workOrder, stockVersion]);
 
   // ── Lots at the chosen location ──────────────────────────────────────────────
   useEffect(() => {
@@ -258,6 +287,8 @@ export function InventoryIssueDesk({ reloadToken = 0 }: InventoryIssueDeskProps)
     () => reservations.find((r) => String(r.id) === reservationChoice) ?? null,
     [reservations, reservationChoice],
   );
+  const returnTarget =
+    returnable.find((r) => String(r.id) === returnChoice) ?? returnable[0] ?? null;
   const effectiveLocationId = selectedReservation?.location_id ?? locationId;
   const selectedBalance = balances.find((b) => b.location_id === effectiveLocationId) ?? null;
   const chosenLot = lots.find((l) => String(l.lot_id) === lotChoice) ?? null;
@@ -292,6 +323,22 @@ export function InventoryIssueDesk({ reloadToken = 0 }: InventoryIssueDeskProps)
               : stockQty > maxQty + 1e-9
                 ? t("issueDesk.blockers.tooMuch", { qty: qty(maxQty), unit })
                 : null;
+
+  // Not enough stock here: shown as a visible warning, not a small grey line (UX L3-16).
+  const stockShort = blocker != null && stockQty != null && stockQty > maxQty + 1e-9;
+
+  // The return uses the same quantity field; it goes back into the stock of the issue's location.
+  const returnBlocker = !returnTarget
+    ? null
+    : !(parsedQty > 0)
+      ? t("issueDesk.blockers.quantity")
+      : entry.error
+        ? t("issueDesk.blockers.unitRefused")
+        : stockQty == null
+          ? t("issueDesk.blockers.converting")
+          : stockQty > returnTarget.quantity_issued + 1e-9
+            ? t("issueDesk.return.tooMuch", { qty: qty(returnTarget.quantity_issued), unit })
+            : null;
 
   const resetArticle = useCallback(() => {
     setScan(null);
@@ -355,7 +402,15 @@ export function InventoryIssueDesk({ reloadToken = 0 }: InventoryIssueDeskProps)
         notes: null,
         entered_unit_value_id: entryUnitId,
       });
-      setOutcome({ result, articleCode: scan.article_code, unit });
+      setOutcome({
+        result,
+        articleCode: scan.article_code,
+        articleName: articleRow?.article_name ?? null,
+        locationLabel: selectedBalance
+          ? `${selectedBalance.warehouse_code}/${selectedBalance.location_code}`
+          : null,
+        unit,
+      });
       pushAppToast({
         title: t("issueDesk.outcome.toast", {
           qty: qty(parsedQty),
@@ -371,6 +426,34 @@ export function InventoryIssueDesk({ reloadToken = 0 }: InventoryIssueDeskProps)
       setIssueError(err);
     } finally {
       setIssuing(false);
+    }
+  };
+
+  const onReturn = async () => {
+    if (!scan || !returnTarget || returnBlocker || stockQty == null || returning) return;
+    setReturning(true);
+    setIssueError(null);
+    try {
+      await returnInventoryStock({
+        reservation_id: returnTarget.id,
+        quantity: stockQty,
+        notes: null,
+      });
+      pushAppToast({
+        title: t("issueDesk.return.toast", {
+          qty: qty(stockQty),
+          unit,
+          code: scan.article_code,
+          wo: workOrder?.code ?? "",
+        }),
+        variant: "success",
+      });
+      setExpiringVersion((v) => v + 1);
+      resetArticle();
+    } catch (err) {
+      setIssueError(err);
+    } finally {
+      setReturning(false);
     }
   };
 
@@ -435,6 +518,13 @@ export function InventoryIssueDesk({ reloadToken = 0 }: InventoryIssueDeskProps)
 
   return (
     <div className="space-y-6">
+      {/* Parts used on work orders by people without the stock right (backend: inv.manage). */}
+      <PermissionGate permission={P.INV_MANAGE}>
+        <PartsToIssuePanel
+          reloadToken={reloadToken}
+          onChanged={() => setStockVersion((v) => v + 1)}
+        />
+      </PermissionGate>
       <section
         aria-labelledby="inv-issue-desk-title"
         className="rounded-lg border border-surface-border p-4"
@@ -565,7 +655,9 @@ export function InventoryIssueDesk({ reloadToken = 0 }: InventoryIssueDeskProps)
                 </SelectContent>
               </Select>
               {scan && balances.length === 0 ? (
-                <p className="text-xs text-text-muted">{t("issueDesk.location.empty")}</p>
+                <p className="text-sm font-medium text-status-warning">
+                  {t("issueDesk.location.empty")}
+                </p>
               ) : null}
             </div>
 
@@ -636,7 +728,7 @@ export function InventoryIssueDesk({ reloadToken = 0 }: InventoryIssueDeskProps)
                 <MeasureUnitSelect
                   id="inv-issue-unit"
                   value={entryUnitId ?? stockUnitId}
-                  units={units}
+                  units={compatibleEntryUnits(units, stockUnitId)}
                   disabled={!scan || stockUnitId == null}
                   onChange={(next) => setEntryUnitId(next === stockUnitId ? null : next)}
                   className="h-11 w-full rounded-md border border-surface-border bg-surface-0 px-2 text-sm"
@@ -650,7 +742,16 @@ export function InventoryIssueDesk({ reloadToken = 0 }: InventoryIssueDeskProps)
             ) : null}
 
             {blocker ? (
-              <p id="inv-issue-blocker" role="status" className="text-xs text-text-muted">
+              <p
+                id="inv-issue-blocker"
+                role="status"
+                className={cn(
+                  "text-sm",
+                  stockShort
+                    ? "rounded-md border border-status-warning/40 bg-status-warning/10 px-3 py-2 font-medium text-text-primary"
+                    : "text-text-muted",
+                )}
+              >
                 {blocker}
               </p>
             ) : null}
@@ -661,6 +762,60 @@ export function InventoryIssueDesk({ reloadToken = 0 }: InventoryIssueDeskProps)
                 {issuing ? t("issueDesk.submitting") : t("issueDesk.submit")}
               </Button>
             </PermissionGate>
+
+            {scan && workOrder && returnTarget ? (
+              <PermissionGate permission={P.INV_MANAGE}>
+                <div className="space-y-2 rounded-md border border-surface-border p-3">
+                  <p className="text-sm font-medium">{t("issueDesk.return.title")}</p>
+                  <p className="text-xs text-text-muted">
+                    {t("issueDesk.return.hint", {
+                      qty: qty(returnTarget.quantity_issued),
+                      unit,
+                      wo: workOrder.code,
+                    })}
+                  </p>
+                  {returnable.length > 1 ? (
+                    <Select
+                      value={String(returnTarget.id)}
+                      onValueChange={(v) => v && setReturnChoice(v)}
+                    >
+                      <SelectTrigger
+                        id="inv-return-reservation"
+                        className="h-11"
+                        aria-label={t("issueDesk.return.select")}
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {returnable.map((r) => (
+                          <SelectItem key={r.id} value={String(r.id)}>
+                            {t("issueDesk.return.option", {
+                              qty: qty(r.quantity_issued),
+                              unit,
+                              location: `${r.warehouse_code}/${r.location_code}`,
+                            })}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : null}
+                  {returnBlocker ? (
+                    <p role="status" className="text-xs text-text-muted">
+                      {returnBlocker}
+                    </p>
+                  ) : null}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-11 w-full"
+                    disabled={returning || returnBlocker !== null}
+                    onClick={() => void onReturn()}
+                  >
+                    {returning ? t("issueDesk.return.submitting") : t("issueDesk.return.submit")}
+                  </Button>
+                </div>
+              </PermissionGate>
+            ) : null}
 
             {outcome ? (
               <div
@@ -695,6 +850,29 @@ export function InventoryIssueDesk({ reloadToken = 0 }: InventoryIssueDeskProps)
                     })}
                   </p>
                 ) : null}
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="mt-1 gap-1.5"
+                  onClick={() =>
+                    void printIssueSlip(
+                      {
+                        outcome: outcome.result,
+                        articleCode: outcome.articleCode,
+                        articleName: outcome.articleName,
+                        unit: outcome.unit,
+                        locationLabel: outcome.locationLabel,
+                      },
+                      (key) => (t as (k: string) => string)(key),
+                      i18n.language,
+                      currencyCode,
+                    )
+                  }
+                >
+                  <Printer className="h-4 w-4" aria-hidden />
+                  {t("issueDesk.slip.print")}
+                </Button>
               </div>
             ) : null}
           </form>

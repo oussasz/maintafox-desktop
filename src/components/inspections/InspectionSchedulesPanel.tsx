@@ -52,6 +52,7 @@ import {
   isoToLocalInput,
   parseReading,
   scheduleFormIssues,
+  teamText,
 } from "./inspection-rules";
 
 interface InspectionSchedulesPanelProps {
@@ -175,7 +176,7 @@ export function InspectionSchedulesPanel({
             {row.original.assigned_to_name ? <p>{row.original.assigned_to_name}</p> : null}
             {row.original.assigned_team_name ? (
               <p className="text-text-muted">
-                {t("rounds.team", { name: row.original.assigned_team_name })}
+                {teamText(row.original.assigned_team_name, (name) => t("rounds.team", { name }))}
               </p>
             ) : null}
           </div>
@@ -312,12 +313,15 @@ function formFrom(s: InspectionScheduleSummary): ScheduleForm {
 interface InspectionScheduleDialogProps {
   /** `null`: closed; `"new"`: create; a schedule: edit it. */
   target: InspectionScheduleSummary | "new" | null;
+  /** A new schedule starts on this checklist (offered right after creating it). */
+  initialTemplateId?: number | null;
   onClose: () => void;
   onSaved: () => void;
 }
 
 export function InspectionScheduleDialog({
   target,
+  initialTemplateId = null,
   onClose,
   onSaved,
 }: InspectionScheduleDialogProps) {
@@ -356,7 +360,10 @@ export function InspectionScheduleDialog({
           : null,
       );
     } else {
-      setForm(emptyForm());
+      setForm({
+        ...emptyForm(),
+        templateId: initialTemplateId != null ? String(initialTemplateId) : "",
+      });
       setActive(true);
       setAssigneeName(null);
       setAsset(null);
@@ -364,7 +371,7 @@ export function InspectionScheduleDialog({
     listInspectionTemplates()
       .then((all) => setTemplates(all.filter((x) => x.is_active && x.current_version_id != null)))
       .catch((err: unknown) => setLoadError(err));
-  }, [target, existing]);
+  }, [target, existing, initialTemplateId]);
 
   useEffect(() => {
     setMetersError(null);

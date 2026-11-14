@@ -33,6 +33,15 @@ export function useScopeLabel() {
   };
 }
 
+/**
+ * The node that stands for the whole plant: the single top node of the organisation (made at
+ * activation, its code is internal). `null` when the organisation has no single top node.
+ */
+export function wholePlantNodeId(nodes: AssignableScopeNode[]): number | null {
+  const tops = nodes.filter((n) => n.parent_id === null);
+  return tops.length === 1 && tops[0] ? tops[0].id : null;
+}
+
 interface ScopeNodeSelectProps {
   nodes: AssignableScopeNode[];
   value: ScopeChoice;
@@ -55,7 +64,11 @@ export function ScopeNodeSelect({
   ariaLabel,
 }: ScopeNodeSelectProps) {
   const { t } = useTranslation("admin");
-  const minDepth = nodes.reduce((m, n) => Math.min(m, n.depth), Number.POSITIVE_INFINITY);
+  // The top node is the whole plant: with "Toute l'usine" offered it is not repeated, otherwise it
+  // shows by its name alone (its code is an internal one, never a name for people).
+  const topId = wholePlantNodeId(nodes);
+  const shown = includePlant ? nodes.filter((n) => n.id !== topId) : nodes;
+  const minDepth = shown.reduce((m, n) => Math.min(m, n.depth), Number.POSITIVE_INFINITY);
   return (
     <Select
       value={value}
@@ -69,16 +82,18 @@ export function ScopeNodeSelect({
         {includePlant ? (
           <SelectItem value={PLANT_SCOPE}>{t("console.scope.plant")}</SelectItem>
         ) : null}
-        {nodes.map((n) => {
+        {shown.map((n) => {
           const indent = Number.isFinite(minDepth) ? Math.max(0, n.depth - minDepth) : 0;
           return (
             <SelectItem key={n.id} value={String(n.id)}>
               <span style={{ paddingLeft: `${indent * 12}px` }}>
                 {n.name}
-                <span className="ml-1.5 text-xs text-text-muted">
-                  {n.type_label ? `${n.type_label} · ` : ""}
-                  {n.code}
-                </span>
+                {n.id === topId ? null : (
+                  <span className="ml-1.5 text-xs text-text-muted">
+                    {n.type_label ? `${n.type_label} · ` : ""}
+                    {n.code}
+                  </span>
+                )}
               </span>
             </SelectItem>
           );

@@ -31,6 +31,10 @@ const LITERAL_ALLOWLIST = new Set([
   "scripts/generate-permissions.ts",
   "scripts/check-rbac-parity.ts",
   "scripts/rewrite-permission-literals.ts",
+  // Generated sync wire contracts: the server reads the right a signer must hold (`authority`)
+  // by name. Generated from src-tauri/src/sync/signing_rules.rs, which uses the constants.
+  "shared/sync/entity-registry.json",
+  "shared/sync/server-entity-allowlist.v2.json",
 ]);
 
 interface PermissionEntry {

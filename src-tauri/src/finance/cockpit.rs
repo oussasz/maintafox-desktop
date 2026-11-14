@@ -15,7 +15,6 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 use serde::{Deserialize, Serialize};
 
@@ -141,6 +140,8 @@ pub struct DrilldownActual {
     pub equipment_code: Option<String>,
     pub event_at: Option<String>,
     pub is_reversal: bool,
+    /// Version of the entry, needed to reverse it (`reverse_budget_actual`).
+    pub row_version: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -213,7 +214,7 @@ async fn live_commitments<C: ConnectionTrait>(db: &C) -> AppResult<Vec<LiveCommi
         .await?;
     let mut out = Vec::new();
     if !po_rows.is_empty() {
-        let today = Utc::now().format("%Y-%m-%d").to_string();
+        let today = crate::clock::now().format("%Y-%m-%d").to_string();
         let tenant = crate::inventory::fx::tenant_currency(db).await?;
         let mut rates: HashMap<String, Option<f64>> = HashMap::new();
         for r in po_rows {
@@ -690,7 +691,7 @@ pub async fn get_budget_cockpit_drilldown<C: ConnectionTrait>(
             DbBackend::Sqlite,
             "SELECT ba.id, ba.period_month, ba.budget_bucket, ba.amount_base, ba.posting_status, ba.source_type,
                     ba.source_id, ba.rate_card_lane, ba.work_order_id, wo.code AS wo_code, wo.title AS wo_title,
-                    e.asset_id_code AS equipment_code, ba.event_at, ba.reversal_of_actual_id
+                    e.asset_id_code AS equipment_code, ba.event_at, ba.reversal_of_actual_id, ba.row_version
              FROM budget_actuals ba
              LEFT JOIN work_orders wo ON wo.id = ba.work_order_id
              LEFT JOIN equipment e ON e.id = COALESCE(ba.equipment_id, wo.equipment_id)
@@ -720,6 +721,7 @@ pub async fn get_budget_cockpit_drilldown<C: ConnectionTrait>(
             equipment_code: decode(&r, "equipment_code")?,
             event_at: decode(&r, "event_at")?,
             is_reversal: decode::<Option<i64>>(&r, "reversal_of_actual_id")?.is_some(),
+            row_version: decode(&r, "row_version")?,
         });
     }
 

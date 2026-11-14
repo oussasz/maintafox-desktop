@@ -146,7 +146,7 @@ pub async fn visible_to(db: &impl ConnectionTrait, user_id: i32) -> AppResult<Vi
     if crate::auth::rbac::user_has_elevated_admin_access(db, user_id).await? {
         return Ok(Visibility::all());
     }
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let mut out = Visibility::default();
     for (module, permission) in catalog::MODULES {
         let Some(permission) = permission else {

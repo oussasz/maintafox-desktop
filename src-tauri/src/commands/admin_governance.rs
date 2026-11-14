@@ -638,7 +638,7 @@ pub async fn create_delegation_policy(
 
     let domains_json = serde_json::to_string(&input.allowed_domains)?;
 
-    state
+    let inserted = state
         .db
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -662,15 +662,7 @@ pub async fn create_delegation_policy(
         ))
         .await?;
 
-    let id_row = state
-        .db
-        .query_one(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT last_insert_rowid() AS id".to_string(),
-        ))
-        .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Failed to get last insert id")))?;
-    let id: i64 = id_row.try_get("", "id")?;
+    let id = crate::db::inserted_id(&inserted)?;
 
     record_admin_event(
         &state.db,

@@ -2,7 +2,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { AlertTriangle, Columns3, List, PackageSearch, Plus } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { PermissionGate } from "@/components/PermissionGate";
 import { DataTable } from "@/components/data/DataTable";
@@ -13,11 +13,13 @@ import {
   ArticleEditorFields,
   type ExtendedArticleInput,
 } from "@/components/inventory/ArticleEditorFields";
+import { DormantStockPanel } from "@/components/inventory/DormantStockPanel";
 import { InventoryControlsPanel } from "@/components/inventory/InventoryControlsPanel";
 import { InventoryIssueDesk } from "@/components/inventory/InventoryIssueDesk";
 import { InventoryValuationPanel } from "@/components/inventory/InventoryValuationPanel";
 import { NegativeStockBadge, isNegativeStock } from "@/components/inventory/NegativeStockBadge";
 import { NegativeStockReviewPanel } from "@/components/inventory/NegativeStockReviewPanel";
+import { NonStockReviewPanel } from "@/components/inventory/NonStockReviewPanel";
 import {
   type ProcurementPanelRequest,
   ProcurementRepairablePanel,
@@ -36,6 +38,8 @@ import {
 } from "@/components/layout/ModuleHeaderControls";
 import { ModulePageShell } from "@/components/layout/ModulePageShell";
 import { useMeasureUnits } from "@/components/lookups/MeasureUnitPicker";
+import { ExportCsvButton } from "@/components/ui/ExportCsvButton";
+import { hasScreenToReturnTo } from "@/components/ui/back-to-origin-button";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ErrorState } from "@/components/ui/data-state";
@@ -51,6 +55,7 @@ import { StatusChip } from "@/components/ui/status-chip";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { mfLayout } from "@/design-system/tokens";
 import { mfTone } from "@/design-system/tone";
+import { articleExportRows } from "@/export/list-exports";
 import { useFormatters } from "@/hooks/use-formatters";
 import { LIST_PARAM, withoutParams } from "@/lib/list-links";
 import { cn } from "@/lib/utils";
@@ -186,6 +191,9 @@ export function InventoryPage() {
 
   // Deep link from other modules (asset spare parts, work orders): /inventory?articleId=<id>.
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
+  // True when the open article came from a link on another screen: it then offers "Retour".
+  const [articleOpenedFromLink, setArticleOpenedFromLink] = useState(false);
   const linkedArticleId = Number(searchParams.get("articleId"));
 
   // A link may ask for the articles below their reorder point (?stock=below_reorder): it opens
@@ -195,6 +203,9 @@ export function InventoryPage() {
     const stock = searchParams.get(LIST_PARAM.stock);
     if (stock === "to_reconcile") {
       setInvTab("controls");
+    } else if (stock === "to_issue") {
+      // The notice of a work-order part "à sortir" opens the issue desk and its list.
+      setInvTab("issueDesk");
     } else if (stock === "below_reorder") {
       setInvTab("master");
       setMasterStockFilter("below_reorder");
@@ -220,6 +231,7 @@ export function InventoryPage() {
     if (linked) {
       setInvTab("master");
       setSelectedArticle(linked);
+      setArticleOpenedFromLink(hasScreenToReturnTo());
     }
     setSearchParams(
       (prev) => {
@@ -455,6 +467,7 @@ export function InventoryPage() {
   };
 
   const openArticleDetails = (article: InventoryArticleRow) => {
+    setArticleOpenedFromLink(false);
     setSelectedArticle((prev) => (prev?.id === article.id ? null : article));
     setEditingInDialog(false);
   };
@@ -636,6 +649,35 @@ export function InventoryPage() {
     });
   }, [articles, masterFamilyFilter, masterStatusFilter, masterStockFilter]);
 
+  // Export: the articles the list shows now (filters applied), with the labels the screen shows.
+  const exportHeader = useMemo(
+    () => [
+      t("list.columns.code"),
+      t("list.columns.name"),
+      t("list.columns.family"),
+      t("list.columns.onHand"),
+      t("list.columns.reserved"),
+      t("list.columns.available"),
+      t("list.columns.avgCost"),
+      t("list.columns.stockValue"),
+      t("list.columns.reorderPoint"),
+      t("list.columns.status"),
+    ],
+    [t],
+  );
+  const getExportRows = useCallback(
+    () =>
+      articleExportRows(filteredArticles, {
+        formatQty,
+        formatCurrency,
+        belowReorderLabel: t("list.belowReorder"),
+        activeLabel: t("filters.statusActive"),
+        inactiveLabel: t("filters.statusInactive"),
+        isBelowReorder: isBelowReorderPoint,
+      }),
+    [filteredArticles, formatQty, formatCurrency, t],
+  );
+
   const switchProcurementView = useCallback((v: ProcurementView) => {
     setProcurementView(v);
     try {
@@ -794,16 +836,29 @@ export function InventoryPage() {
           <Button
             variant="outline"
             className={mfLayout.primaryAction}
-            onClick={() => procurementPanelRef.current?.openReceiveGoods()}
-          >
-            {t("procurement.purchaseOrders.actions.receive")}
-          </Button>
-          <Button
-            variant="outline"
-            className={mfLayout.primaryAction}
             onClick={() => procurementPanelRef.current?.openRepairable()}
           >
             {t("procurement.repairables.create")}
+          </Button>
+        </PermissionGate>
+      ) : null}
+      {invTab === "master" ? (
+        <ExportCsvButton
+          permission={P.INV_VIEW}
+          fileName="articles-stock.csv"
+          header={exportHeader}
+          getRows={getExportRows}
+        />
+      ) : null}
+      {invTab === "procurement" ? (
+        // Receiving goods is its own right (inv.receive), separate from managing purchases.
+        <PermissionGate permission={P.INV_RECEIVE}>
+          <Button
+            variant="outline"
+            className={mfLayout.primaryAction}
+            onClick={() => procurementPanelRef.current?.openReceiveGoods()}
+          >
+            {t("procurement.purchaseOrders.actions.receive")}
           </Button>
         </PermissionGate>
       ) : null}
@@ -835,7 +890,10 @@ export function InventoryPage() {
       >
         {/* Daily work first, then periodic / setup screens, with a visible separation. */}
         <TabsList className="h-auto w-fit flex-wrap gap-y-1">
-          <span className="px-2 text-xs font-medium text-text-muted" aria-hidden>
+          <span
+            className="pointer-events-none cursor-default select-none px-2 text-[10px] font-semibold uppercase tracking-wide text-text-muted"
+            aria-hidden
+          >
             {t("page.tabGroups.daily")}
           </span>
           <TabsTrigger value="master">{t("page.tabs.master")}</TabsTrigger>
@@ -843,13 +901,17 @@ export function InventoryPage() {
           <TabsTrigger value="procurement">{t("page.tabs.procurement")}</TabsTrigger>
           <TabsTrigger value="controls">{t("page.tabs.controls")}</TabsTrigger>
           <span className="mx-1 h-6 w-px bg-surface-border" aria-hidden />
-          <span className="px-2 text-xs font-medium text-text-muted" aria-hidden>
+          <span
+            className="pointer-events-none cursor-default select-none px-2 text-[10px] font-semibold uppercase tracking-wide text-text-muted"
+            aria-hidden
+          >
             {t("page.tabGroups.setup")}
           </span>
           <TabsTrigger value="valuation">{t("page.tabs.valuation")}</TabsTrigger>
           <TabsTrigger value="topology">{t("page.tabs.topology")}</TabsTrigger>
           <TabsTrigger value="rules">{t("page.tabs.rules")}</TabsTrigger>
           <TabsTrigger value="units">{t("unitConversions.tab")}</TabsTrigger>
+          <TabsTrigger value="nonStock">{t("nonStock.tab")}</TabsTrigger>
         </TabsList>
 
         {lookupError ? (
@@ -901,6 +963,15 @@ export function InventoryPage() {
                     onCreateRequisition={handleCreateRequisitionFromDetail}
                     onStockAdjusted={() => void loadAll()}
                     onOpenPurchaseOrder={handleOpenPurchaseOrderFromDetail}
+                    {...(articleOpenedFromLink
+                      ? {
+                          onBackToOrigin: () => {
+                            setArticleOpenedFromLink(false);
+                            setSelectedArticle(null);
+                            void navigate(-1);
+                          },
+                        }
+                      : {})}
                   />
                 ) : (
                   <div className="flex h-full items-center justify-center p-6">
@@ -914,6 +985,10 @@ export function InventoryPage() {
 
         <TabsContent value="units" className="mt-4 data-[state=inactive]:hidden">
           <UnitConversionsPanel unitOptions={unitOptions} articles={articles} />
+        </TabsContent>
+
+        <TabsContent value="nonStock" className="mt-4 data-[state=inactive]:hidden">
+          <NonStockReviewPanel articles={articles} />
         </TabsContent>
 
         <TabsContent value="topology" className="mt-4 min-h-0 flex-1 data-[state=inactive]:hidden">
@@ -941,7 +1016,13 @@ export function InventoryPage() {
         </TabsContent>
         <TabsContent value="valuation" className="mt-4 space-y-4">
           {invTab === "valuation" ? (
-            <InventoryValuationPanel reloadToken={controlsReloadToken} />
+            <>
+              <InventoryValuationPanel reloadToken={controlsReloadToken} />
+              <DormantStockPanel
+                reloadToken={controlsReloadToken}
+                onOpenArticle={handleOpenArticleFromProcurement}
+              />
+            </>
           ) : null}
         </TabsContent>
         <TabsContent value="rules" className="mt-4 space-y-4">

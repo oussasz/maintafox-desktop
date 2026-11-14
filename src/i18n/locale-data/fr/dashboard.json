@@ -90,6 +90,13 @@
       "myWork": "Mon travail",
       "supervision": "Supervision",
       "planning": "Planification"
+    },
+    "presets": {
+      "heading": "Profils prêts à l'emploi",
+      "hint": "Choisissez un profil pour afficher les blocs utiles à ce rôle, puis ajustez si besoin et enregistrez. Seuls les blocs permis par vos droits s'affichent.",
+      "technician": "Technicien",
+      "planner": "Planificateur",
+      "manager": "Responsable maintenance"
     }
   },
   "overviewKpi": {
@@ -98,12 +105,12 @@
     "diOpen": "DI ouvertes",
     "otInProgress": "OT en cours",
     "otOverdue": "OT en retard",
-    "mttr": "MTTR moy.",
+    "mttr": "MTTR",
     "pmCompliance": "Respect des MP",
     "pmDueToday": "MP dues aujourd'hui",
     "maintBacklog": "Arriéré maintenance",
-    "availability": "Disponibilité opérationnelle parc (A_o)",
-    "mtbf": "MTBF parc",
+    "availability": "Disponibilité opérationnelle",
+    "mtbf": "MTBF",
     "criticalDown": "Critiques à l'arrêt",
     "dataQuality": "Qualité des données",
     "stockOut": "Ruptures de stock",
@@ -114,7 +121,7 @@
     "contextPmPipeline": "Risque MP (retards)",
     "contextPmDue": "Échéance calendaire du jour",
     "contextBacklog": "Heures planifiées sur OT ouverts",
-    "contextFleet": "Instantané parc (30 j)",
+    "contextFleet": "Parc, 12 derniers mois",
     "contextCriticalAssets": "Équipements critiques hors service",
     "contextInventory": "Signaux inventaire",
     "unit": {
@@ -162,7 +169,8 @@
       "planning": "Planification",
       "inventory": "Stock",
       "permits": "Permis",
-      "equipment": "Équipements"
+      "equipment": "Équipements",
+      "planningWeek": "Planning hebdomadaire"
     },
     "myWork": {
       "title": "Mon travail",
@@ -184,13 +192,13 @@
         "awaiting": "Attendent ma réponse"
       },
       "rounds": {
-        "title": "Mes tournées d'inspection",
+        "title": "Mes rondes d'inspection",
         "overdue": "En retard",
         "today": "Aujourd'hui",
         "next7": "7 prochains jours",
-        "listAria": "Mes tournées à faire",
-        "empty": "Aucune tournée à faire ne vous est attribuée.",
-        "notLinked": "Votre compte n'est relié à aucune fiche du personnel : aucune tournée ne peut vous être attribuée. Demandez à l'administrateur de relier votre compte (Personnel)."
+        "listAria": "Mes rondes à faire",
+        "empty": "Aucune ronde à faire ne vous est attribuée.",
+        "notLinked": "Votre compte n'est relié à aucune fiche du personnel : aucune ronde ne peut vous être attribuée. Demandez à l'administrateur de relier votre compte (Personnel)."
       },
       "pm": {
         "title": "Mes MP",
@@ -230,14 +238,15 @@
         "titleNoWeek": "Semaine en cours",
         "overtime": "Heures sup. possibles",
         "reliesOnOvertime": "Au-delà de 100 % : le planning de la semaine compte sur des heures supplémentaires.",
-        "awaitingApproval_one": "{{count}} semaine en cours gelée sans approbation.",
-        "awaitingApproval_other": "{{count}} semaines en cours gelées sans approbation.",
+        "awaitingApproval_one": "{{count}} semaine en cours est gelée mais pas encore approuvée.",
+        "awaitingApproval_other": "{{count}} semaines en cours sont gelées mais pas encore approuvées.",
         "sitesNotFrozen_one": "{{count}} site n'a pas de semaine en cours gelée : il n'est pas compté.",
         "sitesNotFrozen_other": "{{count}} sites n'ont pas de semaine en cours gelée : ils ne sont pas comptés.",
         "unavailable": {
           "WEEK_NO_PLANNING_SITE": "Aucun site de planification n'a d'équipe : il n'y a pas de semaine à charger.",
           "WEEK_NOT_FROZEN": "La semaine en cours n'est gelée sur aucun site : le chargement se mesure sur la référence gelée."
-        }
+        },
+        "toApprove": "Approuver dans le planning hebdomadaire"
       },
       "compliance": {
         "title": "Respect du planning",
@@ -246,7 +255,7 @@
         "released_one": "{{count}} travail de la référence a ensuite été libéré ou annulé (compté non réalisé).",
         "released_other": "{{count}} travaux de la référence ont ensuite été libérés ou annulés (comptés non réalisés).",
         "unavailable": {
-          "NO_FROZEN_BASELINE": "Aucune semaine gelée ne s'est terminée sur la période : le respect du planning se mesure sur la référence gelée."
+          "NO_FROZEN_BASELINE": "Aucune semaine gelée terminée sur la période"
         }
       }
     },
@@ -330,6 +339,15 @@
         "noDownStatus": "aucun statut marqué « à l'arrêt »",
         "listAria": "Équipements critiques à l'arrêt",
         "empty": "Aucun équipement critique à l'arrêt."
+      },
+      "repeatFailures": {
+        "title": "Pannes répétitives",
+        "count": "Équipements en pannes répétitives",
+        "listAria": "Équipements en pannes répétitives",
+        "empty": "Aucun équipement en pannes répétitives.",
+        "failures_one": "{{count}} panne",
+        "failures_other": "{{count}} pannes",
+        "error": "Pannes répétitives indisponibles : {{reason}}"
       }
     },
     "indicators": {
@@ -344,9 +362,9 @@
       "myWoDeisolation": "OT terminés dont un cadenas est encore posé sous leurs permis, dont vous êtes responsable ou dont vous avez posé un cadenas : ils restent ici jusqu'à la vérification de la dépose du dernier cadenas.",
       "myDiOpen": "Demandes que vous avez soumises, ni clôturées ni transformées en OT (file « Mes demandes »).",
       "myDiAwaiting": "Vos demandes renvoyées pour complément : elles attendent votre réponse.",
-      "roundOverdue": "Tournées qui vous sont attribuées, à faire (planifiée, lancée, en cours) et dont l'heure prévue est passée (même règle que le module Inspections).",
-      "roundToday": "Tournées à faire prévues plus tard aujourd'hui (jour local).",
-      "roundNext7": "Tournées à faire prévues dans les 7 prochains jours, après aujourd'hui.",
+      "roundOverdue": "Rondes qui vous sont attribuées, à faire (planifiée, lancée, en cours) et dont l'heure prévue est passée (même règle que le module Inspections).",
+      "roundToday": "Rondes à faire prévues plus tard aujourd'hui (jour local).",
+      "roundNext7": "Rondes à faire prévues dans les 7 prochains jours, après aujourd'hui.",
       "pmOverdue": "Occurrences de MP en attente dont la fin de la fenêtre de tolérance (ou l'échéance sans fenêtre) est dépassée (même règle que la page MP).",
       "pmNext7": "Occurrences de MP en attente dues dans les 7 prochains jours.",
       "pmToday": "Occurrences de MP en attente dues aujourd'hui.",
@@ -377,9 +395,11 @@
       "chartDi": "Demandes soumises ce jour-là.",
       "chartWo": "OT clôturés ce jour-là.",
       "chartPm": "Occurrences de MP dues ce jour-là, annulées exclues.",
-      "weekOvertime": "Heures supplémentaires que la planification peut encore ajouter sur la semaine (plafond d'heures supplémentaires des équipes). Au-delà de 100 %, le planning compte sur elles."
+      "weekOvertime": "Heures supplémentaires que la planification peut encore ajouter sur la semaine (plafond d'heures supplémentaires des équipes). Au-delà de 100 %, le planning compte sur elles.",
+      "repeatFailures": "Équipements ayant au moins {{min}} défaillances non planifiées dans les {{days}} derniers jours (règle réglée dans Paramètres > Fiabilité).",
+      "repeatFailuresRule": "Équipements ayant au moins N défaillances non planifiées dans les D derniers jours (règle réglée dans Paramètres > Fiabilité)."
     },
-    "more_one": "+{{count}} autre — liste complète dans le module",
-    "more_other": "+{{count}} autres — liste complète dans le module"
+    "more_one": "+{{count}} autre — voir la liste complète",
+    "more_other": "+{{count}} autres — voir la liste complète"
   }
 }

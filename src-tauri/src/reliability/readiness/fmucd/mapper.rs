@@ -37,7 +37,7 @@ pub fn map_row_to_event(
 
     let event_ts = start_parsed
         .or(end_ts)
-        .unwrap_or_else(|| DateTime::from_timestamp(0, 0).unwrap_or_else(Utc::now));
+        .unwrap_or_else(|| DateTime::from_timestamp(0, 0).unwrap_or_else(crate::clock::now));
 
     let equipment_identified = config
         .dimensions
@@ -100,7 +100,7 @@ fn dummy_event() -> ReadinessEvent {
         id: -1,
         asset_key: String::new(),
         university_id: None,
-        event_ts: Utc::now(),
+        event_ts: crate::clock::now(),
         eligible: false,
         equipment_identified: false,
         interval_complete: false,

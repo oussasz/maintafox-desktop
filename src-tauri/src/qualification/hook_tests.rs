@@ -221,6 +221,43 @@ async fn labour_for_a_person_without_login_is_gated_named_and_costed() {
 }
 
 #[tokio::test]
+async fn labour_people_list_can_be_limited_to_one_person_and_shows_the_rate_before_booking() {
+    let db = setup().await;
+    let first = person(&db, "EXT-9").await;
+    let second = person(&db, "H-1").await;
+    exec(
+        &db,
+        &format!(
+            "INSERT INTO personnel_rate_cards (personnel_id, effective_from, labor_rate, overtime_rate, source_type, created_at) \
+             VALUES ({first}, '2026-01-01', 40.0, 60.0, 'manual', datetime('now'))"
+        ),
+    )
+    .await;
+
+    let everyone = crate::wo::labor::list_labor_people(&db, None, Some(second))
+        .await
+        .expect("everyone");
+    assert!(everyone.len() >= 2);
+    assert!(everyone.iter().any(|p| p.personnel_id == second && p.is_self));
+    assert!(everyone.iter().all(|p| p.personnel_id == second || !p.is_self));
+
+    let only_self = crate::wo::labor::list_labor_people(&db, Some(second), Some(second))
+        .await
+        .expect("self only");
+    assert_eq!(only_self.len(), 1);
+    assert_eq!(only_self[0].personnel_id, second);
+
+    let rate = crate::wo::labor::preview_labor_rate(&db, first, "2026-06-01")
+        .await
+        .expect("rate");
+    assert_eq!((rate.normal_rate, rate.overtime_rate), (Some(40.0), Some(60.0)));
+    let none = crate::wo::labor::preview_labor_rate(&db, second, "2026-06-01")
+        .await
+        .expect("no card");
+    assert_eq!((none.normal_rate, none.overtime_rate), (None, None));
+}
+
+#[tokio::test]
 async fn readiness_blocks_an_unqualified_crew_until_overridden() {
     let db = setup().await;
     let contractor = person(&db, "EXT-9").await;
@@ -400,12 +437,16 @@ async fn loto_roles_require_the_authorisation_until_overridden() {
         } else {
             admin(&db).await
         };
+        if status == "issued" {
+            crate::permit::safety_content::fill_issue_requirements_for_tests(&db, wp.id).await;
+        }
         wp = crate::permit::queries::set_work_permit_status(
             &db,
             crate::permit::domain::WorkPermitStatusInput {
                 id: wp.id,
                 status: status.into(),
                 expected_row_version: wp.row_version,
+                reason: (status == "cancelled").then(|| "Essai : permis annulé".to_string()),
             },
             actor,
         )
@@ -443,6 +484,8 @@ async fn loto_roles_require_the_authorisation_until_overridden() {
         isolation_id: iso.id,
         expected_row_version: rv,
         lock_number: Some("C-12".into()),
+        zero_energy_confirmed: Some(true),
+        zero_energy_note: Some("Essai de démarrage refusé, VAT 0 V".into()),
     };
 
     let refused = crate::permit::queries::apply_permit_isolation(&db, action(iso.row_version), TECH_USER)

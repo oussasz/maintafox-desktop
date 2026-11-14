@@ -19,7 +19,6 @@
 use crate::assets::governance::{self, NormalizedImportRow, ValidationMessage};
 use crate::assets::identity;
 use crate::errors::{AppError, AppResult};
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -164,6 +163,44 @@ fn map_import_event(row: &QueryResult) -> AppResult<ImportEvent> {
     })
 }
 
+// ─── CSV separator detection ──────────────────────────────────────────────────
+
+/// Strip a UTF-8 byte-order mark (Excel adds one to "CSV UTF-8" files).
+pub(crate) fn strip_utf8_bom(bytes: &[u8]) -> &[u8] {
+    bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes)
+}
+
+/// Guess the field separator of a CSV file from its header line.
+///
+/// French Excel saves with ";" while exports from other tools use ","
+/// (or a tab). The separator found most often outside quotes in the first
+/// line wins; "," is the fallback when the line has none of them.
+pub(crate) fn detect_csv_delimiter(bytes: &[u8]) -> u8 {
+    let bytes = strip_utf8_bom(bytes);
+    let first_line_end = bytes.iter().position(|b| *b == b'\n').unwrap_or(bytes.len());
+    let mut counts = [(b';', 0usize), (b',', 0usize), (b'\t', 0usize)];
+    let mut in_quotes = false;
+    for b in &bytes[..first_line_end] {
+        if *b == b'"' {
+            in_quotes = !in_quotes;
+        } else if !in_quotes {
+            for (sep, n) in counts.iter_mut() {
+                if b == sep {
+                    *n += 1;
+                }
+            }
+        }
+    }
+    // Strict ">" keeps the earlier entry on a tie, so ";" wins over "," (French Excel).
+    let mut best = (b',', 0usize);
+    for (sep, n) in counts {
+        if n > best.1 {
+            best = (sep, n);
+        }
+    }
+    best.0
+}
+
 // ─── CSV field normalization ──────────────────────────────────────────────────
 
 /// Known CSV header aliases mapped to our normalized field names.
@@ -185,8 +222,11 @@ fn normalize_header(header: &str) -> Option<&'static str> {
         "criticality_code" | "criticite" | "code_criticite" | "criticality" => Some("criticality_code"),
         // Status
         "status_code" | "statut" | "lifecycle_status" | "status" => Some("status_code"),
-        // Org node
-        "org_node_id" | "noeud_org" | "site" | "location" | "emplacement" => Some("org_node_id"),
+        // Org node: the code shown in Organisation; the numeric id column is still read
+        "org_node_id" => Some("org_node_id"),
+        "org_node_code" | "emplacement" | "code_emplacement" | "noeud_org" | "code_noeud" | "site" | "location" => {
+            Some("org_node_code")
+        }
         // Parent
         "parent_asset_code" | "code_parent" | "parent_code" | "parent" => Some("parent_asset_code"),
         // Manufacturer
@@ -225,6 +265,7 @@ fn normalize_record(fields: &std::collections::HashMap<String, String>) -> Norma
         criticality_code: get("criticality_code"),
         status_code: get("status_code"),
         org_node_id: get("org_node_id").and_then(|v| v.parse::<i64>().ok()),
+        org_node_code: get("org_node_code"),
         parent_asset_code: get("parent_asset_code"),
         manufacturer: get("manufacturer"),
         model: get("model"),
@@ -248,7 +289,7 @@ pub async fn create_import_batch(
     file_sha256: &str,
     actor_id: Option<i64>,
 ) -> AppResult<ImportBatchSummary> {
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
 
     let txn = db.begin().await?;
 
@@ -323,9 +364,11 @@ pub async fn parse_and_stage_csv(
     }
 
     // Parse CSV headers and normalize them
+    let csv_content = strip_utf8_bom(csv_content);
     let mut reader = csv::ReaderBuilder::new()
         .has_headers(true)
         .flexible(true)
+        .delimiter(detect_csv_delimiter(csv_content))
         .trim(csv::Trim::All)
         .from_reader(csv_content);
 
@@ -348,10 +391,11 @@ pub async fn parse_and_stage_csv(
         .iter()
         .any(|h| matches!(h, Some("asset_code") | Some("external_key")));
     if !has_identity {
-        return Err(AppError::ValidationFailed(vec![
-            "GATE_ASSET_IMPORT_CSV_COLUMNS: Le fichier CSV doit contenir au moins une colonne 'asset_code' ou 'external_key' (ou leurs equivalents)."
-                .into(),
-        ]));
+        return Err(AppError::ValidationFailed(vec![format!(
+            "GATE_ASSET_IMPORT_CSV_COLUMNS: Colonne du code équipement introuvable. Colonnes lues dans le fichier : {}. \
+             Utilisez une colonne « code_equipement » (ou « cle_externe »).",
+            raw_headers.join(" | ")
+        )]));
     }
 
     let txn = db.begin().await?;
@@ -404,7 +448,7 @@ pub async fn parse_and_stage_csv(
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE asset_import_batches SET total_rows = ?, updated_at = ? WHERE id = ?",
-        [row_no.into(), Utc::now().to_rfc3339().into(), batch_id.into()],
+        [row_no.into(), crate::clock::now().to_rfc3339().into(), batch_id.into()],
     ))
     .await?;
 
@@ -507,7 +551,7 @@ pub async fn validate_import_batch(
         }
     }
 
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
 
     // Update batch with summary counts and advance to validated
     txn.execute(Statement::from_sql_and_values(
@@ -649,7 +693,7 @@ pub(crate) async fn record_import_event_txn(
     summary_json: Option<&str>,
     actor_id: Option<i64>,
 ) -> AppResult<()> {
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO asset_import_events \
@@ -762,6 +806,10 @@ pub async fn apply_import_batch(
     let mut updated: i64 = 0;
     let mut skipped: i64 = 0;
     let mut errored: i64 = 0;
+    // (row_no, child equipment id, parent code): linked once every line is written, so a
+    // parent may appear after its children in the file.
+    let mut parent_links: Vec<ParentLink> = Vec::new();
+    let mut parent_link_failures: Vec<serde_json::Value> = Vec::new();
 
     for staging_row in &staging_rows {
         let row_no: i64 = staging_row.try_get("", "row_no").map_err(|e| decode_err("row_no", e))?;
@@ -789,8 +837,29 @@ pub async fn apply_import_batch(
         )
         .await
         {
-            Ok(RowOutcome::Created) => created += 1,
-            Ok(RowOutcome::Updated) => updated += 1,
+            Ok(outcome) => {
+                match outcome {
+                    RowOutcome::Created(_) => created += 1,
+                    RowOutcome::Updated(equip_id) => {
+                        updated += 1;
+                        // Its class or criticality may have changed: the plant's permit rules are
+                        // applied to its open work orders at once (a failure stops the import).
+                        crate::permit::requirement_rules::stamp_open_work_orders_of_equipment(&txn, equip_id, actor_id)
+                            .await?;
+                    }
+                }
+                if let Some(parent) = normalized.parent_asset_code.as_deref() {
+                    let parent = parent.trim().to_uppercase();
+                    if !parent.is_empty() {
+                        parent_links.push(ParentLink {
+                            row_no,
+                            child_id: outcome.equipment_id(),
+                            parent_code: parent,
+                            was_created: matches!(outcome, RowOutcome::Created(_)),
+                        });
+                    }
+                }
+            }
             Err(e) => {
                 tracing::warn!(row_no, error = %e, "import apply row error");
                 errored += 1;
@@ -798,11 +867,46 @@ pub async fn apply_import_batch(
         }
     }
 
+    // Links are tried in rounds: moving several assets at once can make a link wait for another
+    // one (A under B while B moves under C), so the order of the lines must not matter. A round
+    // that links nothing new stops the loop; what is left is reported.
+    let mut pending = parent_links;
+    loop {
+        let before = pending.len();
+        let mut still_pending: Vec<(ParentLink, String)> = Vec::new();
+        for link in pending {
+            if let Err(e) = link_parent_from_import(&txn, link.child_id, &link.parent_code).await {
+                still_pending.push((link, e.to_string()));
+            }
+        }
+        let progressed = still_pending.len() < before;
+        if still_pending.is_empty() || !progressed {
+            // The line was written without its parent: count it as an error, not as a success,
+            // and keep the line number and reason in the audit event.
+            for (link, reason) in &still_pending {
+                tracing::warn!(row_no = link.row_no, error = %reason, "import parent link error");
+                if link.was_created {
+                    created -= 1;
+                } else {
+                    updated -= 1;
+                }
+                errored += 1;
+                parent_link_failures.push(serde_json::json!({
+                    "row_no": link.row_no,
+                    "parent": link.parent_code,
+                    "reason": reason,
+                }));
+            }
+            break;
+        }
+        pending = still_pending.into_iter().map(|(link, _)| link).collect();
+    }
+
     // Also count rows that were already ineligible (error status)
     let total_ineligible = batch.total_rows - staging_rows.len() as i64;
     skipped += total_ineligible;
 
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
 
     // ── Transition batch to applied ──────────────────────────────────────
     txn.execute(Statement::from_sql_and_values(
@@ -823,6 +927,7 @@ pub async fn apply_import_batch(
                 "updated": updated,
                 "skipped": skipped,
                 "errored": errored,
+                "parent_link_failures": parent_link_failures,
                 "include_warnings": policy.include_warnings,
             })
             .to_string(),
@@ -846,8 +951,83 @@ pub async fn apply_import_batch(
 // ─── Row-level apply helpers ──────────────────────────────────────────────────
 
 enum RowOutcome {
-    Created,
-    Updated,
+    Created(i64),
+    Updated(i64),
+}
+
+/// A parent given in the file, linked once every line is written.
+struct ParentLink {
+    row_no: i64,
+    child_id: i64,
+    parent_code: String,
+    was_created: bool,
+}
+
+impl RowOutcome {
+    fn equipment_id(&self) -> i64 {
+        match self {
+            RowOutcome::Created(id) | RowOutcome::Updated(id) => *id,
+        }
+    }
+}
+
+/// Make `parent_code` the active PARENT_CHILD parent of the equipment. A different current
+/// parent is closed (not deleted) so the history keeps it.
+async fn link_parent_from_import(txn: &impl ConnectionTrait, child_id: i64, parent_code: &str) -> AppResult<()> {
+    let parent_row = txn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id FROM equipment WHERE asset_id_code = ? AND deleted_at IS NULL",
+            [parent_code.into()],
+        ))
+        .await?
+        .ok_or_else(|| {
+            AppError::ValidationFailed(vec![format!(
+                "GATE_ASSET_IMPORT_PARENT_UNKNOWN: Parent '{parent_code}' introuvable."
+            )])
+        })?;
+    let parent_id: i64 = parent_row.try_get("", "id").map_err(|e| decode_err("parent.id", e))?;
+
+    let current = txn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT parent_equipment_id FROM equipment_hierarchy \
+             WHERE child_equipment_id = ? AND relationship_type = 'PARENT_CHILD' AND effective_to IS NULL",
+            [child_id.into()],
+        ))
+        .await?;
+    if let Some(row) = &current {
+        let current_id: i64 = row
+            .try_get("", "parent_equipment_id")
+            .map_err(|e| decode_err("parent_equipment_id", e))?;
+        if current_id == parent_id {
+            return Ok(());
+        }
+    }
+
+    crate::assets::hierarchy::detect_cycle(txn, parent_id, child_id).await?;
+    crate::assets::hierarchy::assert_asset_active(txn, parent_id).await?;
+    crate::assets::hierarchy::assert_asset_active(txn, child_id).await?;
+
+    let now = crate::clock::now().to_rfc3339();
+    if current.is_some() {
+        txn.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE equipment_hierarchy SET effective_to = ? \
+             WHERE child_equipment_id = ? AND relationship_type = 'PARENT_CHILD' AND effective_to IS NULL",
+            [now.clone().into(), child_id.into()],
+        ))
+        .await?;
+    }
+    txn.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO equipment_hierarchy \
+         (parent_equipment_id, child_equipment_id, relationship_type, effective_from, created_at) \
+         VALUES (?, ?, 'PARENT_CHILD', ?, ?)",
+        [parent_id.into(), child_id.into(), now.clone().into(), now.into()],
+    ))
+    .await?;
+    Ok(())
 }
 
 /// Resolve an existing equipment id by external key, then by asset code.
@@ -904,11 +1084,16 @@ async fn apply_single_row(
     let class_code = normalized.class_code.as_deref().ok_or_else(|| {
         AppError::ValidationFailed(vec!["GATE_ASSET_IMPORT_CLASS_REQUIRED: class_code requis.".into()])
     })?;
-    let (class_id, class_parent_id) = identity::resolve_class_code(txn, class_code).await?;
+    let (class_id, _class_parent_id) = identity::resolve_class_code(txn, class_code).await?;
+    // The class must exist in Données de référence, like on the equipment form (the preview
+    // already says so); any error here fails this row only.
+    let class_ref_id = identity::resolve_class_ref_id(txn, class_code).await?;
 
-    if let Some(ref fc) = normalized.family_code {
-        identity::validate_family_code(txn, fc, class_id, class_parent_id).await?;
-    }
+    // Family: a value of the published EQUIPMENT.FAMILY list that belongs to the class.
+    let family_ref_id = match normalized.family_code.as_deref() {
+        Some(fc) => Some(identity::validate_family_for_class_ref(txn, fc, class_ref_id).await?),
+        None => None,
+    };
 
     let criticality_code = normalized.criticality_code.as_deref().ok_or_else(|| {
         AppError::ValidationFailed(vec![
@@ -916,13 +1101,36 @@ async fn apply_single_row(
         ])
     })?;
     let criticality_value_id = identity::resolve_criticality_code(txn, criticality_code).await?;
+    let criticality_ref_id = identity::resolve_criticality_ref_id(txn, criticality_code).await?;
 
-    let status_code = normalized.status_code.as_deref().unwrap_or("IN_SERVICE");
+    let status_code_owned =
+        identity::normalize_status_code_for_reference(normalized.status_code.as_deref().unwrap_or("IN_SERVICE"))?;
+    let status_code = status_code_owned.as_str();
     identity::validate_status_code(txn, status_code).await?;
+    let status_ref_id = identity::resolve_status_ref_id(txn, status_code).await?;
 
-    if let Some(org_id) = normalized.org_node_id {
+    // Location: the code from the file, else the legacy numeric id.
+    let org_node_id = match normalized.org_node_code.as_deref() {
+        Some(code) => match governance::lookup_org_node_by_code(txn, code).await? {
+            governance::OrgCodeLookup::Found(id) => Some(id),
+            _ => {
+                return Err(AppError::ValidationFailed(vec![format!(
+                    "GATE_ASSET_IMPORT_ORG_UNKNOWN: Emplacement '{code}' introuvable dans l'organisation active."
+                )]))
+            }
+        },
+        None => normalized.org_node_id,
+    };
+    if let Some(org_id) = org_node_id {
         identity::assert_org_node_active(txn, org_id).await?;
     }
+    let refs = ImportRefs {
+        class_ref_id,
+        family_ref_id,
+        criticality_ref_id,
+        status_ref_id,
+        org_node_id,
+    };
 
     let existing_id = resolve_existing_equipment(txn, ext_key, asset_code).await?;
 
@@ -956,9 +1164,17 @@ async fn apply_single_row(
 
     match existing_id {
         Some(equip_id) => {
-            update_equipment_from_import(txn, equip_id, normalized, class_id, criticality_value_id, status_code)
-                .await?;
-            Ok(RowOutcome::Updated)
+            update_equipment_from_import(
+                txn,
+                equip_id,
+                normalized,
+                class_id,
+                criticality_value_id,
+                status_code,
+                &refs,
+            )
+            .await?;
+            Ok(RowOutcome::Updated(equip_id))
         }
         None => {
             // Validate and ensure uniqueness of asset_code for new rows
@@ -977,12 +1193,13 @@ async fn apply_single_row(
                 class_id,
                 criticality_value_id,
                 status_code,
+                &refs,
             )
             .await?;
 
             // Link external key if provided
             if let Some(ek) = ext_key {
-                let now = Utc::now().to_rfc3339();
+                let now = crate::clock::now().to_rfc3339();
                 txn.execute(Statement::from_sql_and_values(
                     DbBackend::Sqlite,
                     "INSERT INTO asset_external_ids \
@@ -999,9 +1216,18 @@ async fn apply_single_row(
                 .await?;
             }
 
-            Ok(RowOutcome::Created)
+            Ok(RowOutcome::Created(equip_id))
         }
     }
+}
+
+/// References resolved once per row from the codes of the file.
+struct ImportRefs {
+    class_ref_id: i64,
+    family_ref_id: Option<i64>,
+    criticality_ref_id: i64,
+    status_ref_id: i64,
+    org_node_id: Option<i64>,
 }
 
 /// Insert a new equipment row from an import staging record.
@@ -1012,8 +1238,9 @@ async fn insert_equipment_from_import(
     class_id: i64,
     criticality_value_id: i64,
     status_code: &str,
+    refs: &ImportRefs,
 ) -> AppResult<i64> {
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
     let entity_sync_id = Uuid::new_v4().to_string();
 
     let decommissioned_at: Option<String> = if status_code == "DECOMMISSIONED" {
@@ -1027,10 +1254,12 @@ async fn insert_equipment_from_import(
         r"INSERT INTO equipment
           (entity_sync_id, asset_id_code, name, class_id,
            lifecycle_status, criticality_value_id,
+           equipment_class_ref_id, equipment_family_ref_id,
+           equipment_criticality_ref_id, equipment_status_ref_id,
            installed_at_node_id, manufacturer, model, serial_number,
            maintainable_boundary, commissioning_date, decommissioned_at,
            created_at, updated_at, row_version)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
         [
             entity_sync_id.clone().into(),
             asset_code.into(),
@@ -1038,9 +1267,11 @@ async fn insert_equipment_from_import(
             class_id.into(),
             status_code.into(),
             criticality_value_id.into(),
-            n.org_node_id
-                .map(|id| sea_orm::Value::BigInt(Some(id)))
-                .unwrap_or(sea_orm::Value::BigInt(None)),
+            refs.class_ref_id.into(),
+            refs.family_ref_id.into(),
+            refs.criticality_ref_id.into(),
+            refs.status_ref_id.into(),
+            refs.org_node_id.into(),
             n.manufacturer.clone().into(),
             n.model.clone().into(),
             n.serial_number.clone().into(),
@@ -1072,8 +1303,9 @@ async fn update_equipment_from_import(
     class_id: i64,
     criticality_value_id: i64,
     status_code: &str,
+    refs: &ImportRefs,
 ) -> AppResult<()> {
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
 
     let decommissioned_at: Option<String> = if status_code == "DECOMMISSIONED" {
         Some(now.clone())
@@ -1088,6 +1320,13 @@ async fn update_equipment_from_import(
             class_id = ?,
             lifecycle_status = ?,
             criticality_value_id = ?,
+            equipment_class_ref_id = ?,
+            equipment_family_ref_id = CASE
+                WHEN ? IS NOT NULL THEN ?
+                WHEN equipment_class_ref_id IS ? THEN equipment_family_ref_id
+                ELSE NULL END,
+            equipment_criticality_ref_id = ?,
+            equipment_status_ref_id = ?,
             installed_at_node_id = COALESCE(?, installed_at_node_id),
             manufacturer = COALESCE(?, manufacturer),
             model = COALESCE(?, model),
@@ -1106,9 +1345,13 @@ async fn update_equipment_from_import(
             class_id.into(),
             status_code.into(),
             criticality_value_id.into(),
-            n.org_node_id
-                .map(|id| sea_orm::Value::BigInt(Some(id)))
-                .unwrap_or(sea_orm::Value::BigInt(None)),
+            refs.class_ref_id.into(),
+            refs.family_ref_id.into(),
+            refs.family_ref_id.into(),
+            refs.class_ref_id.into(),
+            refs.criticality_ref_id.into(),
+            refs.status_ref_id.into(),
+            refs.org_node_id.into(),
             n.manufacturer
                 .clone()
                 .map(|s| sea_orm::Value::String(Some(Box::new(s))))

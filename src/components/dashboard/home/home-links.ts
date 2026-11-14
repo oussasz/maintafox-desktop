@@ -8,6 +8,7 @@
  * - `/inventory?articleId=` — InventoryPage (selects the article)
  * - `/permits?permit=` — PermitsPage `PERMIT_QUERY_SELECT`
  * - `/equipment?assetId=` — AssetRegistryPage (selects the asset)
+ * - `/planning?view=week` — PlanningPage (opens the weekly schedule: freeze, approval)
  */
 import { PERMIT_QUERY_SELECT } from "@/components/permits/permit-rules";
 import type { DiQueue } from "@shared/ipc-types";
@@ -23,6 +24,7 @@ export const homeLinks = {
   pmOccurrence: (id: number) => `/pm?occurrence=${id}`,
   notifications: "/notifications",
   planning: "/planning",
+  planningWeek: "/planning?view=week",
   inventory: "/inventory",
   article: (id: number) => `/inventory?articleId=${id}`,
   permits: "/permits",
@@ -45,6 +47,7 @@ export function allHomeLinks(): string[] {
     homeLinks.pmOccurrence(1),
     homeLinks.notifications,
     homeLinks.planning,
+    homeLinks.planningWeek,
     homeLinks.inventory,
     homeLinks.article(1),
     homeLinks.permits,

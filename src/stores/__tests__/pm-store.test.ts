@@ -13,6 +13,7 @@ import {
   createPmPlanVersion,
   deletePmPlan,
   deletePmPlanVersion,
+  duplicatePmPlan,
   executePmOccurrence,
   generatePmOccurrences,
   getPmDueMetrics,
@@ -56,6 +57,7 @@ vi.mock("@/services/pm-service", () => ({
   createPmPlanVersion: vi.fn(),
   deletePmPlan: vi.fn(),
   deletePmPlanVersion: vi.fn(),
+  duplicatePmPlan: vi.fn(),
   executePmOccurrence: vi.fn(),
   generatePmOccurrences: vi.fn(),
   getPmDueMetrics: vi.fn(),
@@ -81,6 +83,7 @@ const m = {
   createPmPlanVersion: vi.mocked(createPmPlanVersion),
   deletePmPlan: vi.mocked(deletePmPlan),
   deletePmPlanVersion: vi.mocked(deletePmPlanVersion),
+  duplicatePmPlan: vi.mocked(duplicatePmPlan),
   executePmOccurrence: vi.mocked(executePmOccurrence),
   generatePmOccurrences: vi.mocked(generatePmOccurrences),
   getPmDueMetrics: vi.mocked(getPmDueMetrics),
@@ -768,5 +771,63 @@ describe("pm-store", () => {
       expect(usePmStore.getState().error).toBeNull();
       expect(usePmStore.getState().saving).toBe(false);
     });
+  });
+});
+
+// ── duplicatePlan (L6-11) ─────────────────────────────────────────────────────
+
+describe("duplicatePlan", () => {
+  const input = {
+    source_plan_id: 1,
+    code: "PM-COPY",
+    title: "Copie de Pump quarterly",
+    target_scope_type: "equipment",
+    target_scope_id: 20,
+    target_meter_id: null,
+  };
+  const created = {
+    plan: makePlan({ id: 7, code: "PM-COPY" }),
+    version: makeVersion({ id: 700, pm_plan_id: 7 }),
+    meter_to_choose: false,
+  };
+
+  it("creates once, reloads, opens the copy and reports no refresh problem", async () => {
+    m.duplicatePmPlan.mockResolvedValueOnce(created);
+    const outcome = await usePmStore.getState().duplicatePlan(input);
+    expect(m.duplicatePmPlan).toHaveBeenCalledTimes(1);
+    expect(m.duplicatePmPlan).toHaveBeenCalledWith(input);
+    expect(outcome.plan.code).toBe("PM-COPY");
+    expect(outcome.refreshError).toBeNull();
+    expect(usePmStore.getState().activePlanId).toBe(7);
+    expect(usePmStore.getState().saving).toBe(false);
+  });
+
+  it("keeps the created copy and returns the failure when the list reload fails", async () => {
+    m.duplicatePmPlan.mockResolvedValueOnce(created);
+    const failure = { code: "DATABASE_ERROR", message: "locked" };
+    m.listPmPlans.mockRejectedValueOnce(failure);
+    const outcome = await usePmStore.getState().duplicatePlan(input);
+    expect(m.duplicatePmPlan).toHaveBeenCalledTimes(1);
+    expect(outcome.plan.id).toBe(7);
+    expect(outcome.refreshError).toBe(failure);
+  });
+
+  it("keeps the created copy and returns the failure when opening it fails", async () => {
+    m.duplicatePmPlan.mockResolvedValueOnce(created);
+    const failure = { code: "NOT_FOUND", message: "versions" };
+    m.listPmPlanVersions.mockRejectedValue(failure);
+    const outcome = await usePmStore.getState().duplicatePlan(input);
+    expect(m.duplicatePmPlan).toHaveBeenCalledTimes(1);
+    expect(outcome.plan.id).toBe(7);
+    expect(outcome.refreshError).toBe(failure);
+  });
+
+  it("rejects, without any reload, only when the copy is refused", async () => {
+    const refusal = { code: "VALIDATION_FAILED", message: "GATE_PM_PLAN_CODE_TAKEN: taken" };
+    m.duplicatePmPlan.mockRejectedValueOnce(refusal);
+    await expect(usePmStore.getState().duplicatePlan(input)).rejects.toBe(refusal);
+    expect(m.duplicatePmPlan).toHaveBeenCalledTimes(1);
+    expect(m.listPmPlans).not.toHaveBeenCalled();
+    expect(usePmStore.getState().saving).toBe(false);
   });
 });

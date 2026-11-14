@@ -376,6 +376,7 @@ export function ArticleEditorFields({
             setArticleForm((s) => ({ ...s, oem_part_number: e.target.value || null }))
           }
         />
+        <p className="text-xs text-text-muted">{t("article.hints.oemPartNumber")}</p>
       </div>
       <div className="space-y-1">
         <label htmlFor="article-field-barcode" className="text-xs text-text-muted">
@@ -434,6 +435,7 @@ export function ArticleEditorFields({
           value={articleForm.economic_order_qty ?? null}
           onValueChange={(v) => setArticleForm((s) => ({ ...s, economic_order_qty: v }))}
         />
+        <p className="text-xs text-text-muted">{t("article.hints.eoq")}</p>
       </div>
       <div className="space-y-1">
         <label htmlFor="article-field-moq" className="text-xs text-text-muted">
@@ -447,6 +449,7 @@ export function ArticleEditorFields({
           value={articleForm.minimum_order_qty ?? null}
           onValueChange={(v) => setArticleForm((s) => ({ ...s, minimum_order_qty: v }))}
         />
+        <p className="text-xs text-text-muted">{t("article.hints.moq")}</p>
       </div>
       <div className="space-y-1">
         <label htmlFor="article-field-maxOrder" className="text-xs text-text-muted">
@@ -471,6 +474,7 @@ export function ArticleEditorFields({
           value={articleForm.order_multiple_qty ?? null}
           onValueChange={(v) => setArticleForm((s) => ({ ...s, order_multiple_qty: v }))}
         />
+        <p className="text-xs text-text-muted">{t("article.hints.orderMultiple")}</p>
       </div>
       <div className="space-y-1">
         <label htmlFor="article-field-leadTimeDays" className="text-xs text-text-muted">
@@ -505,6 +509,7 @@ export function ArticleEditorFields({
             }))
           }
         />
+        <p className="text-xs text-text-muted">{t("article.hints.reviewPeriodDays")}</p>
       </div>
       <div className="space-y-1">
         <label htmlFor="article-field-abcClass" className="text-xs text-text-muted">
@@ -526,6 +531,7 @@ export function ArticleEditorFields({
             <SelectItem value="C">C</SelectItem>
           </SelectContent>
         </Select>
+        <p className="text-xs text-text-muted">{t("article.hints.abcClass")}</p>
       </div>
       <div className="space-y-1">
         <label htmlFor="article-field-xyzClass" className="text-xs text-text-muted">
@@ -547,6 +553,7 @@ export function ArticleEditorFields({
             <SelectItem value="Z">Z</SelectItem>
           </SelectContent>
         </Select>
+        <p className="text-xs text-text-muted">{t("article.hints.xyzClass")}</p>
       </div>
       {/* ABC/XYZ recalculation (all articles, from movements) — editing only */}
       {onRecalculateClasses ? (

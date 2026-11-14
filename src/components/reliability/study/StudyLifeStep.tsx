@@ -14,7 +14,6 @@ import { DecimalField } from "@/components/ui/decimal-field";
 import { mfLayout } from "@/design-system/tokens";
 import { RELIABILITY_PATTERN_TONE, toneOf } from "@/design-system/tone";
 import { useFormatters } from "@/hooks/use-formatters";
-import { usePermissions } from "@/hooks/use-permissions";
 import { describeAppError } from "@/lib/app-error";
 import {
   type LifeAnalysis,
@@ -26,14 +25,16 @@ import { P } from "@shared/rbac/permissions.generated";
 
 import type { DecisionPrefill } from "./DecisionDialog";
 import { CostRateChart, ReliabilityHazardChart, WeibullProbabilityPlot } from "./RamsCharts";
-import { RAMS_SELECT_CLASS, RAMS_TABLE_FRAME, RamsCallout, RamsCard } from "./rams-ui";
-
-/** Round an interval for display and for the decision (hundreds of hours above 1 000 h). */
-export function roundInterval(h: number): number {
-  if (h >= 1000) return Math.round(h / 100) * 100;
-  if (h >= 100) return Math.round(h / 10) * 10;
-  return Math.max(1, Math.round(h));
-}
+import { StudyExportMenu } from "./StudyExportMenu";
+import {
+  RAMS_SELECT_CLASS,
+  RAMS_TABLE_FRAME,
+  RamsCallout,
+  RamsCard,
+  RamsReadOnlyNote,
+  roundInterval,
+  useRamsRight,
+} from "./rams-ui";
 
 /** A cost counts only when it is a positive amount. */
 function positiveAmount(v: number | null): number | null {
@@ -46,20 +47,30 @@ export function StudyLifeStep({
   datasetVersion,
   onStudyChanged,
   onDecide,
+  onGoData,
 }: {
   study: ReliabilityStudy;
   editable: boolean;
   datasetVersion: string;
   onStudyChanged: () => void;
   onDecide: (p: DecisionPrefill) => void;
+  /** Back to step 1 (failure data) when the fit cannot be made (UX L2-31). */
+  onGoData: () => void;
 }) {
   const { t } = useTranslation("reliability");
   const { formatDecimal, formatNumber, formatCurrency, currencyCode } = useFormatters();
-  const { can } = usePermissions();
+  const { can, reasonFor } = useRamsRight();
+  /** An archived study is a record (no reason to show actions); a missing right disables them. */
+  const stateOpen = study.status !== "archived";
   const [analysis, setAnalysis] = useState<LifeAnalysis | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
   const [planned, setPlanned] = useState<number | null>(null);
+  /** Costs as last loaded or saved: typed costs that differ are not kept when leaving (UX L2-35). */
+  const [savedCosts, setSavedCosts] = useState<{ planned: number | null; failure: number | null }>({
+    planned: null,
+    failure: null,
+  });
   const [failure, setFailure] = useState<number | null>(null);
   const [planId, setPlanId] = useState<number | null>(null);
   const [asDefault, setAsDefault] = useState(false);
@@ -86,6 +97,7 @@ export function StudyLifeStep({
         if (costs == null && a.cost) {
           setPlanned(a.cost.planned_cost);
           setFailure(a.cost.failure_cost);
+          setSavedCosts({ planned: a.cost.planned_cost, failure: a.cost.failure_cost });
         }
         setPlanId(a.selected_pm_plan_id);
       } catch (e) {
@@ -136,6 +148,11 @@ export function StudyLifeStep({
   const currency = analysis.cost_currency_code ?? currencyCode;
   const money = (v: number | null | undefined) => (v == null ? "—" : formatCurrency(v, currency));
   const shareClass = analysis.cost_class_id;
+  const costsUnsaved =
+    editable &&
+    plannedN != null &&
+    failureN != null &&
+    (plannedN !== savedCosts.planned || failureN !== savedCosts.failure);
 
   const saveCosts = async () => {
     if (plannedN == null || failureN == null) return;
@@ -149,6 +166,7 @@ export function StudyLifeStep({
         currency_code: currencyCode,
         save_as_class_default_for: asDefault ? shareClass : null,
       });
+      setSavedCosts({ planned: plannedN, failure: failureN });
       onStudyChanged();
     } catch {
       // global IPC toast
@@ -175,8 +193,13 @@ export function StudyLifeStep({
       ) : null}
       {fit == null ? (
         <RamsCallout
-          tone="danger"
+          tone="attention"
           title={t(`rams.life.issue.${analysis.fit_issue ?? "not_enough_failures"}.title`)}
+          action={
+            <Button variant="outline" className="h-10" onClick={onGoData}>
+              {t("rams.life.goToData")}
+            </Button>
+          }
         >
           {t(`rams.life.issue.${analysis.fit_issue ?? "not_enough_failures"}.body`, {
             min: analysis.min_failures,
@@ -324,6 +347,11 @@ export function StudyLifeStep({
                   disabled={!editable}
                   onValueChange={setPlanned}
                 />
+                {plannedN != null ? (
+                  <span className="font-normal tabular-nums text-text-muted">
+                    {formatCurrency(plannedN)}
+                  </span>
+                ) : null}
               </label>
               <label className="grid gap-1 text-xs font-medium text-text-secondary">
                 {t("rams.cost.failure", { currency })}
@@ -334,6 +362,11 @@ export function StudyLifeStep({
                   disabled={!editable}
                   onValueChange={setFailure}
                 />
+                {failureN != null ? (
+                  <span className="font-normal tabular-nums text-text-muted">
+                    {formatCurrency(failureN)}
+                  </span>
+                ) : null}
               </label>
               <label className="grid gap-1 text-xs font-medium text-text-secondary sm:col-span-2">
                 {t("rams.cost.pmPlan")}
@@ -382,7 +415,12 @@ export function StudyLifeStep({
                 className: analysis.cost_class_name ?? "",
               })}
             </p>
-            {editable ? (
+            {stateOpen && !can(P.RAM_ANALYZE) ? (
+              <div className="mt-2">
+                <RamsReadOnlyNote right={P.RAM_ANALYZE} />
+              </div>
+            ) : null}
+            {stateOpen ? (
               <div className="mt-2 flex flex-wrap items-center gap-3">
                 {shareClass != null && can(P.RAM_MANAGE) ? (
                   <label className="inline-flex min-h-[36px] items-center gap-2 text-sm text-text-secondary">
@@ -395,10 +433,16 @@ export function StudyLifeStep({
                     {t("rams.cost.asDefault", { className: analysis.cost_class_name ?? "" })}
                   </label>
                 ) : null}
+                {costsUnsaved ? (
+                  <p role="status" className="text-xs font-medium text-tone-attention-fg">
+                    {t("rams.cost.unsaved")}
+                  </p>
+                ) : null}
                 <Button
                   variant="outline"
                   className="h-10"
-                  disabled={plannedN == null || failureN == null || saving}
+                  disabled={!editable || plannedN == null || failureN == null || saving}
+                  title={reasonFor(P.RAM_ANALYZE)}
                   onClick={() => void saveCosts()}
                 >
                   <Save className="h-4 w-4" aria-hidden />
@@ -441,7 +485,10 @@ export function StudyLifeStep({
 
       {fit && cost ? (
         <section className="rounded-lg border border-surface-border border-s-4 border-s-primary bg-surface-1 p-4">
-          <h4 className="text-sm font-semibold text-text-primary">{t("rams.memo.title")}</h4>
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <h4 className="text-sm font-semibold text-text-primary">{t("rams.memo.title")}</h4>
+            <StudyExportMenu study={study} scope="note" analysis={analysis} />
+          </div>
           {cost.proposed?.interval != null && proposed != null ? (
             <p className="mt-1 text-sm text-text-secondary">
               {t(currentInterval != null ? "rams.memo.proposeVsCurrent" : "rams.memo.propose", {
@@ -523,10 +570,12 @@ export function StudyLifeStep({
               </table>
             </div>
           </div>
-          {editable && proposed != null ? (
+          {stateOpen && proposed != null ? (
             <div className="mt-3 flex justify-end">
               <Button
                 className={mfLayout.primaryAction}
+                disabled={!editable}
+                title={reasonFor(P.RAM_ANALYZE)}
                 onClick={() =>
                   onDecide({
                     kind: plan ? "pm_interval" : "one_off_wo",

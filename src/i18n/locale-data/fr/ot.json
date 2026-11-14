@@ -5,7 +5,7 @@
       "outsideScope_other": "{{count}} OT ne sont pas affichés : hors de vos sites.",
       "withoutSite_one": "{{count}} OT n’est pas affiché : il n’a pas de site.",
       "withoutSite_other": "{{count}} OT ne sont pas affichés : ils n’ont pas de site.",
-      "allWorkOrders": "Ces nombres portent sur tous les OT, quels que soient les filtres ou la recherche.",
+      "allWorkOrders": "Total calculé sur tous les OT, sans tenir compte des filtres.",
       "askPlantWide": "Demandez à un utilisateur ayant un rôle valable pour toute l’usine pour les voir."
     },
     "noSite": {
@@ -16,7 +16,16 @@
   "permitRule": {
     "requiredBy": "Permis exigé par la règle {{rule}} (type de permis {{permitType}}).",
     "requiredByNoType": "Permis exigé par la règle {{rule}}.",
-    "severalTypes": "Plusieurs règles de permis : {{types}}",
+    "listTitle": "Permis exigés par les règles de l'usine : un permis vivant de chaque type pour démarrer ou reprendre.",
+    "listRule": "règle {{rule}}",
+    "listPrimary": "principale",
+    "listLive": "Permis {{permit}} ({{status}})",
+    "listMissing": "Aucun permis de ce type lié",
+    "listCleared": "Levée le {{date}} par {{by}} : {{reason}}",
+    "listClearedNoName": "Levée le {{date}} : {{reason}}",
+    "listClear": "Lever",
+    "clearTypeTitle": "Lever l'exigence du permis {{permitType}} ?",
+    "clearTypeBody": "{{code}} n'exigera plus de permis {{permitType}} (règle {{rule}}). Les autres permis exigés le restent. Le motif, la date et votre nom sont conservés sur l'OT et dans son historique.",
     "requiredShort": "Requis (règle {{rule}})",
     "clearHint": "Seule une personne habilitée à délivrer les permis peut lever cette exigence, avec un motif, avant le démarrage.",
     "checkboxLocked": "Exigé par la règle {{rule}} : se lève avec « Lever l'exigence » ci-dessous.",
@@ -62,8 +71,73 @@
     "fromSafetyDi": "Activé automatiquement : la demande d'origine signalait un risque sécurité."
   },
   "woPeople": {
-    "none": "Aucun membre du personnel actif n'a de compte utilisateur : reliez le personnel à un compte dans Personnel.",
+    "none": "Aucune personne à proposer. Si vous ne voyez pas le registre du personnel, demandez à l'administrateur de relier votre compte à votre fiche dans Personnel pour pouvoir saisir vos heures.",
     "loadFailed": "La liste du personnel n'a pas pu être chargée."
+  },
+  "join": {
+    "action": "Rejoindre",
+    "hint": "Aider sur cet OT : votre main-d'œuvre démarre maintenant et le responsable est prévenu. Vous ne devenez pas responsable de l'OT.",
+    "done": "Vous avez rejoint l'OT : votre main-d'œuvre a démarré."
+  },
+  "depannage": {
+    "validation": {
+      "badgeToValidate": "Dépannage — à valider",
+      "pending": "Validation après coup en attente (approbateur du site, autre que la personne qui l'a lancé).",
+      "validate": "Valider le dépannage",
+      "validated": "Dépannage validé le {{date}}",
+      "autoApproved": "Approuvé automatiquement à la clôture (règle du site), sans validateur.",
+      "notStarter": "Vous avez lancé ce dépannage : un autre approbateur doit le valider."
+    },
+    "times": {
+      "response": "Temps de réponse",
+      "activeRepair": "Réparation active",
+      "restore": "Remise en service",
+      "hours": "{{value}} h"
+    },
+    "action": "Dépannage",
+    "title": "Dépannage : intervention immédiate",
+    "intro": "Pour une panne à traiter tout de suite : l'OT correctif est créé et démarré en une fois. La planification est validée après coup.",
+    "badge": "Dépannage",
+    "breakdownAt": {
+      "save": "Enregistrer",
+      "edit": "Corriger la date de constat",
+      "label": "Panne constatée à",
+      "required": "Saisissez la date et l'heure de constat de la panne.",
+      "future": "La panne ne peut pas être constatée dans le futur."
+    },
+    "machineStopped": {
+      "label": "Machine arrêtée",
+      "required": "Indiquez si la machine est arrêtée.",
+      "yes": "Oui",
+      "no": "Non"
+    },
+    "titlePlaceholder": "Ex. : fuite d'huile sur le réducteur",
+    "type": {
+      "default": "Type de l'usine pour le correctif immédiat"
+    },
+    "assignee": {
+      "label": "Intervenant",
+      "me": "Moi",
+      "onlyMe": "Désigner une autre personne demande le droit d'affectation d'urgence."
+    },
+    "openWos": {
+      "title_one": "{{count}} OT déjà ouvert sur cet équipement",
+      "title_other": "{{count}} OT déjà ouverts sur cet équipement",
+      "open": "Ouvrir",
+      "hint": "Ouvrez l'OT existant s'il traite déjà cette panne ; sinon lancez le dépannage."
+    },
+    "submit": "Lancer le dépannage",
+    "close": "Fermer",
+    "openWo": "Ouvrir l'OT {{code}}",
+    "result": {
+      "started": "OT {{code}} créé et démarré.",
+      "waiting": "OT {{code}} créé, prêt et en attente de permis : il démarrera dès que le permis sera actif.",
+      "permitTypes": "En attente de permis : {{types}}",
+      "draftsWritten_one": "{{count}} brouillon de permis préparé.",
+      "draftsWritten_other": "{{count}} brouillons de permis préparés.",
+      "issuersNotified": "Les émetteurs de permis du site sont prévenus.",
+      "oldBreakdown": "La panne a été constatée il y a plus de 7 jours : vérifiez la date saisie."
+    }
   },
   "page": {
     "title": "Ordres de travail",
@@ -79,22 +153,24 @@
   },
   "integrity": {
     "title": "Constats d'intégrité des données",
-    "empty": "Aucun constat ouvert. Lancez les détecteurs pour analyser les OT et les lignes liées.",
-    "contractFrozen": "Contrôle analytique {{id}} v{{ver}} (sha256 {{hash}}…)",
-    "runDetectors": "Lancer les détecteurs",
-    "waiverDefaultReason": "Levé via la console opérateur",
-    "approverId": "ID utilisateur approbateur",
+    "empty": "Aucune anomalie ouverte. Lancez la vérification pour contrôler les ordres de travail et leurs lignes.",
+    "runDetectors": "Lancer la vérification",
+    "waiverDefaultReason": "Levée depuis l'écran d'intégrité des données",
     "approverPlaceholder": "Obligatoire pour les erreurs",
-    "waiverReason": "Motif du levée",
+    "waiverReason": "Motif de la levée",
     "waiverReasonPlaceholder": "Justification",
     "waive": "Lever",
+    "waiveNeedsApprover": "Choisissez d'abord un approbateur : une anomalie de niveau erreur doit être levée avec l'accord d'une autre personne.",
     "repair": "Réparation",
     "applyRepair": "Appliquer",
     "repair.clearFailureMode": "Effacer le mode de défaillance invalide",
-    "repair.swapDowntime": "Swap début/fin de segment (durée négative)",
-    "repair.closeAtStart": "Clôturer le segment à l'heure de début",
-    "repair.trimOverlap": "Tronquer la fin du premier segment (chevauchement)",
-    "severity": { "error": "Erreur", "warning": "Avertissement" },
+    "repair.swapDowntime": "Inverser le début et la fin de l'arrêt (durée négative)",
+    "repair.closeAtStart": "Clôturer l'arrêt à l'heure de début",
+    "repair.trimOverlap": "Raccourcir la fin du premier arrêt (chevauchement)",
+    "severity": {
+      "error": "Erreur",
+      "warning": "Avertissement"
+    },
     "code": {
       "FK_ORPHAN_FAILURE_MODE": "Mode de défaillance introuvable",
       "WO_DOWNTIME_NEGATIVE_DURATION": "Arrêt de durée négative",
@@ -149,10 +225,13 @@
     },
     "filters": {
       "scopeNotClosed": "Pas encore clôturés",
+      "planner": "Planificateur",
+      "plannerToName": "Planificateur à désigner",
       "scopeOverdue": "En retard (ouverts, fin prévue dépassée)",
       "mix": "Nature des travaux",
       "completed": "Terminés sur la période",
       "completedValue": "Du {{from}} au {{to}}",
+      "ramsFailures": "Pannes comptées par RAMS",
       "mixValue": {
         "planned": "Planifiés (préventif et amélioration)",
         "reactive": "Réactifs (correctif)",
@@ -169,6 +248,10 @@
     }
   },
   "form": {
+    "createdToast": "Ordre de travail {{code}} créé",
+    "savedToast": "Ordre de travail {{code}} enregistré",
+    "openCreated": "Ouvrir l'OT",
+    "missingHint": "À compléter pour continuer : {{items}}",
     "title": {
       "label": "Titre",
       "placeholder": "Description courte de l'intervention"
@@ -187,7 +270,8 @@
       "none": "Aucun sous-type"
     },
     "urgency": {
-      "label": "Urgence"
+      "label": "Urgence",
+      "placeholder": "Choisir une urgence"
     },
     "equipment": {
       "label": "Équipement",
@@ -206,20 +290,23 @@
       "label": "Fin prévue"
     },
     "duration": {
-      "label": "Durée estimée (h)"
+      "label": "Durée estimée (h)",
+      "exceedsWindow": "Attention : la durée estimée ({{hours}} h) est plus longue que le temps entre le début et la fin prévus ({{window}} h)."
     },
     "notes": {
       "label": "Remarques"
     },
     "cancel": "Annuler",
+    "missingFields": "Pour continuer, renseignez : {{fields}}.",
     "submit": "Créer l'ordre de travail",
     "update": "Enregistrer les modifications",
     "validation": {
       "titleRequired": "Le titre est requis",
       "typeRequired": "Le type d'ordre de travail est obligatoire.",
-      "urgencyRequired": "La priorité est obligatoire.",
-      "urgencyInvalid": "La priorité sélectionnée n'est plus valide.",
-      "equipmentRequired": "Équipement obligatoire."
+      "urgencyRequired": "L'urgence est obligatoire.",
+      "urgencyInvalid": "L'urgence sélectionnée n'est plus valide.",
+      "equipmentRequired": "Équipement obligatoire.",
+      "plannedEndBeforeStart": "La fin prévue ne peut pas être avant le début prévu."
     }
   },
   "status": {
@@ -280,12 +367,42 @@
     "fullDay": "Journée",
     "full_day": "Journée complète"
   },
+  "nonStockPurchase": {
+    "open": "Acheter une pièce non stockée",
+    "title": "Acheter une pièce non stockée pour cet OT",
+    "description": "Pour une pièce que le magasin ne tient pas : elle est commandée pour cet OT, réceptionnée sans entrer en stock et comptée dans les pièces réelles de l’OT. La demande d’achat suit les approbations habituelles.",
+    "search": "Pièce non stockée déjà connue",
+    "searchPlaceholder": "Rechercher par code ou désignation",
+    "matches": "Pièces non stockées existantes",
+    "reused": "Pièce reprise : {{code}} — {{name}}",
+    "notThisOne": "Autre pièce",
+    "name": "Désignation de la pièce",
+    "namePlaceholder": "Ex. joint torique Ø212 Viton",
+    "unit": "Unité",
+    "newHint": "Aucune pièce existante ne convient ? Une pièce non stockée est créée depuis cet OT, « à revoir » par le gestionnaire du catalogue.",
+    "qty": "Quantité",
+    "estimate": "Prix unitaire estimé (facultatif)",
+    "reason": "Motif de l’achat (facultatif)",
+    "reasonPlaceholder": "Ex. pièce introuvable en magasin",
+    "nameRequired": "Décrivez la pièce à acheter.",
+    "unitRequired": "Choisissez l’unité de la pièce.",
+    "submit": "Demander l’achat",
+    "cancel": "Annuler",
+    "error": "La demande d’achat de pièce non stockée n’a pas pu être créée.",
+    "created": "Demande d’achat {{number}} créée pour cet OT.",
+    "badge": "Non stockée",
+    "awaiting": "Achat en cours",
+    "received": "Reçu : {{received}} / {{planned}}",
+    "handedTo": "Remis à {{name}}"
+  },
   "planning": {
     "timing": "Planification horaire",
     "shift": "Poste",
     "save": "Enregistrer la planification",
     "endBeforeStart": "La date de fin doit être après la date de début",
     "plannerId": "Planificateur",
+    "plannerToName": "planificateur à désigner",
+    "plannerRightRequired": "Seul un approbateur ou un planificateur peut choisir le planificateur de l'OT.",
     "plannedStart": "Début prévu",
     "plannedEnd": "Fin prévue",
     "selectShift": "Sélectionner le poste",
@@ -308,19 +425,21 @@
     "plannedCrewSizeInvalid": "L'effectif est un nombre entier de personnes, de 1 à {{max}}.",
     "urgency": "Urgence",
     "selectUrgency": "Sélectionner l'urgence",
-    "assignment": "Planning & équipe (SSOT Planning)",
+    "assignment": "Planning et équipe",
     "assignedTeamId": "Équipe",
     "primaryResponsibleId": "Technicien (responsable principal)",
     "scheduledAt": "Planifié le",
     "scheduleStripTitle": "Créneau engagé",
-    "scheduleLockedHint": "Les dates, l'équipe et le technicien sont gérés par le Planning. Utilisez Ouvrir dans Planning pour modifier le créneau, ou Réaffectation d'urgence pour le dispatch de nuit (ignore les portes de capacité).",
+    "scheduleLockedHint": "Les dates sont gérées par le Planning (Ouvrir dans Planning). L'équipe et le technicien s'affectent ici.",
+    "assignAction": "Affecter",
+    "assignHint": "Choisissez l'équipe et/ou le technicien, puis Affecter. Le créneau reste géré par le Planning.",
     "scheduleEmpty": "Pas encore engagé sur le tableau Planning.",
     "scheduleFrozenHint": "Cet engagement est gelé. Utilisez une intrusion Planning — la réaffectation d'urgence est bloquée.",
     "openInPlanning": "Ouvrir dans Planning",
     "emergencyReassign": "Réaffectation d'urgence",
     "emergencyReassignHint": "Met à jour uniquement l'équipe/le technicien. Ne change pas les dates. Ignore capacité, fenêtres verrouillées et double-booking — une surcharge peut apparaître sur le tableau.",
     "emergencyOverrideTitle": "Réaffectation d'urgence",
-    "emergencyOverrideDescription": "Indiquez un motif. Ce contournement des portes Planning est audité.",
+    "emergencyOverrideDescription": "Indiquez un motif. Ce contournement des contrôles du planning est tracé dans l'historique.",
     "crewLabel": "Équipe",
     "technicianLabel": "Technicien",
     "slotLabel": "Créneau engagé",
@@ -355,7 +474,7 @@
     "draftSubmitHint": "Cet ordre de travail est encore un brouillon. Modifiez l'identification si besoin, puis soumettez-le pour planification. Timing, assignation, tâches et pièces se configurent après soumission.",
     "draftIdentification": "Identification",
     "cancelledStubHint": "Cet ordre de travail a été annulé. Les champs de planification ne sont plus modifiables. Consultez l'onglet Audit pour l'historique.",
-    "readinessChecklist": "Contrôle de prêt",
+    "readinessChecklist": "Vérification avant lancement",
     "readinessRecommended": "recommandé",
     "readinessRule": {
       "approval_required": "Validation de la préparation",
@@ -387,6 +506,8 @@
       "description": "Certaines pièces planifiées ne sont pas entièrement disponibles en stock.",
       "createRequisition": "Créer une demande d'achat",
       "requisitionCreated": "Demande d'achat créée",
+      "requisitionInProgress": "Demande d'achat {{number}} déjà en cours",
+      "requisitionCreatedNumber": "Demande d'achat {{number}} créée",
       "columns": {
         "article": "Article",
         "requested": "Demandé",
@@ -395,6 +516,9 @@
       }
     },
     "parts": {
+      "available": "Disponible : {{qty}} {{unit}}",
+      "shortage": "Stock insuffisant (disponible : {{available}} {{unit}}) : la ligne est enregistrée, la quantité manquante est à acheter.",
+      "willReserve": "Le stock disponible sera réservé à l’enregistrement de la ligne.",
       "noMatch": "Aucun article correspondant",
       "stockLocation": "Emplacement de stock",
       "locationPlaceholder": "Emplacement",
@@ -418,6 +542,9 @@
   },
   "cancel": {
     "title": "Annuler l'ordre de travail",
+    "keep": "Garder l'OT",
+    "partsIssued_one": "{{count}} ligne de pièces a déjà été sortie du magasin pour cet OT : l'annulation ne la remet pas en stock. Faites un retour magasin pour les pièces non utilisées.",
+    "partsIssued_other": "{{count}} lignes de pièces ont déjà été sorties du magasin pour cet OT : l'annulation ne les remet pas en stock. Faites un retour magasin pour les pièces non utilisées.",
     "warning": "L'annulation arrête le cycle de vie. Cette action n'est pas réversible via le même chemin.",
     "reason": "Motif d'annulation",
     "reasonPlaceholder": "Expliquez pourquoi cet OT est annulé…",
@@ -436,6 +563,15 @@
     "blockers": "Problèmes bloquants",
     "gates": {
       "title": "Complétion de l'ordre de travail",
+      "fix": {
+        "PARTS": "À faire dans l'onglet Pièces : confirmez la quantité réellement utilisée de chaque ligne.",
+        "TASKS": "À faire dans l'onglet Tâches : terminez ou annulez chaque tâche ouverte.",
+        "OPEN_LABOR": "À faire dans l'onglet Main-d'œuvre : arrêtez les pointages encore en cours.",
+        "OPEN_DOWNTIME": "À faire dans la section Retour en service : clôturez les arrêts de production ouverts.",
+        "FAILURE_MODE": "À faire plus bas, section Analyse de défaillance : choisissez le mode de défaillance.",
+        "SYMPTOM": "À faire plus bas, section Symptôme : choisissez le symptôme observé.",
+        "ROOT_CAUSE": "À faire plus bas, section Action réalisée : résumez la cause racine, ou cochez « Cause non encore connue »."
+      },
       "blockingCount": "{{count}} éléments bloquants restants ({{done}}/{{total}} prêts).",
       "PARTS": "Pièces confirmées",
       "TASKS": "Tâches terminées",
@@ -454,6 +590,9 @@
       "planned": "Planifié",
       "actual": "Réel",
       "efficiency": "Efficacité",
+      "notEstimated": "Non estimé",
+      "efficiencyNeedsEstimate": "Sans estimation : non calculable",
+      "noHours": "Aucune heure saisie",
       "laborTitle": "Heures",
       "partsTitle": "Pièces",
       "partsLine": "{{planned}} planifiées · {{used}} utilisées · {{unused}} non utilisées · {{extra}} ajoutées",
@@ -507,6 +646,9 @@
     "taskFollowUp": "OT de suivi",
     "taskFollowUpPlaceholder": "N° de l'OT de suivi (facultatif)",
     "taskFollowUpNotFound": "Aucun OT « {{code}} »",
+    "taskRaiseCorrective": "Créer un OT correctif lié",
+    "taskCorrectiveTitle": "Correctif : {{task}}",
+    "taskCorrectiveDescription": "Constaté à l'OT {{code}}, étape « {{task}} ». Constat : {{note}}",
     "taskNokEvidenceHint": "Tâche obligatoire NOK : saisissez le constat ou l'OT de suivi.",
     "reopenTask": "Rouvrir la tâche",
     "reopenTaskComment": "Motif de réouverture",
@@ -527,6 +669,11 @@
       "hint": "Saisissez le temps technicien pour cette intervention. Les heures travaillées sont calculées automatiquement.",
       "rateHint": "Le coût utilise la grille de taux active du technicien lorsqu'elle existe ; sinon l'entrée est enregistrée avec un avertissement « taux manquant ».",
       "technician": "Technicien",
+      "technicianPlaceholder": "Choisir un technicien",
+      "team": "Équipe",
+      "allTeams": "Toutes les équipes",
+      "rateShown": "Taux horaire appliqué : {{rate}}",
+      "rateUnknown": "Aucun taux horaire défini pour cette personne : l'entrée sera enregistrée sans coût.",
       "date": "Date",
       "startTime": "Heure de début",
       "endTime": "Heure de fin",
@@ -584,6 +731,7 @@
       "confirmNoParts": "Impossible de confirmer aucune pièce utilisée.",
       "unconfirmNoParts": "Impossible d'annuler la confirmation « aucune pièce ».",
       "completeTask": "Impossible de compléter la tâche.",
+      "raiseCorrective": "Impossible de créer l'OT correctif.",
       "loadData": "Impossible de charger les données d'exécution.",
       "openDowntime": "Impossible d'ouvrir le segment d'arrêt.",
       "closeDowntime": "Impossible de fermer le segment d'arrêt.",
@@ -608,7 +756,7 @@
     "badge": {
       "planned": "Planifié",
       "executionAdded": "Ajouté en cours d'exécution",
-      "generated": "Copié du PM"
+      "generated": "Copié du MP"
     },
     "labor": {
       "planned": "Planifié",
@@ -628,6 +776,10 @@
       "summaryPlanned": "{{pending}} / {{total}} lignes planifiées à marquer Utilisée ou Non utilisée",
       "markUsed": "Utilisée",
       "usedQtyLabel": "Qté : {{qty}}",
+      "toIssue": {
+        "badge": "À régulariser : {{qty}} {{unit}} à sortir",
+        "hint": "Pièce enregistrée sans le droit magasin : le magasinier la sort du stock depuis le comptoir de sortie. L'OT ne peut pas être clôturé avant."
+      },
       "badge": {
         "used": "Utilisée ({{qty}})",
         "notUsed": "Non utilisée"
@@ -641,10 +793,11 @@
         "labelRequired": "Le libellé est obligatoire.",
         "qty": "Quantité utilisée",
         "save": "Ajouter",
-        "stockHint": "Choisissez l'article et l'emplacement d'où il est sorti : la quantité est réservée et sortie du stock. Utilisez « Hors stock » seulement pour un article non géré en magasin.",
+        "stockHint": "Choisissez l'article et l'emplacement d'où il est sorti : la quantité est réservée et sortie du stock. Choisissez « Pièce non stockée » seulement pour un article que le magasin ne gère pas.",
+        "stockHintRequest": "Choisissez l'article et l'emplacement d'où il a été pris. Sans le droit magasin (par exemple la nuit, sans magasinier), la pièce est enregistrée « à régulariser » : le magasinier la sort du stock le jour suivant, rien ne bouge avant. Choisissez « Pièce non stockée » seulement pour un article que le magasin ne gère pas.",
         "modeLabel": "Origine de la pièce",
         "modeStock": "Article en stock",
-        "modeNonStock": "Hors stock",
+        "modeNonStock": "Pièce non stockée (achat direct)",
         "searchArticle": "Rechercher un article",
         "searchPlaceholder": "Code ou désignation",
         "article": "Article",
@@ -716,6 +869,8 @@
       "partUsed": "Pièce utilisée : {{label}}",
       "partNotUsed": "Pièce marquée non utilisée : {{label}}",
       "partCancelled": "Ligne de pièce planifiée annulée : {{label}}",
+      "partIssued": "Pièce sortie du magasin : {{label}}",
+      "partToIssueCancelled": "Pièce à sortir annulée : {{label}}",
       "partSetRequired": "Ligne de pièce rendue obligatoire : {{label}}",
       "partSetOptional": "Ligne de pièce rendue optionnelle : {{label}}",
       "partAdded": "Pièce ajoutée en cours : {{label}}",
@@ -733,6 +888,30 @@
       "partsNoneCleared": "Confirmation « aucune pièce » annulée"
     }
   },
+  "subcontracting": {
+    "title": "Sous-traitant",
+    "hint": "L'entreprise extérieure qui réalise ce travail, sa référence de commande, les heures qu'elle déclare et le coût qu'elle facture. Le coût est le coût de service de l'OT.",
+    "manageContractors": "Gérer les sous-traitants",
+    "company": "Entreprise sous-traitante",
+    "noContractor": "Aucun sous-traitant",
+    "orderRef": "Référence de commande / contrat du sous-traitant",
+    "hours": "Heures du sous-traitant",
+    "cost": "Coût du sous-traitant ({{currency}})",
+    "contractEnd": "Fin du contrat le {{date}}",
+    "contractState": {
+      "active": "Contrat en cours",
+      "expiring": "Contrat bientôt échu",
+      "expired": "Contrat expiré"
+    },
+    "save": "Enregistrer le sous-traitant",
+    "loadError": "Les informations du sous-traitant de cet OT n'ont pas pu être chargées.",
+    "warranty": {
+      "label": "Réparation sous garantie (à refacturer au fournisseur)",
+      "assetUntil": "Équipement sous garantie jusqu'au {{date}}.",
+      "note": "Note de refacturation",
+      "noteHint": "Référence de la réclamation, pièces ou heures à récupérer auprès du fournisseur ou du constructeur."
+    }
+  },
   "closeout": {
     "progressTitle": "Progression de clôture",
     "progressBadge": "{{done}}/{{total}} complétés",
@@ -746,7 +925,7 @@
     "narrativePlaceholder": "Décrire la défaillance observée…",
     "sectionFailure": "Analyse de défaillance",
     "isoFailureTaxonomyHint": "Mode de défaillance : comment la défaillance se manifeste. Cause de défaillance : pourquoi elle s'est produite (données ISO 14224).",
-    "causeNotDetermined": "Cause non déterminée",
+    "causeNotDetermined": "Cause non encore connue",
     "failureMode": "Mode de défaillance",
     "failureModePlaceholder": "Mode…",
     "failureCause": "Cause",
@@ -762,7 +941,7 @@
     "temporary": "Temporaire",
     "permanent": "Permanente",
     "notApplicable": "S/O",
-    "serviceCost": "Coût de service (€)",
+    "serviceCost": "Coût de service ({{currency}})",
     "detailsSaved": "Détails enregistrés.",
     "saveDetails": "Enregistrer les détails",
     "sectionReturn": "Retour en service",
@@ -785,14 +964,19 @@
     "noDowntimeProductionHint": "Impact production enregistré. Ajoutez un segment d'arrêt ou atteste l'absence d'arrêt production avec une justification (minimum 8 caractères).",
     "noDowntimeAttestation": "Aucun arrêt production (attestation)",
     "noDowntimeReason": "Justification (obligatoire si attestation)",
-    "fmecaOverrideReason": "Motif de dérogation pièces FMECA critiques",
+    "fmecaOverrideReason": "Pourquoi clôturer sans les pièces critiques conseillées",
     "fmecaOverrideReasonPlaceholder": "Expliquez pourquoi la clôture est autorisée sans les pièces critiques suggérées…",
-    "fmecaOverrideSignerId": "Signataire de dérogation",
+    "fmecaOverrideSignerId": "Superviseur qui autorise",
     "fmecaOverrideSignerIdPlaceholder": "Sélectionner un superviseur/admin",
     "fmecaOverrideSignerPassword": "Mot de passe du signataire de dérogation",
     "fmecaOverrideSignerPasswordPlaceholder": "Confirmation du mot de passe signataire",
-    "fmecaOverrideHint": "Requis uniquement si les pièces suggérées critiques FMECA n'ont pas été consommées. Le signataire doit être Superviseur/Admin, distinct du clôturant et ré-authentifié.",
+    "fmecaOverrideHint": "Requis uniquement si les pièces suggérées critiques de l'AMDEC n'ont pas été consommées. Le signataire doit être superviseur ou administrateur, autre que la personne qui clôture, et saisir à nouveau son mot de passe.",
     "closeWo": "Fermer l'OT",
+    "blocked": {
+      "closed": "L'OT est clôturé : ses détails ne se modifient plus.",
+      "cancelled": "L'OT est annulé : ses détails ne se modifient plus.",
+      "rightRequired": "Droit requis : {{right}}."
+    },
     "confirmVerifyTitle": "Enregistrer la vérification technique ?",
     "confirmVerifyDescription": "{{code}} : résultat « {{result}} »{{rts}}. La vérification est enregistrée à votre nom dans le journal d'audit.",
     "confirmVerifyReturnToService": ", équipement remis en service",
@@ -826,13 +1010,16 @@
     "title": "Historique de l’ordre de travail",
     "permitRequired": "Permis / consignation désormais exigé",
     "permitNotRequired": "Permis / consignation plus exigé",
+    "originDepannage": "Origine : dépannage",
     "actions": {
       "task_reopened": "Tâche rouverte",
       "labor_closed_by_cancellation": "Main-d'œuvre ouverte clôturée par l'annulation",
       "labor_closed_by_closeout": "Main-d'œuvre ouverte clôturée par la clôture",
+      "labor_added": "Heures de main-d'œuvre saisies",
       "permit_rule_flag_cleared": "Exigence de permis (règle) levée",
       "shutdown_required_set": "OT marqué « nécessite un arrêt »",
       "shutdown_required_cleared": "« Nécessite un arrêt » retiré",
+      "updated": "OT modifié",
       "created": "Ordre de travail créé",
       "submitted": "Soumis à la planification",
       "planned": "Planifié",
@@ -868,7 +1055,7 @@
     "blocked": "Bloqué",
     "partial": "Partiel",
     "stepUp": "Vérification",
-    "loadError": "Impossible de charger le journal d'audit\u00a0: ",
+    "loadError": "Impossible de charger le journal d'audit : ",
     "empty": "Aucun événement d'audit enregistré pour cet ordre de travail.",
     "user": "{{name}}",
     "system": "Système"
@@ -876,6 +1063,7 @@
   "detail": {
     "close": "Fermer",
     "loading": "Chargement de l'OT…",
+    "backToOrigin": "Retour",
     "loadingHint": "Récupération des derniers détails de l'ordre de travail.",
     "cancelledBanner": "Cet ordre de travail a été annulé",
     "sections": {
@@ -889,7 +1077,7 @@
     },
     "fields": {
       "subtype": "Sous-type",
-      "sourceInspectionRound": "Tournée d'inspection",
+      "sourceInspectionRound": "Ronde d'inspection",
       "sourcePmPlan": "Constat de préventif (plan)",
       "nature": "Nature (EN 13306)",
       "number": "Numéro",
@@ -911,9 +1099,10 @@
       "actualHours": "Heures réelles",
       "conclusion": "Rapport de clôture",
       "sourceDi": "DI source",
-      "sourceRca": "RCA source",
+      "sourceRca": "Analyse des causes d’origine",
       "sourceRcaDiagram": "Diagramme Ishikawa n°{{id}}",
-      "sourceRcaCause": "Cause"
+      "sourceRcaCause": "Cause",
+      "sourceRcaOpen": "Ouvrir l'analyse des causes (RAMS)"
     }
   },
   "footer": {
@@ -924,9 +1113,9 @@
     "markReady": "Marquer comme Prêt"
   },
   "remainingTime": {
-    "label": "Temps restant estimé (heures, facultatif)",
+    "label": "Combien d’heures restent à travailler ? (facultatif)",
     "placeholder": "ex. 2,5",
-    "hint": "Sert uniquement à vérifier que les permis couvrent la fin du travail (maintenant + ce temps). Vide : la durée prévue complète de l’OT. Les dates planifiées et la durée prévue ne sont pas modifiées ; la valeur est enregistrée dans l’historique à votre nom.",
+    "hint": "Sert à vérifier que les permis de travail couvrent encore la fin du travail. Laissé vide, on prend la durée prévue de l’OT. Rien n’est modifié dans le planning ; votre réponse est enregistrée dans l’historique à votre nom.",
     "invalid": "Saisissez un nombre d’heures supérieur à 0, ou laissez le champ vide."
   },
   "resumeDialog": {
@@ -954,8 +1143,8 @@
   },
   "dashboard": {
     "loading": "Chargement des statistiques…",
-    "loadError": "\u00c9chec du chargement des donn\u00e9es du tableau de bord.",
-    "retry": "R\u00e9essayer",
+    "loadError": "Échec du chargement des données du tableau de bord.",
+    "retry": "Réessayer",
     "total": "Total OT",
     "inProgress": "En cours",
     "completed": "Terminés",
@@ -1037,7 +1226,9 @@
   "archive": {
     "title": "Archive (Clôturés / Annulés)",
     "loadError": "Échec du chargement des OT archivés.",
-    "retry": "Réessayer"
+    "retry": "Réessayer",
+    "shown": "{{shown}} sur {{total}} affichés",
+    "loadMore": "Charger plus ({{count}} restants)"
   },
   "search": {
     "placeholder": "Rechercher par code, titre, équipement…"
@@ -1149,8 +1340,8 @@
     "cancelled": "Annulé"
   },
   "retiredEquipment": {
-    "title": "Équipement déclassé — à revoir",
-    "intro": "Ces OT et demandes sont ouverts alors que leur équipement est déclassé ou mis au rebut : les deux se sont croisés à la synchronisation. Annulez l'OT ou rejetez la demande avec un motif, ou remettez l'équipement en service.",
+    "title": "Équipement réformé — à revoir",
+    "intro": "Ces OT et demandes sont ouverts alors que leur équipement est réformé ou mis au rebut : les deux se sont croisés à la synchronisation. Annulez l'OT ou rejetez la demande avec un motif, ou remettez l'équipement en service.",
     "kind": {
       "work_order": "OT",
       "intervention_request": "DI"
@@ -1158,7 +1349,7 @@
     "equipment": "Équipement {{code}} {{name}}",
     "open": "Ouvrir",
     "history": "Historique ({{count}})",
-    "historyLink": "Équipement déclassé : historique ({{count}})",
+    "historyLink": "Équipement réformé : historique ({{count}})",
     "closure": {
       "wo_closed": "Clos par la clôture de l'OT {{code}}",
       "wo_cancelled": "Clos par l'annulation de l'OT {{code}}",
@@ -1166,11 +1357,11 @@
       "di_closed": "Clos par la clôture de la demande {{code}}",
       "di_converted": "Clos par la conversion de la demande {{code}} en OT {{wo}} (l'OT a son propre cas)",
       "recommissioned": "Clos par la remise en service de l'équipement {{equipment}}",
-      "other": "Clos : {{code}} n'est plus ouvert sur un équipement déclassé"
+      "other": "Clos : {{code}} n'est plus ouvert sur un équipement réformé"
     },
     "closedBy": "{{who}}, le {{when}}",
     "closedAt": "Le {{when}}",
     "note": "Motif : {{note}}",
-    "loadFailed": "Impossible de charger les OT et demandes sur équipement déclassé."
+    "loadFailed": "Impossible de charger les OT et demandes sur équipement réformé."
   }
 }

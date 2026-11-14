@@ -8,6 +8,8 @@ import {
   formatDate,
   formatDateLong,
   formatDateTime,
+  formatDayMonth,
+  formatYearMonth,
   formatTime,
   formatRelativeTime,
   getLocaleDirection,
@@ -260,5 +262,42 @@ describe("date-only texts", () => {
     expect(formatDate("2026-10-22", "fr")).toBe("22/10/2026");
     expect(formatDate("2026-01-01", "fr")).toBe("01/01/2026");
     expect(formatDate("2026-10-22", "en")).toBe("10/22/2026");
+  });
+});
+
+describe("formatDayMonth() and formatYearMonth()", () => {
+  it("shows a day without the year in the language order, never as 10-31", () => {
+    expect(formatDayMonth("2026-10-31", "fr")).toBe("31/10");
+    expect(formatDayMonth("2026-10-31", "en")).toBe("10/31");
+    expect(formatDayMonth(null, "fr")).toBe("—");
+  });
+
+  it("names a month from a year-month text in the language", () => {
+    expect(formatYearMonth("2026-10", "fr")).toMatch(/oct/);
+    expect(formatYearMonth("bad", "fr")).toBe("—");
+  });
+});
+
+describe("database instants without a time zone mark", () => {
+  const utc = new Date(Date.UTC(2026, 9, 31, 21, 0, 0));
+  const shown = formatDateTime(utc, "fr");
+
+  it("reads a SQLite UTC text and a 'Z' text as the same instant, in local time", () => {
+    expect(formatDateTime("2026-10-31T21:00:00.000Z", "fr")).toBe(shown);
+    expect(formatDateTime("2026-10-31 21:00:00", "fr")).toBe(shown);
+    expect(formatDateTime("2026-10-31T21:00:00", "fr")).toBe(shown);
+  });
+
+  it("keeps a local entry field value (no seconds) at the hour typed", () => {
+    expect(formatDateTime("2026-10-31T22:00", "fr")).toBe(
+      formatDateTime(new Date(2026, 9, 31, 22, 0), "fr"),
+    );
+    expect(formatDateTime("2026-10-31T22:00", "fr")).toContain("22:00");
+  });
+
+  it("writes dd/mm/yyyy hh:mm for a French user, from a regional language tag too", () => {
+    expect(formatDateTime("2026-10-31T22:00", "fr")).toMatch(/^31\/10\/2026.*22:00$/);
+    expect(formatDateTime("2026-10-31T22:00", "fr-FR")).toMatch(/^31\/10\/2026.*22:00$/);
+    expect(formatDate("2026-10-31", "en-US")).toBe("10/31/2026");
   });
 });

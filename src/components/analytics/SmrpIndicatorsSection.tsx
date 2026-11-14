@@ -8,6 +8,7 @@ import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 
+import { homeLinks } from "@/components/dashboard/home/home-links";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -16,7 +17,11 @@ import { useFormatters } from "@/hooks/use-formatters";
 import { listLinks } from "@/lib/list-links";
 import { cn } from "@/lib/utils";
 import { useWoOpenRuleText } from "@/lib/wo-open-rule";
-import type { SmrpKpis, SmrpMetric } from "@/services/analytics-dashboard-service";
+import type {
+  PmComplianceGroup,
+  SmrpKpis,
+  SmrpMetric,
+} from "@/services/analytics-dashboard-service";
 import {
   DEFAULT_KPI_STABLE_BELOW,
   OVERVIEW_KPI_REGISTRY_BY_KEY,
@@ -61,6 +66,8 @@ interface TileProps {
   /** Plain-language reason when not available. */
   unavailableText?: string;
   detail?: ReactNode;
+  /** What the figure counts (e.g. "en heures"), shown next to the value, not in small print. */
+  basis?: string;
   trend?: { label: string; tone: Tone | null } | null;
   formula: string;
   unit: string;
@@ -78,6 +85,7 @@ function SmrpTile({
   available,
   unavailableText,
   detail,
+  basis,
   trend,
   formula,
   unit,
@@ -137,6 +145,14 @@ function SmrpTile({
           <span className="font-mono text-2xl font-semibold tabular-nums text-text-primary">
             {value}
           </span>
+          {basis ? (
+            <span
+              className="text-sm font-medium text-text-secondary"
+              data-testid={`smrp-${id}-basis`}
+            >
+              {basis}
+            </span>
+          ) : null}
           {trend ? (
             <span
               className={cn(
@@ -149,9 +165,17 @@ function SmrpTile({
           ) : null}
         </div>
       ) : (
-        <p className="mt-1 text-sm text-text-muted">{unavailableText ?? "—"}</p>
+        // Not measurable yet: a dash and one line — the full rule stays in the definition.
+        <>
+          <span className="mt-1 font-mono text-2xl font-semibold tabular-nums text-text-muted">
+            —
+          </span>
+          {unavailableText ? (
+            <p className="mt-1 text-xs text-text-muted">{unavailableText}</p>
+          ) : null}
+        </>
       )}
-      {detail ? <div className="mt-1 text-xs text-text-muted">{detail}</div> : null}
+      {available && detail ? <div className="mt-1 text-xs text-text-muted">{detail}</div> : null}
       {onOpen ? (
         <Button
           type="button"
@@ -164,6 +188,45 @@ function SmrpTile({
         </Button>
       ) : null}
     </div>
+  );
+}
+
+/** PM compliance by site and by trade (the plan's team): one line per group, worst first. */
+function PmBreakdown({
+  breakdown,
+}: {
+  breakdown: { by_site: PmComplianceGroup[]; by_team: PmComplianceGroup[] };
+}) {
+  const { t } = useTranslation("reports");
+  const { formatPercent, formatNumber } = useFormatters();
+  const list = (key: "site" | "team", groups: PmComplianceGroup[]) =>
+    groups.length === 0 ? null : (
+      <div data-testid={`smrp-pm-by-${key}`}>
+        <p className="mt-2 font-medium text-text-secondary">{t(`smrp.pmBy.${key}`)}</p>
+        <ul className="mt-0.5 space-y-0.5">
+          {[...groups]
+            .sort((a, b) => (a.compliance_pct ?? 101) - (b.compliance_pct ?? 101))
+            .map((g) => (
+              <li key={g.id ?? "none"} className="flex justify-between gap-2">
+                <span className="truncate">{g.label ?? t(`smrp.pmBy.no_${key}`)}</span>
+                <span className="shrink-0 tabular-nums">
+                  {g.compliance_pct == null ? "—" : formatPercent(g.compliance_pct)}{" "}
+                  <span className="text-text-muted">
+                    ({formatNumber(g.on_time_count)}/{formatNumber(g.due_count)})
+                  </span>
+                </span>
+              </li>
+            ))}
+        </ul>
+      </div>
+    );
+  if (breakdown.by_site.length === 0 && breakdown.by_team.length === 0) return null;
+  return (
+    <details className="mt-1">
+      <summary className="cursor-pointer text-text-secondary">{t("smrp.pmBy.toggle")}</summary>
+      {list("site", breakdown.by_site)}
+      {list("team", breakdown.by_team)}
+    </details>
   );
 }
 
@@ -230,7 +293,12 @@ export function SmrpIndicatorsSection({
         unit={t("smrp.unitPercent")}
         period={period}
         stableText={stableTextOf(smrpStableBelow(SMRP_KPI_KEYS.SCHEDULE_COMPLIANCE))}
-        {...(can(P.PLAN_VIEW) ? { onOpen: () => navigate("/planning") } : {})}
+        {...(can(P.PLAN_VIEW)
+          ? {
+              onOpen: () => navigate(homeLinks.planningWeek),
+              openLabel: t("smrp.schedule.openWeek"),
+            }
+          : {})}
       />,
     );
   }
@@ -238,6 +306,8 @@ export function SmrpIndicatorsSection({
   if (smrp.work_mix) {
     const mix = smrp.work_mix;
     const basis = mix.basis === "hours" ? t("smrp.mix.basisHours") : t("smrp.mix.basisCount");
+    const basisShort =
+      mix.basis === "hours" ? t("smrp.mix.basisHoursShort") : t("smrp.mix.basisCountShort");
     const detail = (m: SmrpMetric) =>
       mix.basis === "hours"
         ? t("smrp.mix.detailHours", {
@@ -261,6 +331,7 @@ export function SmrpIndicatorsSection({
           value={pct(m.current.value_pct)}
           available={m.current.value_pct != null}
           unavailableText={t("smrp.mix.none")}
+          basis={basisShort}
           detail={
             <>
               {detail(m)}
@@ -304,10 +375,15 @@ export function SmrpIndicatorsSection({
         value={pct(m.current.value_pct)}
         available={m.current.value_pct != null}
         unavailableText={t("smrp.pm.none")}
-        detail={t("smrp.pm.detail", {
-          done: formatNumber(m.current.numerator),
-          total: formatNumber(m.current.denominator),
-        })}
+        detail={
+          <>
+            {t("smrp.pm.detail", {
+              done: formatNumber(m.current.numerator),
+              total: formatNumber(m.current.denominator),
+            })}
+            {smrp.pm_breakdown ? <PmBreakdown breakdown={smrp.pm_breakdown} /> : null}
+          </>
+        }
         trend={trendOf(m, pmTrendSense, pmStableBelow)}
         formula={t("smrp.pm.formula")}
         unit={t("smrp.unitPercent")}
@@ -357,10 +433,37 @@ export function SmrpIndicatorsSection({
                 {t("smrp.backlog.withoutSchedule", { count: b.people_without_schedule })}
               </>
             ) : null}
+            {b.by_team.length > 0 ? (
+              <>
+                <br />
+                <span data-testid="smrp-backlog-by-team">
+                  {t("smrp.backlog.byTeam", {
+                    teams: b.by_team
+                      .map((team) =>
+                        t("smrp.backlog.teamLine", {
+                          team: team.team_name ?? t("smrp.backlog.noTeam"),
+                          hours: hours(team.backlog_hours),
+                          count: team.work_orders,
+                        }),
+                      )
+                      .join(" · "),
+                  })}
+                </span>
+              </>
+            ) : null}
             {b.work_orders_without_estimate > 0 ? (
               <>
                 <br />
                 {t("smrp.backlog.withoutEstimate", { count: b.work_orders_without_estimate })}
+                {b.without_estimate_list.length > 0 ? (
+                  <>
+                    {" : "}
+                    <span data-testid="smrp-backlog-unestimated">
+                      {b.without_estimate_list.map((w) => `${w.code} ${w.title}`.trim()).join(", ")}
+                      {b.work_orders_without_estimate > b.without_estimate_list.length ? ", …" : ""}
+                    </span>
+                  </>
+                ) : null}
               </>
             ) : null}
           </>

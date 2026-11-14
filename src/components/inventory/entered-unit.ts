@@ -62,3 +62,26 @@ export function useEntryFactor(
   }, [articleId, unitId, same]);
   return state;
 }
+
+/** Dimension of packaging units (box, roll…): they convert to any unit (backend `UnitDimension`). */
+const PACKAGING_DIMENSION = "packaging";
+
+/**
+ * Units a quantity can be typed in for an article stocked in `stockUnitId`: same physical
+ * dimension (`semantic_tag`) as the stock unit, or packaging. Hertz or volts are not offered for
+ * a part counted in pieces (UX L3-16). Without a known stock unit dimension, every unit is kept.
+ */
+export function compatibleEntryUnits<T extends { id: number; semantic_tag: string | null }>(
+  units: readonly T[],
+  stockUnitId: number | null,
+): T[] {
+  const stock = stockUnitId != null ? units.find((u) => u.id === stockUnitId) : undefined;
+  const dimension = stock?.semantic_tag ?? null;
+  if (!dimension || dimension === PACKAGING_DIMENSION) return [...units];
+  return units.filter(
+    (u) =>
+      u.id === stockUnitId ||
+      u.semantic_tag === dimension ||
+      u.semantic_tag === PACKAGING_DIMENSION,
+  );
+}

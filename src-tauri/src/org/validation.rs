@@ -22,7 +22,6 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::errors::{issue_params, org_validation_failed_issues, AppError, AppResult, AppValidationIssue};
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
@@ -1004,7 +1003,7 @@ pub async fn publish_model_with_remap(
         return Err(org_validation_failed_issues(blocking));
     }
 
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
 
     // ── Step 2: resolve prior active model ───────────────────────────────
     let active_row = txn

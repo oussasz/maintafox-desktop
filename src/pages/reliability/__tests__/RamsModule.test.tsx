@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { StudyDataStep } from "@/components/reliability/study/StudyDataStep";
@@ -10,6 +10,7 @@ import { RamsFleetPage } from "@/pages/reliability/RamsFleetPage";
 import type { ReliabilityStudy, StudyDataset } from "@/services/reliability-study-service";
 import { useLocaleStore } from "@/stores/locale-store";
 import { mockInvoke } from "@/test/mocks/tauri";
+import { P } from "@shared/rbac/permissions.generated";
 
 // Keys resolve against the real English catalogue: a missing key fails the test.
 function lookup(catalog: unknown, key: string): string | undefined {
@@ -46,8 +47,13 @@ vi.mock("react-i18next", () => ({
 }));
 const assetSvc = vi.hoisted(() => ({ getAssetById: vi.fn() }));
 vi.mock("@/services/asset-service", () => assetSvc);
+let deniedRights: string[] = [];
 vi.mock("@/hooks/use-permissions", () => ({
-  usePermissions: () => ({ can: () => true, canAny: () => true, isLoading: false }),
+  usePermissions: () => ({
+    can: (p: string) => !deniedRights.includes(p),
+    canAny: () => true,
+    isLoading: false,
+  }),
 }));
 
 const TS = "2026-10-01T10:00:00Z";
@@ -56,17 +62,33 @@ const fleetView = {
   period_start: "2024-10-01T00:00:00Z",
   period_end: TS,
   kpis: {
-    equipment_count: 2,
+    period_start: "2025-10-01T00:00:00Z",
+    period_end: TS,
+    window_too_short: false,
+    equipment_count: 3,
     failure_count: 10,
     downtime_hours: 244,
+    exposure_hours: 20790,
     availability_operational: 0.964,
     mtbf_hours: 2310,
+    eligible_failure_count: 10,
+    mtbf_excluded_missing_date: 1,
+    mtbf_excluded_outside_service: 2,
     mttr_hours: 6.8,
+    restore_count: 8,
+    restore_excluded_missing_failed_at: 0,
+    restore_excluded_missing_restored_at: 2,
+    restore_excluded_inconsistent: 0,
+    mean_active_repair_hours: 3.2,
+    active_repair_count: 10,
+    repair_excluded_missing_hours: 0,
     data_quality: 0.82,
+    records_complete: 8,
     records_missing_mode: 1,
     records_missing_cause: 1,
+    records_missing_mechanism: 2,
     operating_basis_count: 2,
-    calendar_basis_count: 0,
+    calendar_basis_count: 1,
   },
   rows: [
     {
@@ -80,6 +102,7 @@ const fleetView = {
       downtime_share: 0.6066,
       mtbf_hours: 1820,
       mttr_hours: 7.4,
+      failure_cost: 125000,
       time_basis: "run_hours_meter",
       data_quality: "to_check",
       records_to_check: 2,
@@ -98,6 +121,7 @@ const fleetView = {
       downtime_share: 0.3934,
       mtbf_hours: 2410,
       mttr_hours: 8.1,
+      failure_cost: null,
       time_basis: "run_hours_meter",
       data_quality: "complete",
       records_to_check: 0,
@@ -175,24 +199,169 @@ describe("RamsFleetPage", () => {
     expect(screen.getByText("96.4")).toBeInTheDocument();
     expect(screen.getByText("2,310")).toBeInTheDocument();
     expect(screen.getByText("2 to check")).toBeInTheDocument();
+    // Each figure states its definition, its hours basis and what it left out.
+    expect(
+      screen.getByText(
+        "all unplanned failures, Last 12 months, operating hours: 2 equipment / calendar: 1 · 2 excluded: outside service period · 1 excluded (all periods): failure date missing",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "from work start to work-order close, or from failure to back in service for imported records; Last 12 months, in clock hours · 2 excluded: back-in-service time missing",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Mean repair person-hours")).toBeInTheDocument();
+    expect(screen.getByText("3.2")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Last 12 months; complete = mode + cause + mechanism; 1 without mode, 1 without cause, 2 without mechanism",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Aₒ = MTBF / (MTBF + MTTR), Last 12 months, operating hours: 2 equipment / calendar: 1",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("unplanned, Last 12 months; 244 h of downtime (clock hours)"),
+    ).toBeInTheDocument();
+    // Default window: the last 12 months.
+    expect(screen.getByRole("combobox", { name: "Period" })).toHaveValue("12");
     const start = screen.getByRole("button", { name: /Study the selection/ });
     expect(start).toBeDisabled();
+    // The grey button says what is missing, in a sentence (not only a tooltip).
+    expect(screen.getByTestId("rams-study-reason")).toHaveTextContent(
+      "Tick at least one equipment in the table",
+    );
+    expect(start).toHaveAttribute("aria-describedby", "rams-study-reason");
 
     fireEvent.click(screen.getByRole("checkbox", { name: "Select P-101" }));
+    expect(screen.queryByTestId("rams-study-reason")).not.toBeInTheDocument();
     const row = screen.getByText("P-102").closest("tr");
     if (!row) throw new Error("P-102 row missing");
     fireEvent.keyDown(row, { key: " " });
     const go = screen.getByRole("button", { name: /Study 2 equipment/ });
     fireEvent.click(go);
+    // The study is named before it is created (left empty: named automatically).
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      within(dialog).getByText(/Left empty: the study is named after its equipment/),
+    ).toBeInTheDocument();
+    fireEvent.change(within(dialog).getByLabelText("Study name"), {
+      target: { value: "Pump bearings 2026" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create the study" }));
     await waitFor(() =>
       expect(mockInvoke).toHaveBeenCalledWith("create_reliability_study", {
-        input: expect.objectContaining({ equipment_ids: [10, 11] }),
+        input: expect.objectContaining({
+          equipment_ids: [10, 11],
+          title: "Pump bearings 2026",
+          accept_mixed_classes: false,
+        }),
       }),
     );
     expect(await screen.findByText("study opened")).toBeInTheDocument();
     expect(mockInvoke).toHaveBeenCalledWith("get_reliability_fleet_view", {
       filter: expect.objectContaining({ org_node_id: null, equipment_class_id: null, limit: 50 }),
     });
+  });
+
+  it("asks to confirm a selection of different classes before creating the study (L2-18)", async () => {
+    const mixed = {
+      ...fleetView,
+      rows: [
+        fleetView.rows[0],
+        {
+          ...fleetView.rows[1],
+          equipment_id: 12,
+          asset_code: "PR-1",
+          class_id: 9,
+          class_name: "Overhead crane",
+        },
+      ],
+    };
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_reliability_fleet_view") return mixed;
+      if (cmd === "list_reliability_studies") return [];
+      if (cmd === "create_reliability_study") return study;
+      throw new Error(`unexpected ${cmd}`);
+    });
+    render(
+      <MemoryRouter initialEntries={["/reliability"]}>
+        <Routes>
+          <Route path="/reliability" element={<RamsFleetPage />} />
+          <Route path="/reliability/studies/:id" element={<p>study opened</p>} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Select P-101" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select PR-1" }));
+    fireEvent.click(screen.getByRole("button", { name: /Study 2 equipment/ }));
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      within(dialog).getByText(
+        /The selection mixes several classes \(Centrifugal pump, Overhead crane\)/,
+      ),
+    ).toBeInTheDocument();
+    const create = within(dialog).getByRole("button", { name: "Create the study" });
+    expect(create).toBeDisabled();
+    fireEvent.click(
+      within(dialog).getByRole("checkbox", { name: /I confirm studying these equipment together/ }),
+    );
+    expect(create).toBeEnabled();
+    fireEvent.click(create);
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith("create_reliability_study", {
+        input: expect.objectContaining({
+          equipment_ids: [10, 12],
+          title: null,
+          accept_mixed_classes: true,
+        }),
+      }),
+    );
+    expect(await screen.findByText("study opened")).toBeInTheDocument();
+  });
+
+  it("searches the saved studies and renames one (L2-13)", async () => {
+    const other = {
+      ...study,
+      id: 8,
+      title: "Crane hoist",
+      assets: study.assets.slice(0, 1).map((a) => ({ ...a, asset_code: "PR-1" })),
+    };
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_reliability_fleet_view") return fleetView;
+      if (cmd === "list_reliability_studies") return [study, other];
+      if (cmd === "update_reliability_study") return { ...study, title: "Pump bearings" };
+      throw new Error(`unexpected ${cmd}`);
+    });
+    render(
+      <MemoryRouter initialEntries={["/reliability"]}>
+        <RamsFleetPage />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText("Crane hoist")).toBeInTheDocument();
+    const search = screen.getByRole("searchbox", { name: "Search a study" });
+    fireEvent.change(search, { target: { value: "pr-1" } });
+    expect(screen.getByText("Crane hoist")).toBeInTheDocument();
+    expect(screen.queryByText(study.title)).not.toBeInTheDocument();
+    fireEvent.change(search, { target: { value: "nothing like it" } });
+    expect(screen.getByText('No study matches "nothing like it".')).toBeInTheDocument();
+    fireEvent.change(search, { target: { value: "" } });
+
+    fireEvent.click(screen.getByRole("button", { name: `Rename the study ${study.title}` }));
+    const dialog = await screen.findByRole("dialog");
+    const name = within(dialog).getByLabelText("Study name");
+    expect(name).toHaveValue(study.title);
+    fireEvent.change(name, { target: { value: "  " } });
+    expect(within(dialog).getByRole("button", { name: "Rename" })).toBeDisabled();
+    fireEvent.change(name, { target: { value: "Pump bearings" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Rename" }));
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith("update_reliability_study", {
+        input: { id: 7, expected_row_version: 2, title: "Pump bearings" },
+      }),
+    );
   });
 
   it("selects the equipment handed over in the address, or says it could not be loaded", async () => {
@@ -241,7 +410,171 @@ describe("RamsFleetPage", () => {
     );
     expect(await screen.findByText("No failures in the period")).toBeInTheDocument();
   });
+
+  it("gives counts only on a window too short for the MTBF", async () => {
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_reliability_fleet_view")
+        return {
+          ...fleetView,
+          kpis: {
+            ...fleetView.kpis,
+            window_too_short: true,
+            mtbf_hours: null,
+            mttr_hours: null,
+            mean_active_repair_hours: null,
+            availability_operational: null,
+          },
+        };
+      if (cmd === "list_reliability_studies") return [];
+      throw new Error(`unexpected ${cmd}`);
+    });
+    render(
+      <MemoryRouter>
+        <RamsFleetPage />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText("P-101")).toBeInTheDocument();
+    expect(screen.getAllByText("period too short for the MTBF (under 90 days)").length).toBe(4);
+  });
+
+  it("keeps period, site and class in the address: applied on load, updated on change", async () => {
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_reliability_fleet_view")
+        return {
+          ...fleetView,
+          org_nodes: [{ id: 4, label: "Usine", depth: 0 }],
+          equipment_classes: [{ id: 7, label: "Pump", depth: 0 }],
+        };
+      if (cmd === "list_reliability_studies") return [];
+      throw new Error(`unexpected ${cmd}`);
+    });
+    render(
+      <MemoryRouter initialEntries={["/reliability?months=24&site=4&class=7"]}>
+        <RamsFleetPage />
+        <LocationProbe />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText("P-101")).toBeInTheDocument();
+    expect(mockInvoke).toHaveBeenCalledWith("get_reliability_fleet_view", {
+      filter: expect.objectContaining({ org_node_id: 4, equipment_class_id: 7 }),
+    });
+    expect(screen.getByRole("combobox", { name: "Period" })).toHaveValue("24");
+    expect(screen.getByRole("combobox", { name: "Site" })).toHaveValue("4");
+    fireEvent.change(screen.getByRole("combobox", { name: "Class" }), { target: { value: "" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Period" }), { target: { value: "12" } });
+    await waitFor(() => expect(screen.getByText("?site=4")).toBeInTheDocument());
+  });
+
+  it("opens the quality page on the same period, site and class", async () => {
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_reliability_fleet_view")
+        return {
+          ...fleetView,
+          org_nodes: [{ id: 4, label: "Usine", depth: 0 }],
+          equipment_classes: [{ id: 7, label: "Pump", depth: 0 }],
+        };
+      if (cmd === "list_reliability_studies") return [];
+      throw new Error(`unexpected ${cmd}`);
+    });
+    render(
+      <MemoryRouter initialEntries={["/reliability"]}>
+        <Routes>
+          <Route path="/reliability" element={<RamsFleetPage />} />
+          <Route path="/reliability/data-quality" element={<LocationProbe />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText("P-101")).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("combobox", { name: "Site" }), { target: { value: "4" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Class" }), { target: { value: "7" } });
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith("get_reliability_fleet_view", {
+        filter: expect.objectContaining({ org_node_id: 4, equipment_class_id: 7 }),
+      }),
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Data quality" }));
+    expect(await screen.findByText("?months=12&site=4&class=7")).toBeInTheDocument();
+  });
 });
+
+describe("RamsFleetPage ranking (L2-17 / L2-23)", () => {
+  function mountFleet(entry = "/reliability") {
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_reliability_fleet_view") return fleetView;
+      if (cmd === "list_reliability_studies") return [];
+      throw new Error(`unexpected ${cmd}`);
+    });
+    render(
+      <MemoryRouter initialEntries={[entry]}>
+        <RamsFleetPage />
+        <LocationProbe />
+      </MemoryRouter>,
+    );
+  }
+
+  it("sorts by a column on the backend and reverses on a second click", async () => {
+    mountFleet();
+    expect(await screen.findByText("P-101")).toBeInTheDocument();
+    // The column header's sort button (rows also carry a "failures → OTs" button, L2-21).
+    const failuresSort = () => {
+      const header = screen
+        .getAllByRole("columnheader")
+        .find((h) => /Failures|Failur/.test(h.textContent ?? ""));
+      if (!header) throw new Error("failures column header not found");
+      return within(header).getByRole("button");
+    };
+    fireEvent.click(failuresSort());
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith("get_reliability_fleet_view", {
+        filter: expect.objectContaining({ sort_by: "failures", sort_desc: true }),
+      }),
+    );
+    expect(await screen.findByText(/sort=failures/)).toBeInTheDocument();
+    fireEvent.click(failuresSort());
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith("get_reliability_fleet_view", {
+        filter: expect.objectContaining({ sort_by: "failures", sort_desc: false }),
+      }),
+    );
+  });
+
+  it("offers the 10 most failing and 10 most costly views", async () => {
+    mountFleet();
+    expect(await screen.findByText("P-101")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "10 most costly" }));
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith("get_reliability_fleet_view", {
+        filter: expect.objectContaining({ sort_by: "cost", sort_desc: true, limit: 10 }),
+      }),
+    );
+  });
+
+  it("shows the cost column and the percentage on the share bar", async () => {
+    mountFleet();
+    expect(await screen.findByText("P-101")).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: /Cost/ })).toBeInTheDocument();
+    // 0.6066 of the fleet downtime, in text next to the bar.
+    expect(screen.getByText(/60[.,]7\s?%/)).toBeInTheDocument();
+  });
+
+  it("keeps the ticked equipment in the address, restored when coming back", async () => {
+    mountFleet("/reliability?sel=10,11");
+    expect(await screen.findByRole("button", { name: /Study 2 equipment/ })).toBeEnabled();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select P-101" }));
+    await waitFor(() => expect(screen.getByText(/sel=11/)).toBeInTheDocument());
+  });
+
+  it("names the filter in the availability tile and says when the figures were calculated", async () => {
+    mountFleet("/reliability?site=1");
+    expect(await screen.findByText("Operational availability — Main plant")).toBeInTheDocument();
+    expect(screen.getByTestId("rams-calculated-at")).toHaveTextContent(/Calculated on/);
+  });
+});
+
+function LocationProbe() {
+  const location = useLocation();
+  return <p>{location.search}</p>;
+}
 
 const dataset: StudyDataset = {
   study,
@@ -470,6 +803,7 @@ describe("StudyLifeStep", () => {
         datasetVersion="v1"
         onStudyChanged={vi.fn()}
         onDecide={decide}
+        onGoData={vi.fn()}
       />,
     );
     expect(await screen.findByText("3.04")).toBeInTheDocument();
@@ -490,6 +824,64 @@ describe("StudyLifeStep", () => {
     );
   });
 
+  it("keeps the cost and decision buttons visible but disabled, with the right they need (L2-24)", async () => {
+    mockInvoke.mockResolvedValue(fitAnalysis);
+    deniedRights = [P.RAM_ANALYZE];
+    try {
+      render(
+        <StudyLifeStep
+          study={study}
+          editable={false}
+          datasetVersion="v1"
+          onStudyChanged={vi.fn()}
+          onDecide={vi.fn()}
+          onGoData={vi.fn()}
+        />,
+      );
+      expect(await screen.findByText("3.04")).toBeInTheDocument();
+      const save = screen.getByRole("button", { name: "Save the costs" });
+      expect(save).toBeDisabled();
+      expect(save).toHaveAttribute("title", expect.stringMatching(/^Right required: /));
+      const record = screen.getByRole("button", { name: "Record this decision" });
+      expect(record).toBeDisabled();
+      expect(record).toHaveAttribute("title", expect.stringMatching(/^Right required: /));
+      expect(screen.getByRole("note")).toHaveTextContent(/^Read-only: /);
+    } finally {
+      deniedRights = [];
+    }
+  });
+
+  it("recommends no interval when wear-out is not shown, consistent with the reading (L2-12)", async () => {
+    mockInvoke.mockResolvedValue({
+      ...fitAnalysis,
+      fit: { ...fitAnalysis.fit, beta: 1.08, beta_lower: 0.7, beta_upper: 1.6, pattern: "random" },
+      cost: {
+        ...fitAnalysis.cost,
+        proposed: null,
+        rejection: "wear_out_not_proven",
+        saving_vs_run_to_failure: null,
+        annual_saving_vs_current: null,
+      },
+    });
+    render(
+      <StudyLifeStep
+        study={study}
+        editable
+        datasetVersion="v1"
+        onStudyChanged={vi.fn()}
+        onDecide={vi.fn()}
+        onGoData={vi.fn()}
+      />,
+    );
+    expect(
+      await screen.findByText(/wear-out is not shown\. No replacement interval is recommended/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/^Proposed: replacement at/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Record this decision" })).not.toBeInTheDocument();
+    // The note can be printed or exported.
+    expect(screen.getByRole("button", { name: "Export the note" })).toBeInTheDocument();
+  });
+
   it("explains why no fit is shown when failures are too few", async () => {
     mockInvoke.mockResolvedValue({
       ...fitAnalysis,
@@ -507,6 +899,7 @@ describe("StudyLifeStep", () => {
         datasetVersion="v1"
         onStudyChanged={vi.fn()}
         onDecide={vi.fn()}
+        onGoData={vi.fn()}
       />,
     );
     expect(await screen.findByText("Not enough failures")).toBeInTheDocument();

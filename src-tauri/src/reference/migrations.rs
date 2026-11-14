@@ -10,7 +10,6 @@
 //!   - deactivates the source value after successful operation when policy allows
 
 use crate::errors::{AppError, AppResult};
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
@@ -143,7 +142,7 @@ async fn insert_migration_row<C: ConnectionTrait>(
     reason_code: &str,
     actor_id: i64,
 ) -> AppResult<ReferenceValueMigration> {
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -210,7 +209,7 @@ async fn remap_equipment_classification_codes<C: ConnectionTrait>(
         return Ok(0);
     }
 
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
     let result = db
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -304,7 +303,7 @@ async fn remap_lookup_consumer_usage<C: ConnectionTrait>(
             total += aliases.rows_affected() as i64;
 
             // Soft-retire the source lookup value so consumers stop picking it.
-            let now = Utc::now().to_rfc3339();
+            let now = crate::clock::now().to_rfc3339();
             let deactivate = db
                 .execute(Statement::from_sql_and_values(
                     DbBackend::Sqlite,
@@ -318,7 +317,7 @@ async fn remap_lookup_consumer_usage<C: ConnectionTrait>(
         }
         (Some(from_id), None) => {
             // Fallback: rename the existing lookup code when no target exists.
-            let now = Utc::now().to_rfc3339();
+            let now = crate::clock::now().to_rfc3339();
             let rename = db
                 .execute(Statement::from_sql_and_values(
                     DbBackend::Sqlite,

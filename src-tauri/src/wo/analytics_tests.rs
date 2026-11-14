@@ -222,7 +222,7 @@ mod tests {
                 wo_id,
                 actor_id: actor,
                 expected_row_version: wo.row_version,
-                planner_id: actor,
+                planner_id: Some(actor),
                 planned_start: Some("2026-04-10T08:00:00Z".to_string()),
                 planned_end: Some("2026-04-10T16:00:00Z".to_string()),
                 shift: None,
@@ -336,13 +336,20 @@ mod tests {
                 origin: None,
                 is_required: true,
             },
+            crate::wo::parts::StockAuthority::MayMoveStock,
         )
         .await
         .expect("add planned part");
 
-        parts::record_actual_usage(db, part.id, 5.0, Some(20.0))
-            .await
-            .expect("record actual usage");
+        parts::record_actual_usage(
+            db,
+            part.id,
+            5.0,
+            Some(20.0),
+            crate::wo::parts::StockAuthority::MayMoveStock,
+        )
+        .await
+        .expect("record actual usage");
 
         costs::update_service_cost(
             db,

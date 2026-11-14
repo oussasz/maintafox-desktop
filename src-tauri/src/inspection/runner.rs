@@ -541,7 +541,7 @@ pub async fn start_inspection_round(
         &txn,
         &round,
         "status = 'in_progress', started_at = COALESCE(started_at, ?)",
-        vec![Utc::now().to_rfc3339().into()],
+        vec![crate::clock::now().to_rfc3339().into()],
     )
     .await?;
     let out = get_round_summary(&txn, round.id).await?;
@@ -611,7 +611,11 @@ pub async fn complete_inspection_round(
         &txn,
         &round,
         "status = ?, completed_at = ?, completion_percentage = ?",
-        vec![status.into(), Utc::now().to_rfc3339().into(), completion.into()],
+        vec![
+            status.into(),
+            crate::clock::now().to_rfc3339().into(),
+            completion.into(),
+        ],
     )
     .await?;
     let out = get_round_summary(&txn, round.id).await?;
@@ -674,7 +678,7 @@ pub async fn review_inspection_round(
         &round,
         "status = 'reviewed', reviewed_at = ?, reviewed_by_id = ?, review_note = ?",
         vec![
-            Utc::now().to_rfc3339().into(),
+            crate::clock::now().to_rfc3339().into(),
             reviewer_user_id.into(),
             note.map_or_else(|| sea_orm::Value::from(None::<String>), sea_orm::Value::from),
         ],
@@ -755,7 +759,7 @@ pub async fn add_inspection_photo_evidence(
         [
             input.result_id.into(),
             relative_path.clone().into(),
-            Utc::now().to_rfc3339().into(),
+            crate::clock::now().to_rfc3339().into(),
             evidence_sync_id.clone().into(),
         ],
     ))

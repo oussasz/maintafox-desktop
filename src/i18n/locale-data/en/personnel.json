@@ -155,7 +155,10 @@
       "di30d": "DI last 30 days"
     },
     "workHistory": {
-      "module": { "wo": "WO", "di": "Request" },
+      "module": {
+        "wo": "WO",
+        "di": "Request"
+      },
       "role": {
         "primary_responsible": "Primary responsible",
         "intervener": "Intervener",
@@ -175,7 +178,9 @@
       "labor": "Labor rate",
       "overtime": "Overtime rate",
       "source": "Source",
-      "sourceType": { "manual": "Entered manually" },
+      "sourceType": {
+        "manual": "Entered manually"
+      },
       "active": "Active",
       "empty": "No rate cards yet. Add an hourly labor rate to enable Planning and WO labor cost.",
       "addTitle": "Add rate card",
@@ -194,6 +199,8 @@
     "restricted": "Restricted"
   },
   "create": {
+    "created": "Record for {{name}} created",
+    "savedEdit": "Record for {{name}} saved",
     "positionSeedFailed": "The position's requirements could not be loaded ({{msg}}): add the skills by hand.",
     "photoUploadWarning": "Record saved, but the photo could not be uploaded: {{msg}}",
     "qualificationsInRecord": "Skills and certifications of an existing person are managed in the Qualifications tab of their record.",
@@ -708,7 +715,8 @@
     "action": {
       "openWizard": "Import",
       "close": "Close",
-      "apply": "Apply batch"
+      "apply": "Apply batch",
+      "applyDisabled": "Upload and check a file with no blocking error before applying the batch."
     },
     "mode": {
       "label": "Import mode",
@@ -779,6 +787,7 @@
     "bases": {
       "roster": "Schedule classes",
       "rest_day": "Rest day",
+      "site_rest_day": "Site rest day",
       "holiday": "Holiday",
       "no_schedule": "No schedule class",
       "no_members": "No members"
@@ -835,6 +844,20 @@
     "contractStart": "Contract start",
     "contractEnd": "Contract end",
     "endBeforeStart": "The contract end is before its start.",
+    "contractNumber": "Contract number",
+    "contractAmount": "Contract amount",
+    "amountInvalid": "Enter a positive amount.",
+    "alertDays": "Alert before the end (days)",
+    "alertDaysInvalid": "Enter a whole number of days between 0 and 365.",
+    "amount": "Amount / consumed",
+    "consumed": "Consumed: {{amount}}",
+    "contractState": {
+      "active": "Contract running",
+      "expiring": "Ends in {{days}} days",
+      "expired": "Contract expired"
+    },
+    "contractAlert_one": "{{count}} active contractor has a contract that is expiring or expired.",
+    "contractAlert_other": "{{count}} active contractors have a contract that is expiring or expired.",
     "onboarding": "Onboarding",
     "insurance": "Insurance",
     "notes": "Notes",
@@ -853,6 +876,14 @@
       "valid": "Valid",
       "expired": "Expired",
       "not_required": "Not required"
+    },
+    "performance": {
+      "header": "Performance",
+      "workOrders_one": "{{count}} work order",
+      "workOrders_other": "{{count}} work orders",
+      "onTime": "On time: {{pct}} % ({{onTime}}/{{total}})",
+      "noClosed": "No closed work order with a deadline",
+      "onTimeHint": "Share of work orders closed by their planned end, among closed work orders that had a planned end (cancelled ones excluded)."
     }
   },
   "siteWeek": {

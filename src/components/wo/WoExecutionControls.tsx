@@ -87,11 +87,12 @@ import {
   markWoToolNotUsed,
   markWoToolUsed,
   openDowntime,
+  previewWoLaborRate,
   recordPartUsage,
   reopenTask,
   unconfirmNoParts,
 } from "@/services/wo-execution-service";
-import { holdWo, listWos, pauseWo, startWo } from "@/services/wo-service";
+import { createWo, holdWo, listWos, pauseWo, startWo } from "@/services/wo-service";
 import { useWoStore } from "@/stores/wo-store";
 import { formatDateTime } from "@/utils/format-date";
 import type {
@@ -103,7 +104,10 @@ import type {
 } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
+import { NonStockPartStatus } from "./NonStockPartStatus";
 import { WoAddExecutionPartDialog } from "./WoAddExecutionPartDialog";
+import { WoNonStockPurchaseDialog } from "./WoNonStockPurchaseDialog";
+import { useWoExecutionStanding } from "./use-wo-execution-standing";
 import { mergeLaborPeople, useWoLaborPeople } from "./use-wo-labor-people";
 import { woActionFailureText } from "./wo-action-error";
 
@@ -240,6 +244,24 @@ function OriginBadge({
   );
 }
 
+/** Used quantity not yet issued from the store ("à sortir"): the storekeeper issues it. */
+function PartToIssueChip({ part }: { part: WoExecPart }) {
+  const { t } = useTranslation("ot");
+  if (!(part.pending_issue_qty > 0)) return null;
+  return (
+    <Badge
+      variant="outline"
+      className="border-amber-500/60 text-[10px] text-amber-700 dark:text-amber-400"
+      title={t("execution.parts.toIssue.hint")}
+    >
+      {t("execution.parts.toIssue.badge", {
+        qty: part.pending_issue_qty,
+        unit: part.unit_symbol ?? "",
+      })}
+    </Badge>
+  );
+}
+
 function executionLogI18nKey(summaryKey: string): string {
   if (summaryKey.startsWith("executionLog.")) {
     return `execution.${summaryKey}`;
@@ -309,6 +331,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
 
     // Add part dialog (during execution)
     const [showAddPartDialog, setShowAddPartDialog] = useState(false);
+    const [showNonStockDialog, setShowNonStockDialog] = useState(false);
 
     // Add tool dialog
     const [showAddToolDialog, setShowAddToolDialog] = useState(false);
@@ -364,6 +387,50 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
       };
     }, [showLaborDialog, laborTechId, wo.id]);
 
+    // The hourly rate the entry will be priced at, shown before saving.
+    const [laborRate, setLaborRate] = useState<{
+      normal: number | null;
+      overtime: number | null;
+    } | null>(null);
+    useEffect(() => {
+      if (!showLaborDialog || !laborTechId || !laborDate) {
+        setLaborRate(null);
+        return;
+      }
+      let cancelled = false;
+      setLaborRate(null);
+      previewWoLaborRate(Number(laborTechId), laborDate)
+        .then((rate) => {
+          if (!cancelled) setLaborRate({ normal: rate.normal_rate, overtime: rate.overtime_rate });
+        })
+        .catch(() => {
+          // Refused (rates of other people are restricted): show no rate line rather than "no rate".
+          if (!cancelled) setLaborRate(null);
+        });
+      return () => {
+        cancelled = true;
+      };
+    }, [showLaborDialog, laborTechId, laborDate]);
+
+    // Team filter of the staff list in the labour dialog ("" = everyone).
+    const [laborTeamFilter, setLaborTeamFilter] = useState("");
+    const laborTeams = useMemo(() => {
+      const teams = new Map<string, string>();
+      for (const opt of intervenerOptions) {
+        if (opt.teamId != null && opt.teamName) teams.set(String(opt.teamId), opt.teamName);
+      }
+      return [...teams.entries()].sort((a, b) => a[1].localeCompare(b[1]));
+    }, [intervenerOptions]);
+    const shownIntervenerOptions = useMemo(
+      () =>
+        laborTeamFilter
+          ? intervenerOptions.filter(
+              (opt) => String(opt.teamId ?? "") === laborTeamFilter || opt.value === laborTechId,
+            )
+          : intervenerOptions,
+      [intervenerOptions, laborTeamFilter, laborTechId],
+    );
+
     // ── Load data ──────────────────────────────────────────────────────────
 
     const loadData = useCallback(async () => {
@@ -415,12 +482,20 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
     const { can } = usePermissions();
     const actorId = info?.user_id ?? null;
     const loggingEnabled = LOGGING_EDITABLE_STATUSES.has(statusCode);
-    const controlsDisabled = !canEdit || !loggingEnabled || busy;
+    // Execution actions (L5-08): someone who does not carry out this work order (neither its
+    // assignee, a member of its team, its planner nor an approver at its site) sees parts, tools,
+    // downtime and task results greyed with who it is assigned to; their own labour stays open.
+    const execution = useWoExecutionStanding(wo);
+    const executionBlocked = execution.blocker !== null;
+    const controlsDisabled = !canEdit || !loggingEnabled || busy || executionBlocked;
     // Task results, NOK evidence, task reopening, tool use and labour are recorded in progress and on
     // hold (backend `TASK_RECORDING_STATUSES`, CMMS Advisor O3); recording during a hold never
     // resumes the work order.
     const recordingEnabled = isRecordingStatus(statusCode);
+    // Labour: open to anyone holding the edit right (their own hours only, checked by the backend).
     const recordingDisabled = !canEdit || !recordingEnabled || busy;
+    /** Task results and tool use: execution actions. */
+    const taskResultDisabled = recordingDisabled || executionBlocked;
 
     const handleRefreshState = useCallback(
       async (next: WorkOrder) => {
@@ -517,10 +592,19 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
     }, [laborDate, laborStart, laborEnd, laborBreakMin]);
 
     const openLaborDialog = useCallback(() => {
-      setLaborTechId(intervenerOptions[0]?.value ?? "");
+      // The signed-in person first (a technician books himself); planners can pick anyone.
+      const self = intervenerOptions.find((opt) => opt.isSelf);
+      const only = intervenerOptions.length === 1 ? intervenerOptions[0] : undefined;
+      setLaborTechId(self?.value ?? only?.value ?? "");
+      setLaborTeamFilter("");
+      // Work just done: ends now, starts an hour earlier on the same day (never before midnight).
+      const now = new Date();
+      const pad = (n: number) => String(n).padStart(2, "0");
+      const endMinutes = now.getHours() * 60 + now.getMinutes();
+      const startMinutes = Math.max(0, endMinutes - 60);
       setLaborDate(todayLocalDate());
-      setLaborStart("08:00");
-      setLaborEnd("10:00");
+      setLaborStart(`${pad(Math.floor(startMinutes / 60))}:${pad(startMinutes % 60)}`);
+      setLaborEnd(`${pad(now.getHours())}:${pad(now.getMinutes())}`);
       setLaborBreakMin("");
       setLaborNotes("");
       setLaborOvertime(false);
@@ -737,6 +821,37 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
       [actorId, taskResultCodes, taskFindingNotes, taskFollowUpCodes, loadData, t],
     );
 
+    // L1-16: one click raises a draft corrective OT on the same equipment from a non-conforming
+    // step; its number fills the follow-up field, so completing the step links the two.
+    const handleRaiseCorrective = useCallback(
+      async (task: WoExecTask) => {
+        if (!actorId) return;
+        const findingNote = (taskFindingNotes[task.id] ?? "").trim();
+        setBusy(true);
+        setError(null);
+        try {
+          const created = await createWo({
+            type_code: "corrective",
+            equipment_id: wo.equipment_id,
+            entity_id: wo.entity_id,
+            title: t("execution.taskCorrectiveTitle", { task: task.task_description }),
+            description: t("execution.taskCorrectiveDescription", {
+              code: wo.code,
+              task: task.task_description,
+              note: findingNote === "" ? "-" : findingNote,
+            }),
+            creator_id: actorId,
+          });
+          setTaskFollowUpCodes((prev) => ({ ...prev, [task.id]: created.code }));
+        } catch (e) {
+          setError(woActionFailureText(t("execution.error.raiseCorrective"), e));
+        } finally {
+          setBusy(false);
+        }
+      },
+      [actorId, taskFindingNotes, wo.equipment_id, wo.entity_id, wo.code, t],
+    );
+
     const handleReopenTask = useCallback(
       async (task: WoExecTask) => {
         const comment = reopenComment.trim();
@@ -916,13 +1031,13 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
 
     const actuallyUsedParts = useMemo(
       () =>
-        parts.filter(
+        activeParts.filter(
           (p) =>
             p.origin === "execution_added" ||
             p.consumption_status === "used" ||
             (p.quantity_used ?? 0) > 0,
         ),
-      [parts],
+      [activeParts],
     );
 
     const downtimeLostMinutes = useMemo(
@@ -944,6 +1059,14 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
 
     return (
       <div className="space-y-8">
+        {execution.blocker && canEdit ? (
+          <p
+            id="wo-execution-controls-blocker"
+            className="rounded-md border border-surface-border px-3 py-2 text-sm text-text-muted"
+          >
+            {execution.blocker}
+          </p>
+        ) : null}
         {error && (
           <div className="rounded-md border border-tone-danger-border bg-tone-danger-bg px-3 py-2 text-sm text-tone-danger-fg">
             {error}
@@ -1039,15 +1162,6 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
           {laborEntries.length === 0 ? (
             <div className="rounded-md border border-dashed px-4 py-6 text-center">
               <p className="text-sm text-muted-foreground">{t("execution.emptyLabor")}</p>
-              <Button
-                className="mt-3"
-                size="sm"
-                variant="outline"
-                onClick={openLaborDialog}
-                disabled={recordingDisabled || !actorId}
-              >
-                {t("execution.addLabor")}
-              </Button>
             </div>
           ) : (
             <div className="space-y-2">
@@ -1171,7 +1285,20 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                                 })
                               : t("execution.parts.badge.notUsed")}
                           </Badge>
+                          <PartToIssueChip part={part} />
+                          {part.is_non_stock ? (
+                            <NonStockPartStatus
+                              received={part.non_stock_received_qty}
+                              planned={part.quantity_planned}
+                            />
+                          ) : null}
                         </div>
+                      ) : part.is_non_stock ? (
+                        // Hors-stock (L3-04): its use is the receipt, booked when it arrives.
+                        <NonStockPartStatus
+                          received={part.non_stock_received_qty}
+                          planned={part.quantity_planned}
+                        />
                       ) : (
                         <div className="flex items-center gap-1">
                           <DecimalField
@@ -1191,7 +1318,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                         </div>
                       )}
                       <div className="flex items-center gap-1">
-                        {!isUsed && !isNotUsed && (
+                        {!isUsed && !isNotUsed && !part.is_non_stock && (
                           <>
                             <Button
                               size="sm"
@@ -1214,6 +1341,23 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                             </Button>
                           </>
                         )}
+                        {/* A hors-stock part whose purchase ended with nothing received is
+                            marked not used with a reason (refused while its purchase is open). */}
+                        {!isUsed &&
+                          !isNotUsed &&
+                          part.is_non_stock &&
+                          part.origin === "planned" &&
+                          part.non_stock_received_qty <= 0 && (
+                            <Button
+                              size="sm"
+                              className="h-7 px-2 text-xs"
+                              variant="outline"
+                              onClick={() => openNotUsedDialog(part.id)}
+                              disabled={controlsDisabled}
+                            >
+                              {t("execution.notUsed.cta")}
+                            </Button>
+                          )}
                       </div>
                     </div>
                   );
@@ -1256,6 +1400,15 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                   disabled={controlsDisabled}
                 >
                   {t("execution.parts.add.cta")}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs"
+                  onClick={() => setShowNonStockDialog(true)}
+                  disabled={controlsDisabled}
+                >
+                  {t("nonStockPurchase.open")}
                 </Button>
                 {plannedParts.length === 0 && !wo.parts_actuals_confirmed && (
                   <Button
@@ -1300,11 +1453,19 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                     <span className="flex-1 font-medium">
                       {formatOrDash(part.article_ref ?? part.article_label)}
                     </span>
-                    <span className="text-muted-foreground tabular-nums">
-                      {t("execution.parts.usedQtyLabel", { qty: part.quantity_used ?? 0 })}
-                      {part.unit_symbol ? ` ${part.unit_symbol}` : ""}
-                    </span>
+                    {part.is_non_stock ? (
+                      <NonStockPartStatus
+                        received={part.non_stock_received_qty}
+                        planned={part.quantity_planned}
+                      />
+                    ) : (
+                      <span className="text-muted-foreground tabular-nums">
+                        {t("execution.parts.usedQtyLabel", { qty: part.quantity_used ?? 0 })}
+                        {part.unit_symbol ? ` ${part.unit_symbol}` : ""}
+                      </span>
+                    )}
                     <OriginBadge origin={part.origin} t={t} />
+                    <PartToIssueChip part={part} />
                   </div>
                 ))}
               </div>
@@ -1402,7 +1563,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                         [task.id]: v as TaskResultCode,
                       }))
                     }
-                    disabled={recordingDisabled || Boolean(task.completed_at)}
+                    disabled={taskResultDisabled || Boolean(task.completed_at)}
                   >
                     <SelectTrigger className="h-8">
                       <SelectValue />
@@ -1423,7 +1584,11 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                       size="sm"
                       variant="outline"
                       onClick={() => void handleCompleteTask(task)}
-                      disabled={recordingDisabled || !actorId}
+                      disabled={taskResultDisabled || !actorId}
+                      title={execution.blocker ?? undefined}
+                      aria-describedby={
+                        execution.blocker ? "wo-execution-controls-blocker" : undefined
+                      }
                     >
                       {taskResultCodes[task.id] === "cancelled"
                         ? t("execution.cancelTask")
@@ -1438,7 +1603,11 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                         setReopenTaskId(task.id);
                         setReopenComment("");
                       }}
-                      disabled={recordingDisabled}
+                      disabled={taskResultDisabled}
+                      title={execution.blocker ?? undefined}
+                      aria-describedby={
+                        execution.blocker ? "wo-execution-controls-blocker" : undefined
+                      }
                     >
                       {t("execution.reopenTask")}
                     </Button>
@@ -1453,7 +1622,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                         onChange={(e) =>
                           setTaskFindingNotes((prev) => ({ ...prev, [task.id]: e.target.value }))
                         }
-                        disabled={recordingDisabled}
+                        disabled={taskResultDisabled}
                       />
                       <Input
                         placeholder={t("execution.taskFollowUpPlaceholder")}
@@ -1462,8 +1631,20 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                         onChange={(e) =>
                           setTaskFollowUpCodes((prev) => ({ ...prev, [task.id]: e.target.value }))
                         }
-                        disabled={recordingDisabled}
+                        disabled={taskResultDisabled}
                       />
+                      {can(P.OT_CREATE) && (taskFollowUpCodes[task.id] ?? "").trim() === "" ? (
+                        <div className="md:col-span-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => void handleRaiseCorrective(task)}
+                            disabled={taskResultDisabled}
+                          >
+                            {t("execution.taskRaiseCorrective")}
+                          </Button>
+                        </div>
+                      ) : null}
                       {task.is_mandatory ? (
                         <p className="text-xs text-muted-foreground md:col-span-2">
                           {t("execution.taskNokEvidenceHint")}
@@ -1485,7 +1666,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                         size="sm"
                         variant="outline"
                         onClick={() => void handleReopenTask(task)}
-                        disabled={recordingDisabled || reopenComment.trim() === ""}
+                        disabled={taskResultDisabled || reopenComment.trim() === ""}
                       >
                         {t("execution.reopenTaskConfirm")}
                       </Button>
@@ -1699,7 +1880,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                 setAddToolDialogError(null);
                 setShowAddToolDialog(true);
               }}
-              disabled={recordingDisabled}
+              disabled={taskResultDisabled}
             >
               {t("execution.tools.add")}
             </Button>
@@ -1749,7 +1930,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                         variant="outline"
                         className="h-6 px-2 text-xs"
                         onClick={() => void handleMarkToolUsed(tool.id)}
-                        disabled={recordingDisabled}
+                        disabled={taskResultDisabled}
                       >
                         {t("execution.tools.markUsed")}
                       </Button>
@@ -1758,7 +1939,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                         variant="ghost"
                         className="h-6 px-2 text-xs"
                         onClick={() => void handleMarkToolNotUsed(tool.id)}
-                        disabled={recordingDisabled}
+                        disabled={taskResultDisabled}
                       >
                         {t("execution.tools.markNotUsed")}
                       </Button>
@@ -1838,6 +2019,27 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
               </DialogDescription>
             </DialogHeader>
             <div className="grid gap-3">
+              {laborTeams.length > 0 ? (
+                <div className="space-y-1">
+                  <Label>{t("execution.laborDialog.team")}</Label>
+                  <Select
+                    value={laborTeamFilter || "__all"}
+                    onValueChange={(v) => setLaborTeamFilter(v === "__all" ? "" : v)}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__all">{t("execution.laborDialog.allTeams")}</SelectItem>
+                      {laborTeams.map(([id, name]) => (
+                        <SelectItem key={id} value={id}>
+                          {name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              ) : null}
               <div className="space-y-1">
                 <Label>{t("execution.laborDialog.technician")}</Label>
                 <Select
@@ -1845,11 +2047,11 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                   onValueChange={(v) => setLaborTechId(v === "__none" ? "" : v)}
                 >
                   <SelectTrigger>
-                    <SelectValue placeholder={t("execution.intervenerId")} />
+                    <SelectValue placeholder={t("execution.laborDialog.technicianPlaceholder")} />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="__none">—</SelectItem>
-                    {intervenerOptions.map((opt) => (
+                    {shownIntervenerOptions.map((opt) => (
                       <SelectItem key={opt.value} value={opt.value}>
                         {opt.label}
                       </SelectItem>
@@ -1881,6 +2083,16 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                 />
                 {t("execution.laborDialog.overtime")}
               </label>
+              {laborTechId && laborRate ? (
+                <p className="text-xs text-muted-foreground">
+                  {(() => {
+                    const rate = laborOvertime ? laborRate.overtime : laborRate.normal;
+                    return rate != null
+                      ? t("execution.laborDialog.rateShown", { rate: formatCurrency(rate) })
+                      : t("execution.laborDialog.rateUnknown");
+                  })()}
+                </p>
+              ) : null}
               <div className="space-y-1">
                 <Label>{t("execution.laborDialog.date")}</Label>
                 <DateField value={laborDate} onChange={(v) => setLaborDate(v)} />
@@ -1995,6 +2207,12 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
           open={showAddPartDialog}
           onOpenChange={setShowAddPartDialog}
           onAdded={loadData}
+        />
+        <WoNonStockPurchaseDialog
+          woId={wo.id}
+          open={showNonStockDialog}
+          onOpenChange={setShowNonStockDialog}
+          onCreated={loadData}
         />
 
         {/* Add tool dialog */}

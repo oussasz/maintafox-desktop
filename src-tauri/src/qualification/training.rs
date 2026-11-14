@@ -1,4 +1,4 @@
-use chrono::{Months, NaiveDate, Utc};
+use chrono::{Months, NaiveDate};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use uuid::Uuid;
 
@@ -171,10 +171,10 @@ async fn maybe_issue_cert_from_pass(
     let issued = completed_at
         .clone()
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string());
+        .unwrap_or_else(|| crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string());
     let issued_day = parse_iso_date_prefix(&issued)
         .map(|d| d.format("%Y-%m-%d").to_string())
-        .unwrap_or_else(|| Utc::now().format("%Y-%m-%d").to_string());
+        .unwrap_or_else(|| crate::clock::now().format("%Y-%m-%d").to_string());
     let expires = expires_from_issued(&issued_day, ct.default_validity_months);
 
     let cref = format!("training_session:{}", session.id);
@@ -575,25 +575,19 @@ pub async fn upsert_document_acknowledgement(
     }
 
     let entity_sync_id = Uuid::new_v4().to_string();
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO document_acknowledgements (entity_sync_id, personnel_id, document_version_id, \
-         acknowledged_at, row_version) VALUES (?, ?, ?, ?, 1)",
-        [
-            entity_sync_id.into(),
-            input.personnel_id.into(),
-            input.document_version_id.into(),
-            input.acknowledged_at.into(),
-        ],
-    ))
-    .await?;
-    let id_row = db
-        .query_one(Statement::from_string(
+    let insert_result = db
+        .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT last_insert_rowid() AS id".to_string(),
+            "INSERT INTO document_acknowledgements (entity_sync_id, personnel_id, document_version_id, \
+         acknowledged_at, row_version) VALUES (?, ?, ?, ?, 1)",
+            [
+                entity_sync_id.into(),
+                input.personnel_id.into(),
+                input.document_version_id.into(),
+                input.acknowledged_at.into(),
+            ],
         ))
-        .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("last_insert_rowid")))?;
-    let new_id: i64 = id_row.try_get("", "id").map_err(|e| decode_err("id", e))?;
+        .await?;
+    let new_id = crate::db::inserted_id(&insert_result)?;
     Ok(get_ack_by_id(db, new_id).await?.expect("row"))
 }

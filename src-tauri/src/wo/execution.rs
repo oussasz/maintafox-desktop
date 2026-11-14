@@ -22,7 +22,10 @@ pub struct WoPlanInput {
     pub wo_id: i64,
     pub actor_id: i64,
     pub expected_row_version: i64,
-    pub planner_id: i64,
+    /// The planner named; `None` (or `0`) keeps the recorded one, an empty one staying empty
+    /// ("planificateur à désigner", CMMS Advisor 2026-11-06 option b).
+    #[serde(default)]
+    pub planner_id: Option<i64>,
     pub planned_start: Option<String>,
     pub planned_end: Option<String>,
     /// Old fixed shift code: refused; use `shift_class_version_id` (`wo::shifts`).
@@ -54,6 +57,8 @@ pub struct WoAssignInput {
     pub assigned_team_id: Option<i64>,
     pub primary_responsible_id: Option<i64>,
     pub scheduled_at: Option<String>,
+    /// Only the emergency override needs a reason; a routine assignment sends none.
+    #[serde(default)]
     pub override_reason: String,
 }
 
@@ -221,7 +226,7 @@ pub async fn plan_wo(db: &DatabaseConnection, input: WoPlanInput) -> AppResult<W
             wo_id: input.wo_id,
             actor_id: input.actor_id,
             expected_row_version: input.expected_row_version,
-            planner_id: Some(input.planner_id),
+            planner_id: input.planner_id.filter(|&id| id > 0),
             planned_start: input.planned_start,
             planned_end: input.planned_end,
             shift: input.shift,
@@ -279,18 +284,39 @@ pub async fn emergency_reassign_wo(db: &DatabaseConnection, input: WoEmergencyRe
 // ═══════════════════════════════════════════════════════════════════════════════
 
 pub async fn start_wo(db: &DatabaseConnection, input: WoStartInput) -> AppResult<WorkOrder> {
+    let txn = db.begin().await?;
+    let wo = start_wo_in(&txn, &input, None).await?;
+    txn.commit().await?;
+    Ok(wo)
+}
+
+/// How a start is recorded on the transition log when another path than the start command makes
+/// it (the dépannage, `wo::depannage`): the reason code and note of that log row.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct StartMark<'a> {
+    pub reason_code: &'a str,
+    pub notes: &'a str,
+}
+
+/// [`start_wo`] in the caller's transaction: the permit / LOTO gate, then ready → in progress,
+/// judged and recorded at one clock read. `mark`: the reason code and note of the transition-log
+/// row when the start is made by another path; `None` for the start command.
+pub(crate) async fn start_wo_in(
+    txn: &impl ConnectionTrait,
+    input: &WoStartInput,
+    mark: Option<StartMark<'_>>,
+) -> AppResult<WorkOrder> {
     // One clock read: the moment judged by the permit gate is the start recorded below.
     let at = now_utc_second();
-    let txn = db.begin().await?;
     // Permit gate in the same transaction as the status change (no window in between).
-    crate::permit::wo_gate::assert_in_progress_permit_gate_with(&txn, input.wo_id, None, at).await?;
-    let linked_permit = crate::permit::queries::get_work_permit_linked_to_work_order(&txn, input.wo_id).await?;
+    crate::permit::wo_gate::assert_in_progress_permit_gate_with(txn, input.wo_id, None, at).await?;
+    let linked_permit = crate::permit::queries::get_work_permit_linked_to_work_order(txn, input.wo_id).await?;
 
-    let (from_code, current_status, _rv) = load_wo_status(&txn, input.wo_id).await?;
+    let (from_code, current_status, _rv) = load_wo_status(txn, input.wo_id).await?;
     assert_action_allowed(&current_status, WoAction::Start).map_err(|e| AppError::ValidationFailed(vec![e]))?;
     guard_wo_transition(&current_status, &WoStatus::InProgress).map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
-    let in_progress_status_id = resolve_status_id(&txn, "in_progress").await?;
+    let in_progress_status_id = resolve_status_id(txn, "in_progress").await?;
     let now = stamp(at);
 
     // Close any open delay segment
@@ -323,20 +349,20 @@ pub async fn start_wo(db: &DatabaseConnection, input: WoStartInput) -> AppResult
     check_concurrency(result.rows_affected())?;
 
     log_transition(
-        &txn,
+        txn,
         input.wo_id,
         &from_code,
         "in_progress",
         "start",
         input.actor_id,
-        None,
-        None,
+        mark.map(|m| m.reason_code),
+        mark.map(|m| m.notes),
         &now,
     )
     .await?;
 
     emit_action_event(
-        &txn,
+        txn,
         input.wo_id,
         "started",
         Some(input.actor_id),
@@ -346,7 +372,7 @@ pub async fn start_wo(db: &DatabaseConnection, input: WoStartInput) -> AppResult
     )
     .await?;
 
-    let wo = queries::get_work_order(&txn, input.wo_id)
+    let wo = queries::get_work_order(txn, input.wo_id)
         .await?
         .ok_or_else(|| AppError::NotFound {
             entity: "WorkOrder".into(),
@@ -362,7 +388,6 @@ pub async fn start_wo(db: &DatabaseConnection, input: WoStartInput) -> AppResult
         })?;
     }
 
-    txn.commit().await?;
     Ok(wo)
 }
 
@@ -521,16 +546,101 @@ pub(crate) async fn hold_for_permit_ended_elsewhere(
     permit_code: &str,
     permit_status: &str,
 ) -> AppResult<bool> {
-    let (_, status, row_version) = load_wo_status(txn, wo_id).await?;
-    if status != WoStatus::InProgress {
-        return Ok(false);
-    }
     let suspended = matches!(permit_status, "suspended" | "revalidation_required");
     let reason_code = if suspended {
         PERMIT_SUSPENDED_DELAY_REASON
     } else {
         PERMIT_ENDED_DELAY_REASON
     };
+    let comment = if suspended {
+        format!("Permis {permit_code} suspendu sur un autre poste")
+    } else {
+        format!("Permis {permit_code} terminé sur un autre poste ({permit_status})")
+    };
+    system_permit_hold(
+        txn,
+        &SystemPermitHold {
+            wo_id,
+            permit_sync_id,
+            permit_code,
+            permit_status,
+            reason_code,
+            comment,
+            audit_action: AUDIT_HELD_PERMIT_ENDED_ELSEWHERE,
+            audit_summary: "permis terminé ailleurs",
+        },
+    )
+    .await
+}
+
+/// The fixed delay reason of a running work order put on hold because its permit's expiry passed
+/// (L4-08, CMMS Advisor 2026-11-02, decision 9). The seeded value "Permit Expired / Revoked" of the
+/// plant's `WORK.DELAY_REASONS` list (reference data, its label editable there).
+pub const PERMIT_EXPIRED_DELAY_REASON: &str = "permit_expired";
+
+/// Audit action: a running work order put on hold because its permit expired ("permis expiré"),
+/// recorded as the system.
+pub const AUDIT_HELD_PERMIT_EXPIRED: &str = "wo.held_permit_expired";
+
+/// A permit of work order `wo_id`, still open, whose expiry has passed while the work order runs
+/// here (L4-08, CMMS Advisor 2026-11-02, decision 9: the permit expires automatically and its work
+/// stops): the work order is put on hold, in the caller's transaction, recorded as the system with
+/// the fixed reason [`PERMIT_EXPIRED_DELAY_REASON`], waiting for a prerequisite; audited
+/// ([`AUDIT_HELD_PERMIT_EXPIRED`]). Lock removal and the permit's close and hand-back stay allowed;
+/// resuming is refused by the start gate while the permit is expired. `false` when the work order
+/// is not running here.
+///
+/// Every PC reads the same expiry, so two PCs may both hold it: the delay segment's identity is
+/// derived from the fact (work order, permit, "expired", last start), and the crossing is settled
+/// by sync as for a permit ended elsewhere (`permit::ended_hold`).
+pub(crate) async fn hold_for_permit_expired(
+    txn: &impl ConnectionTrait,
+    wo_id: i64,
+    permit_sync_id: &str,
+    permit_code: &str,
+) -> AppResult<bool> {
+    system_permit_hold(
+        txn,
+        &SystemPermitHold {
+            wo_id,
+            permit_sync_id,
+            permit_code,
+            permit_status: "expired",
+            reason_code: PERMIT_EXPIRED_DELAY_REASON,
+            comment: format!("Permis {permit_code} expiré"),
+            audit_action: AUDIT_HELD_PERMIT_EXPIRED,
+            audit_summary: "permis expiré",
+        },
+    )
+    .await
+}
+
+/// A hold the application makes by itself for a permit (ended elsewhere, or expired).
+struct SystemPermitHold<'a> {
+    wo_id: i64,
+    permit_sync_id: &'a str,
+    permit_code: &'a str,
+    /// The permit's state behind the hold, part of the delay segment's derived identity.
+    permit_status: &'a str,
+    reason_code: &'a str,
+    comment: String,
+    audit_action: &'a str,
+    audit_summary: &'a str,
+}
+
+async fn system_permit_hold(txn: &impl ConnectionTrait, h: &SystemPermitHold<'_>) -> AppResult<bool> {
+    let SystemPermitHold {
+        wo_id,
+        permit_sync_id,
+        permit_code,
+        permit_status,
+        reason_code,
+        ..
+    } = *h;
+    let (_, status, row_version) = load_wo_status(txn, wo_id).await?;
+    if status != WoStatus::InProgress {
+        return Ok(false);
+    }
     let delay_reason_id = system_delay_reason_id(txn, reason_code).await?;
     let row = txn
         .query_one(Statement::from_sql_and_values(
@@ -557,18 +667,13 @@ pub(crate) async fn hold_for_permit_ended_elsewhere(
             last_start.as_deref().unwrap_or_default()
         ),
     );
-    let comment = if suspended {
-        format!("Permis {permit_code} suspendu sur un autre poste")
-    } else {
-        format!("Permis {permit_code} terminé sur un autre poste ({permit_status})")
-    };
     hold_writes(
         txn,
         &HoldWrites {
             wo_id,
             expected_row_version: row_version,
             delay_reason_id,
-            comment: Some(comment),
+            comment: Some(h.comment.clone()),
             actor_id: None,
             segment_sync_id: Some(segment_sync_id.clone()),
         },
@@ -579,7 +684,7 @@ pub(crate) async fn hold_for_permit_ended_elsewhere(
     crate::audit::writer::write_audit_event_in(
         txn,
         crate::audit::writer::AuditEventInput {
-            action_code: AUDIT_HELD_PERMIT_ENDED_ELSEWHERE.to_string(),
+            action_code: h.audit_action.to_string(),
             target_type: Some("work_order".to_string()),
             target_id: Some(wo_id.to_string()),
             actor_id: None,
@@ -589,7 +694,7 @@ pub(crate) async fn hold_for_permit_ended_elsewhere(
             after_hash: None,
             retention_class: "standard".to_string(),
             details_json: Some(serde_json::json!({
-                "summary": "permis terminé ailleurs",
+                "summary": h.audit_summary,
                 "permit_sync_id": permit_sync_id,
                 "permit_code": permit_code,
                 "permit_status": permit_status,
@@ -835,12 +940,13 @@ pub async fn resume_wo(db: &DatabaseConnection, input: WoResumeInput) -> AppResu
     // One clock read: the moment judged by the permit gate is the resume recorded below.
     let at = now_utc_second();
     // A work order received on hold whose plant rule came from another PC never resumes under a
-    // rule weaker than this PC's list gives (CMMS Advisor decision C7-N4): re-stamped to the rule
-    // with an energy isolation first, in its own transaction, so it stays re-stamped when the gate
-    // below refuses the resume (it waits on hold until a valid permit of that type exists).
-    let restamped = {
+    // rule weaker than this PC's list gives (CMMS Advisor decision C7-N4), and no work order on hold
+    // resumes without a permit type the list here gives it (lead decision D-b): re-stamped and the
+    // missing types added first, in their own transaction, so they stay when the gate below refuses
+    // the resume (it waits on hold until a live permit of every required type exists).
+    let moved = {
         let txn = db.begin().await?;
-        let restamped = crate::permit::requirement_rules::restamp_received_rule_on_resume(
+        let moved = crate::permit::requirement_rules::prepare_resume(
             &txn,
             input.wo_id,
             Some(input.actor_id),
@@ -848,10 +954,10 @@ pub async fn resume_wo(db: &DatabaseConnection, input: WoResumeInput) -> AppResu
         )
         .await?;
         txn.commit().await?;
-        restamped
+        moved
     };
-    // The re-stamp moved the version the screen read; the resume below is checked against it.
-    let expected_row_version = input.expected_row_version + i64::from(restamped);
+    // Each write moved the version the screen read; the resume below is checked against it.
+    let expected_row_version = input.expected_row_version + moved;
     let txn = db.begin().await?;
     // Permit gate in the same transaction as the status change (no window in between).
     crate::permit::wo_gate::assert_in_progress_permit_gate_with(&txn, input.wo_id, remaining, at).await?;

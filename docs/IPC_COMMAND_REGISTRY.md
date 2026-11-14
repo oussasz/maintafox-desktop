@@ -496,6 +496,37 @@ Each entry must include:
 
 ---
 
+### `get_mobile_device_security`
+| Field | Value |
+|---|---|
+| **Location** | `src-tauri/src/commands/mobile.rs` |
+| **Input** | None |
+| **Output** | `AppResult<MobileDeviceSecurity>` → `{ platform, screen_lock_required, screen_lock_present }` (no secret) |
+| **TS Type** | local to `src/mobile/services/device-security.ts` |
+| **Auth required** | No (checked before activation; on desktop it answers `platform: desktop`, no screen lock required) |
+| **AppState fields** | None |
+| **TS Service** | `src/mobile/services/device-security.ts` |
+| **Phase** | Mobile step 0 (Android field app proof) |
+| **Description** | Lets the Android field app refuse to start without a screen lock, before any secret is asked of the Keystore. Returns no secret. |
+
+---
+
+### `get_last_startup_event`
+| Field | Value |
+|---|---|
+| **Location** | `src-tauri/src/commands/mobile.rs` |
+| **Input** | None |
+| **Output** | `Option<StartupEvent>` (the last `startup_event` already emitted to this webview) |
+| **TS Type** | `StartupEvent` |
+| **Auth required** | No (same content the webview already receives as the `startup_event` event) |
+| **AppState fields** | None (process memory in `startup.rs`) |
+| **TS Service** | `src/mobile/hooks/use-startup.ts` |
+| **Phase** | Mobile step 0 (Android field app proof) |
+| **Description** | The phone's webview loads after the engine has started; this returns the startup event it missed. |
+
+---
+
+
 ## Command Summary
 
 | Command | Rust handler | Auth required | AppState fields used | TypeScript service |
@@ -504,6 +535,8 @@ Each entry must include:
 | `get_app_info` | `commands::app::get_app_info` | No | `config` (read) | `app.service.ts::getAppInfo` |
 | `get_task_status` | `commands::app::get_task_status` | No | `tasks` (read) | `app.service.ts::getTaskStatus` |
 | `shutdown_app` | `commands::app::shutdown_app` | No | `tasks` (shutdown) | `invoke("shutdown_app")` |
+| `get_mobile_device_security` | `commands::mobile::get_mobile_device_security` | No | — | `src/mobile/services/device-security.ts` |
+| `get_last_startup_event` | `commands::mobile::get_last_startup_event` | No | — | `src/mobile/hooks/use-startup.ts` |
 | `list_lookup_domains` | `commands::lookup::list_lookup_domains` | No | `db` (read) | `lookup-service.ts::listLookupDomains` |
 | `get_lookup_values` | `commands::lookup::get_lookup_values` | No | `db` (read) | `lookup-service.ts::getLookupValues` |
 | `get_lookup_value_by_id` | `commands::lookup::get_lookup_value_by_id` | No | `db` (read) | `lookup-service.ts::getLookupValueById` |

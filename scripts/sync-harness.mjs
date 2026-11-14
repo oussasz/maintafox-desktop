@@ -32,6 +32,19 @@
  * same shared parents), and a fresh device bootstraps from the snapshot while time, bytes,
  * memory and the server's query time are measured.
  *
+ * Mobile sync proof (Android field app, step 0):
+ *
+ *   pnpm sync:harness --mobile-proof
+ *
+ * issues a licence with two desktops and one phone (`max_mobile_devices: 1`), starts the API on a
+ * fixed port (47831, `MAINTAFOX_MOBILE_PROOF_PORT` overrides it) so a phone on USB reaches it as
+ * http://127.0.0.1:47831 through `adb reverse tcp:47831 tcp:47831`, activates no device itself and
+ * runs `sync::mobile_proof_tests::mobile_proof`: a real desktop database activates, joins the plant,
+ * creates a technician, an equipment and a work order, prints `MOBILE_PROOF_READY` (what the phone
+ * operator enters), waits for a request reported on the phone (`MAINTAFOX_MOBILE_PROOF_WAIT_SECS`,
+ * default 1200), then sends a change of the work order (`MOBILE_PROOF_DOWNLINK`) and keeps the API
+ * up `MAINTAFOX_MOBILE_PROOF_HOLD_SECS` (default 300) for the phone to pull it.
+ *
  * Nothing leaves this machine: the API, the database and the control endpoint listen on
  * 127.0.0.1, and the Rust side refuses any other API host.
  */
@@ -56,6 +69,12 @@ const largeCopies = largeIndex >= 0 ? Number(process.argv[largeIndex + 1]) : 0;
 if (largeIndex >= 0 && !(Number.isInteger(largeCopies) && largeCopies > 0)) {
   throw new Error("--large needs a positive number of work orders, e.g. --large 100000");
 }
+const mobileProof = process.argv.includes("--mobile-proof");
+if (mobileProof && largeIndex >= 0) throw new Error("--mobile-proof and --large cannot be combined");
+const mobileProofPort = Number(process.env.MAINTAFOX_MOBILE_PROOF_PORT?.trim() || "47831");
+if (mobileProof && !(Number.isInteger(mobileProofPort) && mobileProofPort > 0 && mobileProofPort < 65536)) {
+  throw new Error(`MAINTAFOX_MOBILE_PROOF_PORT must be a TCP port, not ${process.env.MAINTAFOX_MOBILE_PROOF_PORT}`);
+}
 
 const ADMIN_EMAIL = "admin@maintafox.systems";
 const S3_ACCESS_KEY = "harness-access-key";
@@ -72,6 +91,17 @@ const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function log(message) {
   process.stdout.write(`[sync-harness] ${message}\n`);
+}
+
+/** `port` when it is free on 127.0.0.1 (the fixed port of the mobile proof), else a clear error. */
+function requirePortFree(port) {
+  return new Promise((resolvePort, reject) => {
+    const srv = createNetServer();
+    srv.once("error", (e) =>
+      reject(new Error(`port ${port} on 127.0.0.1 is in use (${e.code}): set MAINTAFOX_MOBILE_PROOF_PORT`)),
+    );
+    srv.listen(port, "127.0.0.1", () => srv.close(() => resolvePort(port)));
+  });
 }
 
 function freePort() {
@@ -182,7 +212,11 @@ async function main() {
   const lib = (file) => pathToFileURL(join(apiDir, "scripts", "lib", file)).href;
   const { startTestPostgres, TEST_SYNC_ENV } = await import(lib("test-postgres.mjs"));
   const { TEST_ENTITLEMENT_SIGNING_ENV } = await import(lib("test-signing-key.mjs"));
-  const { obtainStepUpToken } = await import(lib("step-up.mjs"));
+  // Operator sign-in: a console with vendor MFA (Phase 4.1, `vendor-session.mjs`: password then
+  // TOTP, step-up per action kind), else the earlier password-only login (`step-up.mjs`).
+  const withVendorMfa = existsSync(join(apiDir, "scripts", "lib", "vendor-session.mjs"));
+  const { loginOperator } = withVendorMfa ? await import(lib("vendor-session.mjs")) : {};
+  const { obtainStepUpToken } = withVendorMfa ? {} : await import(lib("step-up.mjs"));
 
   const cleanups = [];
   const cleanup = async () => {
@@ -207,7 +241,7 @@ async function main() {
     cleanups.push(() => new Promise((r) => store.server.close(() => r())));
     log(`object store on http://127.0.0.1:${storePort}`);
 
-    const apiPort = await freePort();
+    const apiPort = mobileProof ? await requirePortFree(mobileProofPort) : await freePort();
     const baseUrl = `http://127.0.0.1:${apiPort}`;
     log(`starting the control API on ${baseUrl}`);
     let apiOutput = "";
@@ -227,6 +261,10 @@ async function main() {
         NODE_ENV: "production",
         CORS_ORIGIN: "http://localhost:5174",
         S3_ENDPOINT: `http://127.0.0.1:${storePort}`,
+        // Required together by consoles with the split public endpoint (storage/object-store.ts).
+        S3_PUBLIC_ENDPOINT: `http://127.0.0.1:${storePort}`,
+        S3_REGION: "us-east-1",
+        DEPLOYMENT_ENV: "sync-harness",
         S3_ACCESS_KEY,
         S3_SECRET_KEY,
         S3_BUCKET,
@@ -254,20 +292,34 @@ async function main() {
     }
     if (!healthy) throw new Error(`the control API did not become healthy:\n${apiOutput}`);
 
-    const login = await json(
-      await fetch(`${baseUrl}/api/v1/auth/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: ADMIN_EMAIL, password: ADMIN_PASSWORD }),
-      }),
-      "operator login",
-    );
+    const session = withVendorMfa ? await loginOperator(baseUrl, ADMIN_EMAIL, ADMIN_PASSWORD) : null;
+    const login = session
+      ? { access_token: session.accessToken }
+      : await json(
+          await fetch(`${baseUrl}/api/v1/auth/login`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email: ADMIN_EMAIL, password: ADMIN_PASSWORD }),
+          }),
+          "operator login",
+        );
+    /** Step-up token for revoking / restoring a machine. */
+    const machineStepUp = () =>
+      session
+        ? session.stepUp("machine_trust_change")
+        : obtainStepUpToken(baseUrl, login.access_token, ADMIN_PASSWORD);
     const admin = { Authorization: `Bearer ${login.access_token}`, "Content-Type": "application/json" };
     const tenant = await json(
       await fetch(`${baseUrl}/api/v1/tenants`, {
         method: "POST",
         headers: admin,
-        body: JSON.stringify({ slug: "sync-harness", display_name: "Sync harness" }),
+        // The mobile proof syncs through the production access rule (the signed licence must include
+        // `sync`, an Enterprise module); the scenarios grant access with the activation token alone.
+        body: JSON.stringify(
+          mobileProof
+            ? { slug: "sync-harness", display_name: "Sync harness", edition: "enterprise" }
+            : { slug: "sync-harness", display_name: "Sync harness" },
+        ),
       }),
       "tenant creation",
     );
@@ -275,12 +327,23 @@ async function main() {
       await fetch(`${baseUrl}/api/v1/licenses`, {
         method: "POST",
         headers: admin,
-        body: JSON.stringify({ tenant_id: tenant.id, max_machines: 5, expires_at: "2099-01-01T00:00:00.000Z" }),
+        body: JSON.stringify(
+          mobileProof
+            ? { tenant_id: tenant.id, max_machines: 2, max_mobile_devices: 1, expires_at: "2099-01-01T00:00:00.000Z" }
+            : { tenant_id: tenant.id, max_machines: 5, expires_at: "2099-01-01T00:00:00.000Z" },
+        ),
       }),
       "licence issue",
     );
+    if (mobileProof && licence.max_mobile_devices !== 1) {
+      throw new Error(
+        `the control API at ${vendorRoot} did not take max_mobile_devices (answered ${licence.max_mobile_devices}): ` +
+          "use the vendor console with the mobile device class (MAINTAFOX_VENDOR_CONSOLE_DIR)",
+      );
+    }
     const devices = [];
-    for (const d of DEVICES) {
+    // The mobile proof activates no device here: the desktop test claims its slot, the phone its own.
+    for (const d of mobileProof ? [] : DEVICES) {
       const claim = await json(
         await fetch(`${baseUrl}/api/v1/activation/claim`, {
           method: "POST",
@@ -295,7 +358,13 @@ async function main() {
       );
       devices.push({ ...d, token: claim.activation_token });
     }
-    log(`tenant ${tenant.id}: devices ${devices.map((d) => d.name).join(", ")} activated`);
+    if (mobileProof) {
+      log(`READY api=${baseUrl} port=${apiPort} tenant=${tenant.id} licence_key=${licence.license_key} max_machines=2 max_mobile_devices=1`);
+      log(`READY phone: connect it by USB, then run: adb reverse tcp:${apiPort} tcp:${apiPort}`);
+      log("READY do not activate the phone before the desktop prints MOBILE_PROOF_READY (the desktop joins the plant first)");
+    } else {
+      log(`tenant ${tenant.id}: devices ${devices.map((d) => d.name).join(", ")} activated`);
+    }
 
     // Large-tenant measurement: direct access to the throw-away database.
     const { Pool } = createRequire(join(apiDir, "package.json"))("pg");
@@ -429,7 +498,7 @@ async function main() {
               ...admin,
               "Idempotency-Key": `sync-harness-${(opCounter += 1)}`,
               "X-Operator-Reason": `SYNC-HARNESS-${action.toUpperCase()}`,
-              "X-Step-Up-Token": await obtainStepUpToken(baseUrl, login.access_token, ADMIN_PASSWORD),
+              "X-Step-Up-Token": await machineStepUp(),
             },
             body: JSON.stringify({ reason: `sync harness ${action}` }),
           },
@@ -453,6 +522,7 @@ async function main() {
           api_base_url: baseUrl,
           control_url: `http://127.0.0.1:${controlPort}`,
           tenant_id: tenant.id,
+          license_key: licence.license_key,
           devices,
           large_copies: largeCopies || null,
         },
@@ -461,7 +531,11 @@ async function main() {
       ),
     );
 
-    const testFilter = largeCopies ? "sync::harness_tests::large_tenant" : "sync::harness_tests::multi_device_harness";
+    const testFilter = mobileProof
+      ? "sync::mobile_proof_tests::mobile_proof"
+      : largeCopies
+        ? "sync::harness_tests::large_tenant"
+        : "sync::harness_tests::multi_device_harness";
     log(`running the Rust scenarios (cargo test --lib -- --ignored ${testFilter})`);
     const code = await run(
       "cargo",

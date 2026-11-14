@@ -31,7 +31,7 @@ pub async fn start_report_scheduler(db: DatabaseConnection, app_data_dir: PathBu
     }
 }
 
-async fn run_due_schedules(db: &DatabaseConnection, app_data_dir: &std::path::Path) -> AppResult<()> {
+pub(crate) async fn run_due_schedules(db: &DatabaseConnection, app_data_dir: &std::path::Path) -> AppResult<()> {
     let now = Utc::now();
     let all = list_enabled_schedules(db).await?;
     let due: Vec<_> = all

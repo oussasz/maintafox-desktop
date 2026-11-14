@@ -24,9 +24,13 @@ pub mod auth;
 pub mod background;
 pub mod backup;
 pub mod build_identity;
+pub mod bulk_import;
+pub mod clock;
 pub mod commands;
 pub mod data_integrity;
 pub mod db;
+#[cfg(feature = "demo-company")]
+pub mod demo_company;
 pub mod di;
 pub mod diagnostics;
 pub mod entitlements;
@@ -47,6 +51,7 @@ pub mod org;
 pub mod permit;
 pub mod personnel;
 pub mod planning;
+pub mod platform;
 pub mod pm;
 pub mod qualification;
 pub mod rbac;
@@ -60,6 +65,7 @@ pub mod settings;
 pub mod startup;
 pub mod state;
 pub mod sync;
+#[cfg(desktop)]
 pub mod tray;
 pub mod updater;
 pub mod vps;
@@ -84,7 +90,24 @@ mod window_tests;
 use tauri::Manager;
 use tracing_subscriber::EnvFilter;
 
+/// Plugins that exist on one platform only. Desktop: single instance (focus the existing window on
+/// a second launch). Android field app: secrets (database key, device and activation secrets) in
+/// the Keystore.
+fn register_platform_plugins(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri::Wry> {
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        if let Some(w) = app.get_webview_window("main") {
+            w.set_focus().ok();
+            w.show().ok();
+        }
+    }));
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(platform::secret_store::plugin());
+    builder
+}
+
 #[allow(clippy::large_stack_frames)]
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("maintafox=info")))
@@ -95,22 +118,16 @@ pub fn run() {
     // Development builds get their own identifier, so their data never mixes with an installed version.
     build_identity::apply(&mut context);
     updater::add_plugin_config(&mut context);
-    updater::register_plugin(
+    register_platform_plugins(updater::register_plugin(
         tauri::Builder::default()
             .plugin(tauri_plugin_shell::init())
             .plugin(tauri_plugin_dialog::init())
             .plugin(tauri_plugin_fs::init())
             .plugin(tauri_plugin_notification::init()),
-    )
-    // Single-instance: focus existing window on second launch
-    .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-        if let Some(w) = app.get_webview_window("main") {
-            w.set_focus().ok();
-            w.show().ok();
-        }
-    }))
+    ))
     .setup(|app| {
         // Tray icon (non-fatal if tray is not supported on this platform)
+        #[cfg(desktop)]
         if let Err(e) = tray::setup_tray(app) {
             tracing::warn!("System tray unavailable: {e}");
         }
@@ -155,6 +172,9 @@ pub fn run() {
         commands::app::get_app_info,
         commands::app::get_task_status,
         commands::app::shutdown_app,
+        // Android field app shell (src/mobile/): phone lock check before activation
+        commands::mobile::get_mobile_device_security,
+        commands::mobile::get_last_startup_event,
         // Ã¢â€â‚¬Ã¢â€â‚¬ Auth Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         commands::auth::login,
         commands::auth::logout,
@@ -197,6 +217,12 @@ pub fn run() {
         commands::admin_users::list_assignable_scope_nodes,
         commands::admin_users::update_user,
         commands::admin_users::deactivate_user,
+        commands::mobile_enrolment::list_mobile_enrolment_candidates,
+        commands::mobile_enrolment::issue_mobile_enrolment,
+        commands::mobile_enrolment::get_mobile_enrolment_status,
+        commands::mobile_enrolment::cancel_mobile_enrolment,
+        commands::mobile_enrolment::list_mobile_phones,
+        commands::mobile_enrolment::revoke_mobile_phone,
         commands::admin_users::reactivate_user,
         commands::admin_users::assign_role_scope,
         commands::admin_users::revoke_role_scope,
@@ -272,6 +298,8 @@ pub fn run() {
         commands::library_documents::get_library_document_file,
         commands::library_documents::delete_library_document,
         commands::library_documents::update_library_document,
+        commands::library_documents::upload_library_document_version,
+        commands::library_documents::list_library_document_versions,
         commands::product_license::get_product_license_onboarding_state,
         commands::product_license::submit_product_license_key,
         commands::product_license::check_product_license_key_entry,
@@ -333,6 +361,7 @@ pub fn run() {
         commands::activity_feed::list_saved_activity_filters,
         commands::activity_feed::get_event_chain,
         commands::audit_log::list_audit_events,
+        commands::audit_log::list_audit_filter_options,
         commands::audit_log::verify_audit_chain,
         commands::audit_log::get_audit_event,
         commands::audit_log::export_audit_log,
@@ -343,6 +372,8 @@ pub fn run() {
         // Ã¢â€â‚¬Ã¢â€â‚¬ Backup Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         commands::backup::run_manual_backup,
         commands::backup::list_backup_runs,
+        commands::backup::get_backup_overview,
+        commands::backup::set_backup_external_dir,
         commands::backup::validate_backup_file,
         commands::backup::restore_from_backup,
         commands::backup::factory_reset,
@@ -483,6 +514,13 @@ pub fn run() {
         commands::personnel::scan_succession_risk,
         commands::personnel::declare_own_skill,
         commands::personnel::list_personnel_skill_reference_values,
+        commands::bulk_import::list_bulk_import_entities,
+        commands::bulk_import::create_bulk_import_batch,
+        commands::bulk_import::get_bulk_import_preview,
+        commands::bulk_import::apply_bulk_import_batch,
+        commands::bulk_import::get_bulk_import_template,
+        commands::bulk_import::export_bulk_import_data,
+        commands::bulk_import::save_wo_history_coding,
         commands::personnel::create_personnel_import_batch,
         commands::personnel::get_personnel_import_preview,
         commands::personnel::apply_personnel_import_batch,
@@ -494,8 +532,11 @@ pub fn run() {
         commands::pm::list_pm_plans,
         commands::pm::get_pm_plan,
         commands::pm::create_pm_plan,
+        commands::pm::duplicate_pm_plan,
         commands::pm::update_pm_plan,
         commands::pm::transition_pm_plan_lifecycle,
+        commands::pm::get_pm_plan_coverage,
+        commands::pm::set_pm_plan_covered_by,
         commands::pm::list_pm_plan_versions,
         commands::pm::create_pm_plan_version,
         commands::pm::update_pm_plan_version,
@@ -646,6 +687,7 @@ pub fn run() {
         commands::inventory::get_inventory_purchase_order_detail,
         commands::inventory::project_inventory_stock_impact,
         commands::inventory::receive_inventory_purchase_order_goods,
+        commands::inventory::return_inventory_goods_to_supplier,
         commands::inventory::list_inventory_goods_receipts,
         commands::inventory::list_inventory_goods_receipt_lines,
         commands::inventory::update_inventory_procurement_posting_state,
@@ -685,6 +727,8 @@ pub fn run() {
         commands::inventory::list_supplier_purchase_history,
         // ── Article equivalents ──────────────────────────────────────────────────────
         commands::inventory::list_inventory_article_equivalents,
+        commands::inventory::list_inventory_article_usage,
+        commands::inventory::list_inventory_dormant_stock,
         commands::inventory::upsert_inventory_article_equivalent,
         commands::inventory::delete_inventory_article_equivalent,
         commands::inventory::list_inventory_article_purchase_history,
@@ -704,6 +748,8 @@ pub fn run() {
         // ── WO material readiness ─────────────────────────────────────────────────────
         commands::inventory::check_wo_part_stock_availability,
         commands::inventory::create_procurement_requisition_from_wo_part,
+        commands::inventory::list_non_stock_articles,
+        commands::inventory::review_non_stock_article,
         commands::inventory::suggest_inventory_internal_transfer,
         // Inventory benchmark (migration 184)
         commands::inventory::issue_inventory_stock_to_work_order,
@@ -719,6 +765,7 @@ pub fn run() {
         commands::inventory::close_inventory_valuation_period,
         commands::inventory::list_procurement_approval_limits,
         commands::inventory::upsert_procurement_approval_limit,
+        commands::inventory::list_inventory_procurement_approver_roles,
         commands::inventory::create_inventory_multi_line_requisition,
         commands::inventory::replace_inventory_requisition_lines,
         commands::inventory::set_inventory_purchase_order_line_price,
@@ -785,13 +832,31 @@ pub fn run() {
         commands::assets::link_asset_hierarchy,
         commands::assets::unlink_asset_hierarchy,
         commands::assets::move_asset_org_node,
+        commands::assets::move_asset_component,
+        commands::assets::preview_asset_transfer,
+        commands::assets::transfer_asset,
         commands::assets::list_asset_lifecycle_events,
         commands::assets::record_lifecycle_event,
         commands::assets::decommission_asset,
         commands::assets::list_asset_meters,
         commands::assets::create_asset_meter,
+        commands::assets::list_equipment_isolation_points,
+        commands::assets::list_equipment_isolation_point_options,
+        commands::assets::upsert_equipment_isolation_point,
+        commands::assets::set_equipment_isolation_point_active,
         commands::assets::record_meter_reading,
+        commands::assets::set_meter_thresholds,
+        commands::assets::get_asset_characteristics,
+        commands::assets::save_asset_characteristics,
+        commands::assets::list_repeat_failure_assets,
+        commands::assets::get_asset_repeat_failure_status,
+        commands::assets::list_asset_five_whys,
+        commands::assets::save_asset_five_why,
+        commands::assets::list_asset_corrective_actions,
+        commands::assets::save_asset_corrective_action,
         commands::assets::get_latest_meter_value,
+        commands::assets::assess_meter_reading,
+        commands::assets::cancel_meter_reading,
         commands::assets::list_meter_readings,
         commands::assets::list_asset_document_links,
         commands::assets::list_asset_photos,
@@ -864,6 +929,7 @@ pub fn run() {
         commands::wo::list_wo,
         commands::wo::list_retired_equipment_reviews,
         commands::wo::get_wo,
+        commands::wo::get_wo_execution_standing,
         commands::wo::create_wo,
         commands::wo::update_wo_draft,
         commands::wo::cancel_wo,
@@ -879,6 +945,11 @@ pub fn run() {
         commands::wo::approve_planning,
         commands::wo::assign_wo,
         commands::wo::emergency_reassign_wo,
+        commands::wo::start_depannage_wo,
+        commands::wo::set_wo_breakdown_at,
+        commands::wo::join_wo,
+        commands::wo::validate_depannage_wo,
+        commands::wo::get_depannage_times,
         commands::wo::start_wo,
         commands::wo::pause_wo,
         commands::wo::resume_wo,
@@ -892,7 +963,13 @@ pub fn run() {
         commands::wo::list_wo_labor_candidates,
         // Ã¢â€â‚¬Ã¢â€â‚¬ WO Parts Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         commands::wo::add_part,
+        commands::wo::search_non_stock_articles,
+        commands::wo::create_wo_non_stock_purchase,
+        commands::wo::set_wo_part_handed_to,
         commands::wo::record_part_usage,
+        commands::wo::list_wo_parts_to_issue,
+        commands::wo::issue_wo_part_to_issue,
+        commands::wo::cancel_wo_part_to_issue,
         commands::wo::mark_part_not_used,
         commands::wo::cancel_planned_part,
         commands::wo::set_planned_part_required,
@@ -928,6 +1005,9 @@ pub fn run() {
         // Ã¢â€â‚¬Ã¢â€â‚¬ WO Costs Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         commands::wo::get_cost_summary,
         commands::wo::update_service_cost,
+        commands::wo::get_wo_subcontracting,
+        commands::wo::list_wo_contractor_options,
+        commands::wo::set_wo_subcontracting,
         commands::wo::get_cost_posting_hook,
         // Ã¢â€â‚¬Ã¢â€â‚¬ WO Analytics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         commands::wo::get_wo_analytics_snapshot,
@@ -961,6 +1041,8 @@ pub fn run() {
         commands::permit::create_work_permit,
         commands::permit::update_work_permit,
         commands::permit::set_work_permit_status,
+        commands::permit::check_work_permit_approval,
+        commands::permit::list_overdue_permits_report,
         commands::permit::list_permit_isolation_options,
         commands::permit::list_permit_isolations,
         commands::permit::upsert_permit_isolation,
@@ -986,6 +1068,22 @@ pub fn run() {
         commands::permit::record_loto_card_print,
         commands::permit::list_open_permits_report,
         commands::permit::permit_compliance_kpi_30d,
+        commands::permit::get_permit_safety_content,
+        commands::permit::save_permit_safety_content,
+        commands::permit::record_permit_hse_approval,
+        commands::permit::record_permit_gas_test,
+        commands::permit::list_permit_proposed_isolation_points,
+        commands::permit::list_permit_workers,
+        commands::permit::add_permit_worker,
+        commands::permit::record_permit_worker_induction,
+        commands::permit::withdraw_permit_worker,
+        commands::permit::place_my_permit_lock,
+        commands::permit::remove_my_permit_lock,
+        commands::permit::force_remove_permit_lock,
+        commands::permit::list_permit_padlock_removers,
+        commands::permit::acknowledge_forced_padlock_removal,
+        commands::permit::record_padlock_worker_informed,
+        commands::permit::list_my_padlock_permits,
         commands::reliability::list_failure_hierarchies,
         commands::reliability::upsert_failure_hierarchy,
         commands::reliability::list_failure_codes,
@@ -1042,6 +1140,7 @@ pub fn run() {
         commands::advanced_rams::upsert_ram_ishikawa_diagram,
         commands::advanced_rams::delete_ram_ishikawa_diagram,
         commands::reliability_study::get_reliability_fleet_view,
+        commands::reliability_study::get_reliability_asset_figures,
         commands::reliability_study::list_reliability_studies,
         commands::reliability_study::create_reliability_study,
         commands::reliability_study::update_reliability_study,
@@ -1054,6 +1153,7 @@ pub fn run() {
         commands::reliability_study::create_reliability_study_decision,
         commands::reliability_study::approve_reliability_study_decision,
         commands::reliability_study::reject_reliability_study_decision,
+        commands::reliability_study::revise_reliability_study_decision,
         commands::reliability_study::apply_reliability_study_decision,
         commands::reliability_study::get_reliability_study_fmeca,
         commands::reliability_study::save_reliability_study_fmeca_item,
@@ -1128,6 +1228,8 @@ pub fn run() {
         commands::qualification::list_training_expiry_alert_events,
         commands::qualification::scan_training_expiry_alerts,
         commands::qualification::list_certification_expiry_drilldown,
+        commands::qualification::list_pending_qualifications,
+        commands::qualification::validate_pending_qualifications,
         commands::inspection::list_inspection_templates,
         commands::inspection::list_inspection_template_versions,
         commands::inspection::list_inspection_checkpoints,
@@ -1136,6 +1238,7 @@ pub fn run() {
         commands::inspection::publish_inspection_template_version,
         commands::inspection::schedule_inspection_round,
         commands::inspection::list_inspection_results,
+        commands::inspection::list_inspection_point_trend,
         commands::inspection::list_inspection_evidence,
         commands::inspection::list_inspection_anomalies,
         commands::inspection::record_inspection_result,
@@ -1201,6 +1304,7 @@ pub fn run() {
         commands::personnel::update_external_company,
         commands::wo::add_personnel_labor,
         commands::wo::list_wo_labor_people,
+        commands::wo::preview_wo_labor_rate,
         commands::personnel::list_schedule_class_versions,
         commands::personnel::upsert_schedule_class_version,
         commands::personnel::get_schedule_class_version_impact,

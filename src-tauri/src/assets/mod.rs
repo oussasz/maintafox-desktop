@@ -17,6 +17,7 @@
 //!   `documents` — governed document link references (File 02, Sprint S3)
 
 pub mod bindings;
+pub mod characteristics;
 pub mod criticality;
 pub mod decommission;
 pub mod documents;
@@ -26,16 +27,21 @@ pub mod hierarchy;
 pub mod history;
 pub mod identity;
 pub mod import;
+pub mod isolation_points;
 pub mod lifecycle;
 pub mod maintenance_profile;
 pub mod meters;
 pub mod photos;
 pub mod registry_metrics;
+pub mod repeat_failures;
 pub mod search;
 pub mod spare_parts;
 pub mod taxonomy_reference;
+pub mod transfer;
 pub mod tree;
 
+#[cfg(test)]
+mod characteristics_tests;
 #[cfg(test)]
 mod decommission_tests;
 #[cfg(test)]
@@ -47,9 +53,15 @@ mod identity_tests;
 #[cfg(test)]
 mod import_tests;
 #[cfg(test)]
+mod isolation_points_tests;
+#[cfg(test)]
 mod lifecycle_tests;
 #[cfg(test)]
 mod meters_tests;
+#[cfg(test)]
+mod repeat_failures_tests;
+#[cfg(test)]
+mod transfer_tests;
 #[cfg(test)]
 mod tree_tests;
 #[cfg(test)]

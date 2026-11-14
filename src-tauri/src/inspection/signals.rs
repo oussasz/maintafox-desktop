@@ -1,4 +1,4 @@
-use chrono::{Duration, Utc};
+use chrono::Duration;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use uuid::Uuid;
 
@@ -62,7 +62,7 @@ pub async fn refresh_inspection_reliability_signals(
     input: RefreshInspectionReliabilitySignalsInput,
 ) -> AppResult<Vec<InspectionReliabilitySignal>> {
     let days = input.window_days.clamp(1, 366);
-    let end = Utc::now();
+    let end = crate::clock::now();
     let start = end - Duration::days(days);
     let period_start = start.to_rfc3339();
     let period_end = end.to_rfc3339();

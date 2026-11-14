@@ -17,7 +17,6 @@ use std::collections::HashMap;
 
 use crate::errors::{issue_params, org_validation_failed_issues, AppError, AppResult, AppValidationIssue};
 use crate::org::fail::{fail, fail_params};
-use chrono::Utc;
 use sea_orm::{
     ConnectionTrait, DatabaseConnection, DatabaseTransaction, DbBackend, QueryResult, Statement, TransactionTrait,
 };
@@ -143,7 +142,7 @@ pub async fn create_model_in_conn(
     payload: &CreateStructureModelPayload,
     created_by_id: i32,
 ) -> AppResult<OrgStructureModel> {
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
     let entity_sync_id = Uuid::new_v4().to_string();
 
     let max_row = db
@@ -266,7 +265,7 @@ pub async fn fork_draft_from_published(
 
     let draft = create_model_in_conn(&txn, payload, created_by_id).await?;
     let draft_id = draft.id;
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
 
     let mut old_to_new: HashMap<i32, i32> = HashMap::new();
 
@@ -430,7 +429,7 @@ pub async fn fork_draft_from_published(
     // new_node_id â†’ computed ancestor_path (used to build child paths)
     let mut new_node_paths: HashMap<i64, String> = HashMap::new();
 
-    let node_now = Utc::now().to_rfc3339();
+    let node_now = crate::clock::now().to_rfc3339();
 
     for node_row in &active_node_rows {
         let old_id: i64 = node_row.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?;
@@ -845,7 +844,7 @@ pub async fn reconcile_org_draft_lineage(
     }
 
     let txn: DatabaseTransaction = db.begin().await?;
-    let node_now = Utc::now().to_rfc3339();
+    let node_now = crate::clock::now().to_rfc3339();
     let mut cloned_count: i64 = 0;
 
     for node_row in &missing_rows {
@@ -1097,7 +1096,7 @@ pub async fn publish_model(
         ));
     }
 
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
 
     // Supersede the current active model (if any)
     db.execute(Statement::from_sql_and_values(
@@ -1118,7 +1117,7 @@ pub async fn publish_model(
         [
             now.into(),
             activated_by_id.into(),
-            Utc::now().to_rfc3339().into(),
+            crate::clock::now().to_rfc3339().into(),
             model_id.into(),
         ],
     ))
@@ -1153,7 +1152,7 @@ pub async fn archive_model(db: &DatabaseConnection, model_id: i32) -> AppResult<
         return Err(fail("ORG_ALREADY_ARCHIVED", "This model is already archived."));
     }
 
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
 
     if model.status == "draft" {
         // For draft models, hard-delete all draft-scoped artifacts then archive.
@@ -1255,7 +1254,7 @@ pub async fn update_model_description(
         return Err(fail("ORG_EDIT_REQUIRES_DRAFT", "Only draft models can be edited."));
     }
 
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE org_structure_models SET description = ?, updated_at = ? WHERE id = ?",

@@ -22,7 +22,8 @@
 //!   since the update come back from the server's snapshot after the restore).
 //!
 //! Builds without the owner's updater public key (`build.rs`) have no updater plugin at all and
-//! say so (`not_configured`); nothing pretends to check.
+//! say so (`not_configured`); nothing pretends to check. The Microsoft Store build
+//! (`STORE_DISTRIBUTION`) has none either: the Store installs its updates (`store_managed`).
 
 pub mod journal;
 
@@ -37,6 +38,34 @@ use journal::{JournalState, StartupAction, UpdateJournal, UpdateKind};
 
 /// The owner's updater public key, embedded by `build.rs` (None: this build has no updater).
 pub const UPDATER_PUBLIC_KEY: Option<&str> = option_env!("MAINTAFOX_UPDATER_PUBKEY");
+
+/// In-app updates: desktop builds that carry the owner's updater public key. Never the phone app
+/// (its updates come with a new APK; the plugin's HTTPS client relies on the platform certificate
+/// verifier, which the Android build does not initialise).
+pub fn updater_enabled() -> bool {
+    UPDATER_PUBLIC_KEY.is_some() && !cfg!(mobile) && !STORE_DISTRIBUTION
+}
+
+/// Microsoft Store build (`MAINTAFOX_DISTRIBUTION=store`, `build.rs`): the Store installs every
+/// update of the MSIX package, so this build has no updater and its update screens say so.
+pub const STORE_DISTRIBUTION: bool = cfg!(maintafox_store);
+
+/// Why a build without the updater has none, for the UI.
+fn no_updater_status() -> CheckStatus {
+    if STORE_DISTRIBUTION {
+        CheckStatus::StoreManaged
+    } else {
+        CheckStatus::NotConfigured
+    }
+}
+
+fn no_updater_reason() -> &'static str {
+    if STORE_DISTRIBUTION {
+        "updates of this build come from the Microsoft Store"
+    } else {
+        "this build has no in-app updates"
+    }
+}
 /// Header asking the manifest for the version this device came from (failed database update).
 pub const ROLLBACK_HEADER: &str = "X-Maintafox-Rollback-To";
 /// NSIS update mode: progress window only, no questions (the user already confirmed in the app).
@@ -47,7 +76,7 @@ const WINDOWS_INSTALL_MODE: &str = "basicUi";
 /// Adds the updater plugin configuration to the app context when this build has a public key.
 /// The key is not in tauri.conf.json: it comes from the owner's key file (no placeholder).
 pub fn add_plugin_config<R: Runtime>(context: &mut tauri::Context<R>) {
-    if let Some(pubkey) = UPDATER_PUBLIC_KEY {
+    if let Some(pubkey) = UPDATER_PUBLIC_KEY.filter(|_| updater_enabled()) {
         context.config_mut().plugins.0.insert(
             "updater".to_string(),
             serde_json::json!({ "pubkey": pubkey, "windows": { "installMode": WINDOWS_INSTALL_MODE } }),
@@ -55,10 +84,13 @@ pub fn add_plugin_config<R: Runtime>(context: &mut tauri::Context<R>) {
     }
 }
 
-/// Registers the updater plugin only when the build has a public key.
+/// Registers the updater plugin only when in-app updates are enabled ([`updater_enabled`]).
 pub fn register_plugin<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
-    if UPDATER_PUBLIC_KEY.is_some() {
+    if updater_enabled() {
         builder.plugin(tauri_plugin_updater::Builder::new().build())
+    } else if STORE_DISTRIBUTION {
+        tracing::info!("updater: Microsoft Store build; the Store installs updates");
+        builder
     } else {
         tracing::warn!("updater: this build has no updater public key; in-app updates are disabled");
         builder
@@ -117,6 +149,8 @@ pub enum CheckStatus {
     UpToDate,
     /// This build has no updater public key.
     NotConfigured,
+    /// Microsoft Store build: the Store installs updates, the app never downloads one.
+    StoreManaged,
     /// The device has no activation yet: the server cannot tell which releases it may have.
     NotActivated,
     /// The update server could not be reached or answered wrongly (details in `message`).
@@ -284,7 +318,7 @@ pub async fn ask_manifest(
     locale: Option<&str>,
     rollback_to: Option<&str>,
 ) -> AppResult<ManifestAnswer> {
-    if UPDATER_PUBLIC_KEY.is_none() {
+    if !updater_enabled() {
         return Ok(ManifestAnswer::NotConfigured);
     }
     // An active licence, or one that requires an update (installing it ends that denial).
@@ -340,9 +374,7 @@ pub async fn ask_manifest(
 pub async fn check(app: &AppHandle, db: &sea_orm::DatabaseConnection, locale: Option<&str>) -> UpdateCheckResult {
     let current = running_version();
     match ask_manifest(app, db, locale, None).await {
-        Ok(ManifestAnswer::NotConfigured) => {
-            UpdateCheckResult::without_update(CheckStatus::NotConfigured, &current, None)
-        }
+        Ok(ManifestAnswer::NotConfigured) => UpdateCheckResult::without_update(no_updater_status(), &current, None),
         Ok(ManifestAnswer::NotActivated) => {
             UpdateCheckResult::without_update(CheckStatus::NotActivated, &current, None)
         }
@@ -946,9 +978,10 @@ pub async fn install(
     let (mut update, ext) = match ask_manifest(app, db, locale, None).await? {
         ManifestAnswer::Offer(update, ext) => (*update, ext),
         ManifestAnswer::NotConfigured => {
-            return Err(AppError::ValidationFailed(vec![
-                "GATE_UPD_NOT_CONFIGURED: this build has no in-app updates".to_string(),
-            ]))
+            return Err(AppError::ValidationFailed(vec![format!(
+                "GATE_UPD_NOT_CONFIGURED: {}",
+                no_updater_reason()
+            )]))
         }
         ManifestAnswer::NotActivated => {
             return Err(AppError::ValidationFailed(vec![
@@ -1020,7 +1053,7 @@ pub fn rollback_answer(answer: &ManifestAnswer, requested: &str) -> RollbackAnsw
         ManifestAnswer::None => RollbackAnswer::Refused("the server has nothing to install (204)".into()),
         ManifestAnswer::ServerRefused => RollbackAnswer::Refused("the server refused the rollback request".into()),
         ManifestAnswer::NotAcceptable(why) => RollbackAnswer::Refused(why.clone()),
-        ManifestAnswer::NotConfigured => RollbackAnswer::Refused("this build has no in-app updates".into()),
+        ManifestAnswer::NotConfigured => RollbackAnswer::Refused(no_updater_reason().into()),
         ManifestAnswer::NotActivated => RollbackAnswer::Refused("this device cannot ask the update server".into()),
     }
 }
@@ -1337,6 +1370,73 @@ pub fn on_migrations_succeeded(
     journal::save(&app_data_dir(app)?, &j)
 }
 
+/// Microsoft Store build: the Store replaced the app without the in-app updater's pre-update
+/// backup, so before this version migrates an existing database it backs it up itself (a
+/// `pre_update` run in the backup list). Returns the backup, or None when there is nothing to
+/// migrate, the database is new, or this is not the Store build. An error means no backup: the
+/// caller must not migrate.
+pub async fn store_pre_migration_backup(
+    app: &AppHandle,
+    db: &sea_orm::DatabaseConnection,
+) -> AppResult<Option<PathBuf>> {
+    use sea_orm_migration::MigratorTrait;
+    if !STORE_DISTRIBUTION {
+        return Ok(None);
+    }
+    if crate::migrations::Migrator::get_applied_migrations(db)
+        .await?
+        .is_empty()
+        || crate::migrations::Migrator::get_pending_migrations(db)
+            .await?
+            .is_empty()
+    {
+        return Ok(None);
+    }
+    let backup_dir = crate::commands::backup::app_backup_dir(app)?;
+    let prefix = format!("maintafox-pre-store-update-{}-", running_version());
+    // One backup per version: after a failed migration every restart still has pending
+    // migrations, and the first backup is the one taken before this version changed anything.
+    if let Some(existing) = recorded_store_backup(db, &prefix).await? {
+        tracing::warn!(path = %existing.display(), "update: Store update, keeping the backup taken before this version's first migration");
+        return Ok(Some(existing));
+    }
+    let path = backup_dir.join(format!("{prefix}{}.db", chrono::Utc::now().format("%Y%m%dT%H%M%SZ")));
+    crate::backup::run_manual_backup(db, &path.to_string_lossy(), crate::backup::TRIGGER_PRE_UPDATE, None).await?;
+    tracing::info!(path = %path.display(), "update: Store update, database backed up before migrating");
+    Ok(Some(path))
+}
+
+/// The Store pre-migration backup already taken for this version: a successful `pre_update` run
+/// whose file name starts with `prefix`, still on disk with the checksum recorded for it.
+async fn recorded_store_backup(db: &sea_orm::DatabaseConnection, prefix: &str) -> AppResult<Option<PathBuf>> {
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT output_path, sha256_checksum FROM backup_runs \
+             WHERE trigger = ? AND status = 'success' ORDER BY id DESC",
+            [crate::backup::TRIGGER_PRE_UPDATE.into()],
+        ))
+        .await?;
+    for row in rows {
+        let path = PathBuf::from(row.try_get::<String>("", "output_path")?);
+        let named_for_version = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.starts_with(prefix) && n.ends_with(".db"));
+        if !named_for_version || !path.is_file() {
+            continue;
+        }
+        let Some(expected) = row.try_get::<Option<String>>("", "sha256_checksum")? else {
+            continue;
+        };
+        if crate::backup::file_sha256(&path)? == expected {
+            return Ok(Some(path));
+        }
+    }
+    Ok(None)
+}
+
 /// The new version could not migrate the database: stage the pre-update backup and record that
 /// the previous version must be reinstalled. Returns the journal view for the recovery screen.
 pub async fn on_migration_failed(
@@ -1417,6 +1517,18 @@ pub async fn stage_pre_update_backup(
 mod tests {
     use super::*;
     use std::path::Path;
+
+    // Tests build without MAINTAFOX_DISTRIBUTION, i.e. the direct-download flavour.
+    #[test]
+    fn direct_build_is_not_the_store_flavour() {
+        assert!(!STORE_DISTRIBUTION);
+        assert_eq!(no_updater_status(), CheckStatus::NotConfigured);
+        assert_eq!(no_updater_reason(), "this build has no in-app updates");
+        assert_eq!(
+            serde_json::to_value(CheckStatus::StoreManaged).unwrap(),
+            serde_json::json!("store_managed")
+        );
+    }
 
     fn completed_upgrade(backup: Option<&Path>, schema_before: i64) -> UpdateJournal {
         UpdateJournal {

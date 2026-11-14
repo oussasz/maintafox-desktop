@@ -31,10 +31,17 @@ pub struct SiteSettingDefinition {
 }
 
 /// Every per-site rule. Values are JSON booleans.
-pub const SITE_SETTINGS: &[SiteSettingDefinition] = &[SiteSettingDefinition {
-    key: crate::reliability::study::decisions::SELF_APPROVAL_SETTING,
-    default: false,
-}];
+pub const SITE_SETTINGS: &[SiteSettingDefinition] = &[
+    SiteSettingDefinition {
+        key: crate::reliability::study::decisions::SELF_APPROVAL_SETTING,
+        default: false,
+    },
+    // Dépannages of the site approved automatically at their close (`wo::depannage_validation`).
+    SiteSettingDefinition {
+        key: crate::wo::depannage_validation::AUTO_VALIDATION_SETTING,
+        default: false,
+    },
+];
 
 pub fn site_definition(key: &str) -> Option<&'static SiteSettingDefinition> {
     SITE_SETTINGS.iter().find(|d| d.key == key)

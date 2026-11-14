@@ -103,34 +103,36 @@ pub async fn add_tool(db: &impl ConnectionTrait, input: AddToolInput) -> AppResu
     }
     let usage = if origin == "execution_added" { "used" } else { "planned" };
 
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO work_order_tools \
+    let inserted = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO work_order_tools \
          (work_order_id, origin, tool_code, tool_label, usage_status, notes) \
          VALUES (?, ?, ?, ?, ?, ?)",
-        [
-            input.wo_id.into(),
-            origin.into(),
-            input
-                .tool_code
-                .map(sea_orm::Value::from)
-                .unwrap_or(sea_orm::Value::from(None::<String>)),
-            label.to_string().into(),
-            usage.into(),
-            input
-                .notes
-                .map(sea_orm::Value::from)
-                .unwrap_or(sea_orm::Value::from(None::<String>)),
-        ],
-    ))
-    .await?;
+            [
+                input.wo_id.into(),
+                origin.into(),
+                input
+                    .tool_code
+                    .map(sea_orm::Value::from)
+                    .unwrap_or(sea_orm::Value::from(None::<String>)),
+                label.to_string().into(),
+                usage.into(),
+                input
+                    .notes
+                    .map(sea_orm::Value::from)
+                    .unwrap_or(sea_orm::Value::from(None::<String>)),
+            ],
+        ))
+        .await?;
 
+    let tool_rowid = crate::db::inserted_id(&inserted)?;
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id, work_order_id, origin, tool_code, tool_label, usage_status, notes, created_at \
-               FROM work_order_tools WHERE rowid = last_insert_rowid()",
-            [],
+               FROM work_order_tools WHERE rowid = ?",
+            [tool_rowid.into()],
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Failed to re-read tool")))?;

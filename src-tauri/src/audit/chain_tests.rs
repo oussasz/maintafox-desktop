@@ -835,3 +835,86 @@ async fn audits_of_types_requirements_and_absence_blocks_travel_and_session_audi
     let report = verify_audit_chain(&db).await.expect("verify");
     assert!(report.intact, "{report:?}");
 }
+
+/// An audit written while capture is suppressed (inside the apply of a received row) is chained,
+/// so it is queued all the same: the event when it travels, its stub when it is kept here. Without
+/// that, the other PCs find its position missing from this device's chain.
+#[tokio::test]
+async fn an_event_written_while_capture_is_suppressed_is_queued() {
+    let db = started_db().await;
+    let txn = db.begin().await.expect("begin");
+    crate::sync::capture::begin_suppression(&txn).await.expect("suppress");
+    let travelling = write_audit_event_in(&txn, event("wo.received_without_author", None, None))
+        .await
+        .expect("travelling event");
+    let mut kept = event("auth.session_closed", Some("1".to_string()), None);
+    kept.target_type = Some("app_session".to_string());
+    let kept = write_audit_event_in(&txn, kept).await.expect("kept event");
+    crate::sync::capture::end_suppression(&txn)
+        .await
+        .expect("end suppression");
+    txn.commit().await.expect("commit");
+
+    let queued_event = scalar_i64(
+        &db,
+        "SELECT COUNT(*) FROM sync_capture_journal j JOIN audit_events e ON e.entity_sync_id = j.entity_sync_id
+          WHERE j.entity_type = 'audit_events' AND e.id = ?",
+        vec![travelling.into()],
+    )
+    .await;
+    assert_eq!(queued_event, 1, "the travelling event is queued");
+    let queued_stub = scalar_i64(
+        &db,
+        "SELECT COUNT(*) FROM sync_capture_journal j
+           JOIN audit_chain_stubs s ON s.entity_sync_id = j.entity_sync_id
+           JOIN audit_events e ON e.chain_origin = s.chain_origin AND e.chain_seq = s.chain_seq
+          WHERE j.entity_type = 'audit_chain_stubs' AND e.id = ?",
+        vec![kept.into()],
+    )
+    .await;
+    assert_eq!(queued_stub, 1, "the kept event's stub is queued");
+    let kept_event_queued = scalar_i64(
+        &db,
+        "SELECT COUNT(*) FROM sync_capture_journal j JOIN audit_events e ON e.entity_sync_id = j.entity_sync_id
+          WHERE j.entity_type = 'audit_events' AND e.id = ?",
+        vec![kept.into()],
+    )
+    .await;
+    assert_eq!(kept_event_queued, 0, "the kept event itself stays here");
+
+    // Staged as every captured row is: the travelling event and the stub reach the outbox, the
+    // kept event does not.
+    crate::sync::capture::drain_capture_journal(&db).await.expect("drain");
+    let event_in_outbox =
+        "SELECT COUNT(*) FROM sync_outbox o JOIN audit_events e ON e.entity_sync_id = o.entity_sync_id
+          WHERE o.entity_type = 'audit_events' AND e.id = ?";
+    assert_eq!(
+        scalar_i64(&db, event_in_outbox, vec![travelling.into()]).await,
+        1,
+        "the travelling event is in the outbox"
+    );
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT COUNT(*) FROM sync_outbox o
+               JOIN audit_chain_stubs s ON s.entity_sync_id = o.entity_sync_id
+               JOIN audit_events e ON e.chain_origin = s.chain_origin AND e.chain_seq = s.chain_seq
+              WHERE o.entity_type = 'audit_chain_stubs' AND e.id = ?",
+            vec![kept.into()],
+        )
+        .await,
+        1,
+        "the kept event's stub is in the outbox"
+    );
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT COUNT(*) FROM sync_outbox o JOIN audit_events e ON e.entity_sync_id = o.entity_sync_id
+              WHERE o.entity_type = 'audit_events' AND e.id = ?",
+            vec![kept.into()],
+        )
+        .await,
+        0,
+        "the kept event is not in the outbox"
+    );
+}

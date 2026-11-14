@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { invoke } from "@/lib/ipc-invoke";
+import { type FleetKpis, FleetKpisSchema } from "@/services/reliability-study-service";
 import type {
   AnalyticsDashboardLayoutPayload,
   AnalyticsExecutiveDashboard,
@@ -24,6 +25,15 @@ const SmrpRatioSchema = z.object({
 });
 const SmrpMetricSchema = z.object({ current: SmrpRatioSchema, previous: SmrpRatioSchema });
 
+const PmComplianceGroupSchema = z.object({
+  id: z.number().nullable(),
+  label: z.string().nullable(),
+  due_count: z.number(),
+  on_time_count: z.number(),
+  compliance_pct: z.number().nullable(),
+});
+export type PmComplianceGroup = z.infer<typeof PmComplianceGroupSchema>;
+
 /** SMRP indicators computed in Rust (`analytics::smrp`); see that module for the formulas. */
 export const SmrpKpisSchema = z.object({
   from: z.string(),
@@ -40,6 +50,14 @@ export const SmrpKpisSchema = z.object({
     })
     .nullable(),
   pm_compliance: SmrpMetricSchema.nullable(),
+  /** PM compliance split by site and by trade (team), same rule as `pm_compliance`. */
+  pm_breakdown: z
+    .object({
+      by_site: z.array(PmComplianceGroupSchema),
+      by_team: z.array(PmComplianceGroupSchema),
+    })
+    .nullable()
+    .default(null),
   backlog: z
     .object({
       backlog_hours: z.number(),
@@ -49,6 +67,19 @@ export const SmrpKpisSchema = z.object({
       /** Which "open OT" rule `open_work_orders` counts (`WoOpenRule`). */
       open_work_orders_rule: z.string(),
       work_orders_without_estimate: z.number(),
+      without_estimate_list: z
+        .array(z.object({ id: z.number(), code: z.string(), title: z.string() }))
+        .default([]),
+      by_team: z
+        .array(
+          z.object({
+            team_name: z.string().nullable(),
+            backlog_hours: z.number(),
+            work_orders: z.number(),
+            without_estimate: z.number(),
+          }),
+        )
+        .default([]),
       weekly_capacity_hours: z.number(),
       people_counted: z.number(),
       people_without_schedule: z.number(),
@@ -73,9 +104,13 @@ export const SmrpKpisSchema = z.object({
 export type SmrpKpis = z.infer<typeof SmrpKpisSchema>;
 export type SmrpMetric = z.infer<typeof SmrpMetricSchema>;
 
-/** Executive dashboard payload plus the SMRP set (not yet in `shared/ipc-types.ts`). */
+/**
+ * Executive dashboard payload plus the SMRP set and the live fleet figures of the horizon
+ * (`study::fleet_kpis`, the RAMS home calculation; not in `shared/ipc-types.ts`).
+ */
 export type AnalyticsExecutiveDashboardWithSmrp = AnalyticsExecutiveDashboard & {
   smrp: SmrpKpis | null;
+  reliability: FleetKpis | null;
 };
 
 const AnalyticsExecutiveDashboardSchema = z.object({
@@ -93,6 +128,8 @@ const AnalyticsExecutiveDashboardSchema = z.object({
   avg_mttr_hours: AnalyticsKpiValueSchema,
   avg_availability: AnalyticsKpiValueSchema,
   avg_data_quality: AnalyticsKpiValueSchema,
+  sample_size_score: AnalyticsKpiValueSchema,
+  reliability: FleetKpisSchema.nullable(),
   maintenance_cost: AnalyticsKpiValueSchema,
   maintenance_cost_pending: z.number().nullable(),
   reliability_snapshot_count: z.number(),

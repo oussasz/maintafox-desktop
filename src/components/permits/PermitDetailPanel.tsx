@@ -21,6 +21,7 @@ import {
   SelectValue,
   Textarea,
 } from "@/components/ui";
+import { Checkbox } from "@/components/ui/checkbox";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ErrorState } from "@/components/ui/data-state";
 import { DateTimeField } from "@/components/ui/date-time-field";
@@ -28,6 +29,12 @@ import { StatusChip } from "@/components/ui/status-chip";
 import { PERMIT_STATUS_TONE, toneOf } from "@/design-system/tone";
 import { useSession } from "@/hooks/use-session";
 import { appErrorReason } from "@/lib/app-error";
+import {
+  type PermitSafetyContent,
+  type ProposedIsolationPoint,
+  getPermitSafetyContent,
+  listPermitProposedIsolationPoints,
+} from "@/services/permit-safety-service";
 import {
   type IsolationOption,
   type IsolationOptions,
@@ -46,6 +53,8 @@ import {
   recordLotoCardPrint,
   recordPermitIsolationRemoved,
   setWorkPermitStatus,
+  checkWorkPermitApproval,
+  getWorkPermit,
   suspendWorkPermit,
   updateWorkPermit,
   upsertPermitIsolation,
@@ -58,9 +67,11 @@ import { P } from "@shared/rbac/permissions.generated";
 
 import { ForcedRemovalDialog } from "./ForcedRemovalDialog";
 import { PermitHandoverForm } from "./PermitHandoverForm";
+import { PermitSafetyContentPanel } from "./PermitSafetyContentPanel";
 import { PermitNoSiteBadge, usePermitAccess } from "./PermitSiteScope";
+import { PermitWorkersPanel } from "./PermitWorkersPanel";
 import { WorkerInformedDialog } from "./WorkerInformedDialog";
-import { printLotoCard } from "./loto-card-print";
+import { printLotoCard, printPermitLotoSheet } from "./loto-card-print";
 import {
   APPROVED_ON_STATUSES,
   ISOLATION_REMOVAL_STATUSES,
@@ -71,6 +82,7 @@ import {
   canCancelIsolation,
   closeBlocker,
   formatAssetLabel,
+  isPermitOverdue,
   isolationState,
   localInputToIso,
   nextTransitions,
@@ -85,8 +97,19 @@ interface PermitDetailPanelProps {
   onChanged: (permit: WorkPermitRecord) => void;
 }
 
+/** Longest zero-energy test comment kept (`permit::domain::MAX_ZERO_ENERGY_NOTE_CHARS`). */
+const MAX_ZERO_ENERGY_NOTE_CHARS = 500;
+
 /** Energy type and method are ids of the governed lists (`permit::energy_reference`). */
 const EMPTY_ISOLATION = { point: "", energy: "", method: "", lock: "" };
+
+/** Steps whose meaning is spelled out under the buttons (`transition.next.*`). */
+const NEXT_STEP_HINTS: ReadonlySet<string> = new Set([
+  "pending_review",
+  "approved",
+  "issued",
+  "active",
+]);
 
 export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps) {
   const { t, i18n } = useTranslation("permits");
@@ -97,6 +120,8 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
   const access = usePermitAccess(permit);
   const canIssue = !access.loading && access.can(P.PTW_ISSUE);
   const canClose = !access.loading && access.can(P.PTW_CLOSE);
+  const canHseApprove = !access.loading && access.can(P.PTW_HSE_APPROVE);
+  const canLockOwn = !access.loading && access.can(P.PTW_LOCK_OWN);
   const me = session?.user_id ?? null;
 
   const [isolations, setIsolations] = useState<PermitIsolationRecord[]>([]);
@@ -111,12 +136,20 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
   const [options, setOptions] = useState<IsolationOptions | null>(null);
   const [optionsError, setOptionsError] = useState<unknown>(null);
   const [optionsReload, setOptionsReload] = useState(0);
+  /** L4-03 / L4-04: content, HSE approval, gas tests and the server's issue blockers. */
+  const [safety, setSafety] = useState<PermitSafetyContent | null>(null);
+  const [safetyError, setSafetyError] = useState<unknown>(null);
+  /** L4-12: the isolation points of the permit's equipment, proposed on the isolation form. */
+  const [proposed, setProposed] = useState<ProposedIsolationPoint[]>([]);
+  const [proposedError, setProposedError] = useState<unknown>(null);
 
   const [isoDraft, setIsoDraft] = useState(EMPTY_ISOLATION);
   const [isoSubmitted, setIsoSubmitted] = useState(false);
   const [suspendOpen, setSuspendOpen] = useState(false);
   const [suspendDraft, setSuspendDraft] = useState({ reason: "", conditions: "" });
   const [cancelOpen, setCancelOpen] = useState(false);
+  /** L4-15: the reason a permit is cancelled (required). */
+  const [cancelReason, setCancelReason] = useState("");
   /** The planned isolation line whose cancellation is being confirmed. */
   const [cancelLine, setCancelLine] = useState<PermitIsolationRecord | null>(null);
   /** The isolation whose lock removal waits for the confirmation dialog. */
@@ -127,7 +160,36 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
   const [forcedFor, setForcedFor] = useState<PermitIsolationRecord | null>(null);
   /** The forced removal whose worker is being recorded as told. */
   const [informFor, setInformFor] = useState<PermitIsolationRecord | null>(null);
+  /** L4-13: the isolation being verified, with its zero-energy test (confirmed + comment). */
+  const [verifyFor, setVerifyFor] = useState<PermitIsolationRecord | null>(null);
+  const [zeroEnergyDone, setZeroEnergyDone] = useState(false);
+  const [zeroEnergyNote, setZeroEnergyNote] = useState("");
   const [editingExpiry, setEditingExpiry] = useState<string | null>(null);
+
+  /**
+   * Four-eyes for the session user, asked of the server without approving (L4-14): the approve
+   * step is greyed with the server's own reason instead of failing after the click. `undefined`
+   * while it is asked; the approval itself is checked again when made.
+   */
+  const [approvalRefusal, setApprovalRefusal] = useState<string | null | undefined>(null);
+  useEffect(() => {
+    if (permit.status !== "pending_review" || !canIssue) {
+      setApprovalRefusal(null);
+      return;
+    }
+    let cancelled = false;
+    setApprovalRefusal(undefined);
+    checkWorkPermitApproval(permit.id)
+      .then(() => {
+        if (!cancelled) setApprovalRefusal(null);
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) setApprovalRefusal(appErrorReason(e));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [permit.id, permit.status, permit.row_version, canIssue]);
 
   const fmt = (v: string | null) => (v ? formatDateTime(v, i18n.language) : t("detail.none"));
   /** Who did a step and when (four-eyes record); a person no longer readable is named as such. */
@@ -189,13 +251,29 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
         (iso.isolation_method_label ?? t("isolation.notSet"))
       : t("isolation.notSet");
 
+  const loadSafety = useCallback(async () => {
+    try {
+      setSafety(await getPermitSafetyContent(permit.id));
+      setSafetyError(null);
+    } catch (e) {
+      setSafetyError(e);
+    }
+    try {
+      setProposed(await listPermitProposedIsolationPoints(permit.id));
+      setProposedError(null);
+    } catch (e) {
+      setProposedError(e);
+    }
+  }, [permit.id]);
+
   useEffect(() => {
     setError(null);
     setChildrenError(null);
     setCardView(null);
     setEditingExpiry(null);
     void loadChildren();
-  }, [loadChildren, permit.row_version]);
+    void loadSafety();
+  }, [loadChildren, loadSafety, permit.row_version]);
 
   /** Runs a write, then reloads children; surfaces backend errors inline. */
   const run = async (fn: () => Promise<WorkPermitRecord | void>): Promise<boolean> => {
@@ -205,6 +283,7 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
       const updated = await fn();
       if (updated) onChanged(updated);
       await loadChildren();
+      await loadSafety();
       return true;
     } catch (e) {
       setError(appErrorReason(e));
@@ -214,14 +293,35 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
     }
   };
 
-  const transition = (to: WorkPermitStatus) =>
+  const transition = (to: WorkPermitStatus, reason?: string) =>
     run(() =>
-      setWorkPermitStatus({ id: permit.id, status: to, expected_row_version: permit.row_version }),
+      setWorkPermitStatus({
+        id: permit.id,
+        status: to,
+        expected_row_version: permit.row_version,
+        ...(reason != null ? { reason } : {}),
+      }),
     );
+
+  const handleCancel = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!cancelReason.trim()) return;
+    // A refusal is shown on the permit; the dialog stays open so the reason is not lost.
+    if (await transition("cancelled", cancelReason.trim())) {
+      setCancelOpen(false);
+      setCancelReason("");
+    }
+  };
 
   const blockerFor = (to: WorkPermitStatus): string | null => {
     // Without the isolations the safety gates cannot be explained: no lifecycle step offered.
     if (childrenError != null || childrenLoading) return "gate.isolationsUnavailable";
+    // The issue gate is the server's (`permit::safety_content`): its verdict is shown, never guessed.
+    if (to === "issued") {
+      if (safetyError != null) return "safety.loadError";
+      if (safety == null) return "safety.loading";
+      if (safety.issue_blockers.length > 0) return "safety.issueBlocked";
+    }
     if (to === "active") return activationBlocker(permit, isolations);
     if (to === "closed") return closeBlocker(isolations);
     if (to === "handed_back" && handovers.length === 0) return "gate.handoverRequired";
@@ -232,6 +332,35 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
     run(async () => {
       await fn({ isolation_id: iso.id, expected_row_version: iso.row_version, lock_number: null });
     });
+
+  const openVerify = (iso: PermitIsolationRecord) => {
+    setError(null);
+    setZeroEnergyDone(false);
+    setZeroEnergyNote("");
+    setVerifyFor(iso);
+  };
+
+  const zeroEnergyReady =
+    zeroEnergyDone &&
+    zeroEnergyNote.trim().length > 0 &&
+    zeroEnergyNote.trim().length <= MAX_ZERO_ENERGY_NOTE_CHARS;
+
+  const handleVerify = async (e: FormEvent) => {
+    e.preventDefault();
+    const iso = verifyFor;
+    if (!iso || !zeroEnergyReady) return;
+    // A refusal is shown in the dialog; it stays open so the comment is not lost.
+    const ok = await run(async () => {
+      await verifyPermitIsolation({
+        isolation_id: iso.id,
+        expected_row_version: iso.row_version,
+        lock_number: null,
+        zero_energy_confirmed: true,
+        zero_energy_note: zeroEnergyNote.trim(),
+      });
+    });
+    if (ok) setVerifyFor(null);
+  };
 
   const handleAddIsolation = async (e: FormEvent) => {
     e.preventDefault();
@@ -285,6 +414,12 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
     );
     if (ok) setEditingExpiry(null);
   };
+
+  // L4-17: the points on the permit's LOTO sheet: verified, or taken off / removed since.
+  const sheetPoints = isolations.filter((iso) => {
+    const state = isolationState(iso);
+    return state === "verified" || state === "takenOff" || state === "removed";
+  });
 
   const showCard = async (iso: PermitIsolationRecord) => {
     try {
@@ -426,6 +561,21 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
                 </dd>
               </>
             ) : null}
+            {permit.status === "cancelled" ? (
+              <>
+                <dt className="text-text-muted">{t("detail.cancelledBy")}</dt>
+                <dd data-testid="permit-cancelled">
+                  {permit.cancelled_at != null
+                    ? byAt(permit.cancelled_by_name, permit.cancelled_at)
+                    : t("detail.cancelNotRecorded")}
+                  <span className="block text-xs text-text-muted">
+                    {permit.cancel_reason
+                      ? t("detail.cancelReason", { reason: permit.cancel_reason })
+                      : t("detail.cancelReasonNotRecorded")}
+                  </span>
+                </dd>
+              </>
+            ) : null}
           </dl>
         </div>
         <span data-testid="permit-status">
@@ -437,18 +587,38 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
         </span>
       </header>
 
+      {/* L4-08: past its expiry the permit no longer covers the work, but its isolations stay until
+          they are removed, the permit closed and handed back. Lock removal and closing stay open. */}
+      {isPermitOverdue(permit) ? (
+        <div
+          role="alert"
+          data-testid="permit-overdue"
+          className="rounded-md border border-tone-danger-border bg-tone-danger-bg px-3 py-2 text-sm text-tone-danger-fg"
+        >
+          <p className="font-medium">{t("overdue.title")}</p>
+          <p>{t("overdue.body", { date: fmt(permit.expires_at) })}</p>
+        </div>
+      ) : null}
+
       <div className="space-y-2">
         <div className="flex flex-wrap gap-2">
           {transitions.map((tr) => {
             const allowed = tr.permission === P.PTW_CLOSE ? canClose : canIssue;
             if (!allowed) return null;
             const blocker = blockerFor(tr.to);
+            const approvalBlocked = tr.to === "approved" && approvalRefusal !== null;
             return (
               <Button
                 key={tr.to}
                 size="sm"
-                disabled={busy || blocker != null}
-                title={blocker ? t(blocker) : undefined}
+                disabled={busy || blocker != null || approvalBlocked}
+                title={
+                  blocker
+                    ? t(blocker)
+                    : tr.to === "approved" && approvalRefusal !== null
+                      ? (approvalRefusal ?? t("transition.next.approvalChecking"))
+                      : undefined
+                }
                 onClick={() => void transition(tr.to)}
               >
                 {t(tr.labelKey)}
@@ -481,6 +651,21 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
             {t(b)}
           </p>
         ))}
+        {transitions.some((tr) => tr.to === "approved") && canIssue && approvalRefusal ? (
+          <p className="text-xs text-tone-warning-fg" data-testid="permit-approval-refusal">
+            {approvalRefusal}
+          </p>
+        ) : null}
+        {/* What the next step means: the steps' names alone read alike (L4-14). */}
+        {transitions
+          .filter((tr) => (tr.permission === P.PTW_CLOSE ? canClose : canIssue))
+          .map((tr) =>
+            NEXT_STEP_HINTS.has(tr.to) ? (
+              <p key={`next-${tr.to}`} className="text-xs text-text-muted">
+                {t(`transition.next.${tr.to}` as never)}
+              </p>
+            ) : null,
+          )}
       </div>
 
       {error ? (
@@ -492,8 +677,63 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
         </p>
       ) : null}
 
+      <PermitSafetyContentPanel
+        permit={permit}
+        content={safety}
+        loadError={safetyError}
+        onRetry={() => void loadSafety()}
+        canIssue={canIssue}
+        canHseApprove={canHseApprove}
+        onSaved={(content) => {
+          setSafety(content);
+          // The content lives on the permit: its version changed (and its status, back to draft).
+          void getWorkPermit(permit.id)
+            .then(onChanged)
+            .catch((e: unknown) => setError(appErrorReason(e)));
+        }}
+      />
+
+      <PermitWorkersPanel
+        permit={permit}
+        canIssue={canIssue}
+        canClose={canClose}
+        canLockOwn={canLockOwn}
+        onChanged={() => void loadSafety()}
+      />
+
       <section className="space-y-2">
-        <h3 className="text-sm font-medium text-text-primary">{t("isolation.title")}</h3>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-sm font-medium text-text-primary">{t("isolation.title")}</h3>
+          {/* L4-17: one printable LOTO sheet for the permit, every verified point on it. */}
+          {canIssue && sheetPoints.length > 0 ? (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-9 gap-1.5"
+              disabled={busy}
+              data-testid="permit-loto-sheet-print"
+              onClick={() =>
+                void run(async () => {
+                  const cards = await Promise.all(
+                    sheetPoints.map((iso) => getLotoCardView(permit.id, iso.id)),
+                  );
+                  // Print first; the audit records a print that actually happened (each point).
+                  await printPermitLotoSheet(
+                    cards,
+                    (key) => t(key),
+                    i18n.resolvedLanguage || i18n.language,
+                  );
+                  for (const iso of sheetPoints) {
+                    await recordLotoCardPrint({ permit_id: permit.id, isolation_id: iso.id });
+                  }
+                })
+              }
+            >
+              <Printer className="h-4 w-4" aria-hidden />
+              {t("card.printSheet")}
+            </Button>
+          ) : null}
+        </div>
         <p className="text-xs text-text-muted">{t("isolation.twoPersonHint")}</p>
         {childrenError != null ? (
           <ErrorState
@@ -585,14 +825,34 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
                   ) : null}
                   <div className="flex flex-wrap gap-x-4 text-xs text-text-muted">
                     {iso.applied_by_name ? (
-                      <span>{t("isolation.appliedBy", { name: iso.applied_by_name })}</span>
+                      <span>
+                        {t("isolation.appliedBy", {
+                          name: iso.applied_by_name,
+                          date: fmt(iso.applied_at),
+                        })}
+                      </span>
                     ) : null}
                     {iso.verified_by_name ? (
-                      <span>{t("isolation.verifiedBy", { name: iso.verified_by_name })}</span>
+                      <span>
+                        {t("isolation.verifiedBy", {
+                          name: iso.verified_by_name,
+                          date: fmt(iso.verified_at),
+                        })}
+                      </span>
+                    ) : null}
+                    {iso.verified_at ? (
+                      <span data-testid="isolation-zero-energy">
+                        {iso.zero_energy_note
+                          ? t("isolation.zeroEnergyShown", { note: iso.zero_energy_note })
+                          : t("isolation.zeroEnergyNotRecorded")}
+                      </span>
                     ) : null}
                     {iso.removal_verified_by_name ? (
                       <span>
-                        {t("isolation.removalVerifiedBy", { name: iso.removal_verified_by_name })}
+                        {t("isolation.removalVerifiedBy", {
+                          name: iso.removal_verified_by_name,
+                          date: fmt(iso.removal_verified_at),
+                        })}
                       </span>
                     ) : null}
                     {iso.removed_at ? (
@@ -673,7 +933,7 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
                         variant="outline"
                         disabled={busy || appliedByMe}
                         title={appliedByMe ? t("isolation.selfBlocked") : undefined}
-                        onClick={() => void isolationAction(iso, verifyPermitIsolation)}
+                        onClick={() => openVerify(iso)}
                       >
                         {t("isolation.verify")}
                       </Button>
@@ -768,7 +1028,7 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
         )}
 
         {cardView ? (
-          <div className="rounded border border-surface-border bg-surface-0 p-3 font-mono text-xs leading-relaxed text-text-primary">
+          <div className="rounded border border-surface-border bg-surface-0 p-3 text-xs leading-relaxed text-text-primary">
             <div className="mb-1 font-sans text-sm font-medium">{t("card.title")}</div>
             <div>
               {t("card.permit")}: {cardView.permit_code}
@@ -789,6 +1049,13 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
             ) : null}
             <div>
               {t("card.verifier")}: {cardView.verifier_signature ?? t("detail.none")}
+            </div>
+            <div>
+              {t("card.zeroEnergy")}:{" "}
+              {cardView.zero_energy_note ??
+                (cardView.verifier_signature
+                  ? t("isolation.zeroEnergyNotRecorded")
+                  : t("detail.none"))}
             </div>
             <div>
               {t("card.expiry")}: {fmt(cardView.expires_at)}
@@ -833,6 +1100,60 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
           </div>
         ) : null}
 
+        {canIssue && setupOpen && proposedError != null ? (
+          <p role="alert" className="text-xs text-tone-danger-fg">
+            {t("safety.proposed.loadError")} {appErrorReason(proposedError)}
+          </p>
+        ) : null}
+        {canIssue && setupOpen && proposed.length > 0 ? (
+          <div
+            className="space-y-1 rounded-md border border-surface-border p-2"
+            data-testid="permit-proposed-points"
+          >
+            <p className="text-xs font-medium text-text-primary">{t("safety.proposed.title")}</p>
+            <p className="text-xs text-text-muted">{t("safety.proposed.hint")}</p>
+            <ul className="space-y-1">
+              {proposed.map((p) => (
+                <li key={p.point.id} className="flex flex-wrap items-center gap-2 text-xs">
+                  <span className="font-medium">{p.isolation_point_text}</span>
+                  <span className="text-text-muted">
+                    {(optionLabel(optionById.get(p.point.energy_type_id), lang) ||
+                      p.point.energy_type_label) ??
+                      ""}
+                    {" · "}
+                    {(optionLabel(optionById.get(p.point.isolation_method_id), lang) ||
+                      p.point.isolation_method_label) ??
+                      ""}
+                  </span>
+                  {p.point.normal_state ? (
+                    <span className="text-text-muted">
+                      {t("safety.proposed.normalState", { state: p.point.normal_state })}
+                    </span>
+                  ) : null}
+                  {p.already_on_permit ? (
+                    <Badge variant="outline">{t("safety.proposed.alreadyOnPermit")}</Badge>
+                  ) : (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() =>
+                        setIsoDraft({
+                          point: p.isolation_point_text,
+                          energy: String(p.point.energy_type_id),
+                          method: String(p.point.isolation_method_id),
+                          lock: "",
+                        })
+                      }
+                    >
+                      {t("safety.proposed.use")}
+                    </Button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
         {canIssue && setupOpen ? (
           <form
             className="grid gap-2 rounded-md border border-dashed border-surface-border p-2 sm:grid-cols-4"
@@ -1097,19 +1418,80 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
         onRecorded={() => void loadChildren()}
       />
 
-      <ConfirmDialog
-        open={cancelOpen}
-        onOpenChange={setCancelOpen}
-        title={t("transition.cancel")}
-        description={t("transition.confirmCancel")}
-        confirmLabel={t("transition.cancel")}
-        destructive
-        onConfirm={async () => {
-          const ok = await transition("cancelled");
-          // Keep the dialog open on failure (the message is shown on the permit).
-          if (!ok) throw new Error("cancel refused");
+      <Dialog
+        open={verifyFor != null}
+        onOpenChange={(open) => {
+          if (!open) setVerifyFor(null);
         }}
-      />
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t("isolation.verifyTitle")}</DialogTitle>
+            <DialogDescription>
+              {t("isolation.verifyDescription", { point: verifyFor?.isolation_point ?? "" })}
+            </DialogDescription>
+          </DialogHeader>
+          <form className="space-y-3" onSubmit={(e) => void handleVerify(e)}>
+            <label className="flex items-start gap-2 text-sm">
+              <Checkbox checked={zeroEnergyDone} onCheckedChange={setZeroEnergyDone} />
+              <span>{t("isolation.zeroEnergyConfirm")}</span>
+            </label>
+            <FormField name="zero-energy-note" label={t("isolation.zeroEnergyNote")} required>
+              <Textarea
+                id="zero-energy-note"
+                rows={3}
+                maxLength={MAX_ZERO_ENERGY_NOTE_CHARS}
+                placeholder={t("isolation.zeroEnergyNotePlaceholder")}
+                value={zeroEnergyNote}
+                onChange={(e) => setZeroEnergyNote(e.target.value)}
+              />
+            </FormField>
+            {error ? (
+              <p role="alert" className="text-xs text-tone-danger-fg">
+                {error}
+              </p>
+            ) : null}
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setVerifyFor(null)}>
+                {t("isolation.verifyCancel")}
+              </Button>
+              <Button type="submit" disabled={busy || !zeroEnergyReady}>
+                {t("isolation.verify")}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={cancelOpen} onOpenChange={setCancelOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t("transition.cancel")}</DialogTitle>
+            <DialogDescription>
+              {permit.code} · {t("transition.confirmCancel")}
+            </DialogDescription>
+          </DialogHeader>
+          <form className="space-y-3" onSubmit={(e) => void handleCancel(e)}>
+            <FormField name="cancel-reason" label={t("transition.cancelReason")} required>
+              <Textarea
+                id="cancel-reason"
+                rows={2}
+                value={cancelReason}
+                onChange={(e) => setCancelReason(e.target.value)}
+              />
+            </FormField>
+            {error ? <p className="text-xs text-tone-danger-fg">{error}</p> : null}
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setCancelOpen(false)}>
+                {t("transition.keep")}
+              </Button>
+              <Button type="submit" variant="destructive" disabled={busy || !cancelReason.trim()}>
+                {t("transition.cancel")}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
       <ConfirmDialog
         open={cancelLine != null}
         onOpenChange={(open) => {

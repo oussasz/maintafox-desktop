@@ -56,6 +56,7 @@ describe("updater schemas", () => {
       "available",
       "up_to_date",
       "not_configured",
+      "store_managed",
       "not_activated",
       "unreachable",
     ] as const) {

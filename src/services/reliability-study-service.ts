@@ -14,16 +14,44 @@ const optStr = z.string().nullable();
 
 const FilterOptionSchema = z.object({ id: num, label: z.string(), depth: num });
 
-const FleetKpisSchema = z.object({
+/**
+ * Fleet figures of one scope (period, class, site) — the one live calculation shared by RAMS and
+ * Analytique (`src-tauri/src/reliability/study/fleet_kpis.rs`, definitions there).
+ */
+export const FleetKpisSchema = z.object({
+  period_start: z.string(),
+  period_end: z.string(),
+  /** Window under 90 days: MTBF, MTTR, active repair and Aₒ are not given. */
+  window_too_short: z.boolean(),
   equipment_count: num,
   failure_count: num,
   downtime_hours: num,
+  exposure_hours: num,
+  /** Aₒ = MTBF / (MTBF + MTTR restore). */
   availability_operational: optNum,
+  /** Σ hours / every unplanned failure of the scope, whatever its coding. */
   mtbf_hours: optNum,
+  eligible_failure_count: num,
+  /** Unplanned records of the class / site left out of the MTBF: failure date unreadable. */
+  mtbf_excluded_missing_date: num,
+  /** Records of the window dated outside their equipment's service period: out of every figure. */
+  mtbf_excluded_outside_service: num,
+  /** Mean time to restore: work start → WO close (work orders), failure → back in service (imported). */
   mttr_hours: optNum,
+  restore_count: num,
+  restore_excluded_missing_failed_at: num,
+  restore_excluded_missing_restored_at: num,
+  restore_excluded_inconsistent: num,
+  /** Mean repair person-hours (Σ of the interveners' hours worked). */
+  mean_active_repair_hours: optNum,
+  active_repair_count: num,
+  repair_excluded_missing_hours: num,
+  /** Complete records (mode + cause or not determined + mechanism) / records. */
   data_quality: optNum,
+  records_complete: num,
   records_missing_mode: num,
   records_missing_cause: num,
+  records_missing_mechanism: num,
   operating_basis_count: num,
   calendar_basis_count: num,
 });
@@ -39,6 +67,8 @@ const FleetAssetRowSchema = z.object({
   downtime_share: num,
   mtbf_hours: optNum,
   mttr_hours: optNum,
+  /** Cost of the work behind the period's failures; null when none is recorded. */
+  failure_cost: optNum,
   time_basis: z.string(),
   data_quality: z.string(),
   records_to_check: num,
@@ -58,8 +88,11 @@ const FleetViewSchema = z.object({
 });
 
 export type FleetView = z.infer<typeof FleetViewSchema>;
+export type FleetKpis = z.infer<typeof FleetKpisSchema>;
 export type FleetAssetRow = z.infer<typeof FleetAssetRowSchema>;
 export type FilterOption = z.infer<typeof FilterOptionSchema>;
+
+export type FleetSortKey = "failures" | "downtime" | "mtbf" | "cost";
 
 export interface FleetViewFilter {
   period_start: string;
@@ -69,6 +102,38 @@ export interface FleetViewFilter {
   limit?: number | null;
   /** Rows skipped (next page of the ranking). */
   offset?: number | null;
+  /** Ranking column; null keeps the default (downtime). */
+  sort_by?: FleetSortKey | null;
+  /** Descending order; null = the column's default (MTBF ascending, the others descending). */
+  sort_desc?: boolean | null;
+}
+
+const AssetFiguresSchema = z.object({
+  equipment_id: num,
+  period_start: z.string(),
+  period_end: z.string(),
+  /** Window under the minimum for rates: MTBF and MTTR are not given. */
+  window_too_short: z.boolean(),
+  failures: num,
+  downtime_hours: num,
+  mtbf_hours: optNum,
+  mttr_hours: optNum,
+});
+
+export type AssetReliabilityFigures = z.infer<typeof AssetFiguresSchema>;
+
+/** Failure figures of one equipment over a period: the RAMS calculation (same as the fleet row). */
+export async function getReliabilityAssetFigures(
+  equipmentId: number,
+  periodStart: string,
+  periodEnd: string,
+): Promise<AssetReliabilityFigures> {
+  const raw = await invoke<unknown>("get_reliability_asset_figures", {
+    equipmentId,
+    periodStart,
+    periodEnd,
+  });
+  return AssetFiguresSchema.parse(raw);
 }
 
 export async function getReliabilityFleetView(filter: FleetViewFilter): Promise<FleetView> {
@@ -123,6 +188,8 @@ export interface CreateStudyInput {
   period_start: string;
   period_end: string;
   failure_mode_id?: number | null;
+  /** The person confirmed studying equipment of different classes together (L2-18). */
+  accept_mixed_classes?: boolean;
 }
 
 export async function createReliabilityStudy(input: CreateStudyInput): Promise<ReliabilityStudy> {
@@ -143,6 +210,8 @@ export interface UpdateStudyInput {
   pm_plan_id?: number | null;
   clear_pm_plan?: boolean;
   equipment_ids?: number[] | null;
+  /** Read with `equipment_ids`: the mixed classes were confirmed (L2-18). */
+  accept_mixed_classes?: boolean;
   status?: "active" | "archived" | null;
 }
 
@@ -471,6 +540,20 @@ export async function createReliabilityStudyDecision(
   input: CreateDecisionInput,
 ): Promise<StudyDecision> {
   const raw = await invoke<unknown>("create_reliability_study_decision", { input });
+  return DecisionSchema.parse(raw);
+}
+
+/**
+ * Edit of a proposed decision by its proposer: the corrected decision is recorded and the one it
+ * replaces is withdrawn with `reason` (a decision never changes once proposed).
+ */
+export async function reviseReliabilityStudyDecision(input: {
+  decision_id: number;
+  expected_row_version: number;
+  reason: string;
+  decision: CreateDecisionInput;
+}): Promise<StudyDecision> {
+  const raw = await invoke<unknown>("revise_reliability_study_decision", { input });
   return DecisionSchema.parse(raw);
 }
 

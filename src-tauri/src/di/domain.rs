@@ -270,6 +270,9 @@ pub struct InterventionRequest {
     // Display enrichment (JOINs — never render FKs in UI)
     pub asset_code: Option<String>,
     pub asset_label: Option<String>,
+    /// Criticality code of the equipment (reference value, else the old lookup), for the list's
+    /// criticality column and the queues' second sort key (L1-29).
+    pub asset_criticality_code: Option<String>,
     pub org_node_code: Option<String>,
     pub org_node_label: Option<String>,
     pub submitter_display_name: Option<String>,
@@ -372,7 +375,7 @@ macro_rules! di_paused_response_hours_sql {
 
 /// Display enrichment columns (must be paired with [`IR_JOINS`]), plus the paused SLA hours.
 pub(crate) const IR_JOIN_COLS: &str = concat!(
-    "    eq.asset_id_code AS asset_code, eq.name AS asset_label,     org.code AS org_node_code, org.name AS org_node_label,     COALESCE(us.display_name, us.username) AS submitter_display_name,     COALESCE(urv.display_name, urv.username) AS reviewer_display_name,     wo.code AS converted_to_wo_code, wo.title AS converted_to_wo_title,     related_di.code AS related_di_code,     src_round.id AS source_inspection_round_id, src_tpl.code AS source_inspection_round_code,     src_tpl.name AS source_inspection_round_title, src_round.scheduled_at AS source_inspection_round_scheduled_at",
+    "    eq.asset_id_code AS asset_code, eq.name AS asset_label,     (SELECT COALESCE(crit_ref.code, crit_lv.code) FROM equipment crit_eq          LEFT JOIN lookup_values crit_lv ON crit_lv.id = crit_eq.criticality_value_id          LEFT JOIN reference_values crit_ref ON crit_ref.id = crit_eq.equipment_criticality_ref_id          WHERE crit_eq.id = ir.equipment_id) AS asset_criticality_code,     org.code AS org_node_code, org.name AS org_node_label,     COALESCE(us.display_name, us.username) AS submitter_display_name,     COALESCE(urv.display_name, urv.username) AS reviewer_display_name,     wo.code AS converted_to_wo_code, wo.title AS converted_to_wo_title,     related_di.code AS related_di_code,     src_round.id AS source_inspection_round_id, src_tpl.code AS source_inspection_round_code,     src_tpl.name AS source_inspection_round_title, src_round.scheduled_at AS source_inspection_round_scheduled_at",
     ", ",
     di_paused_hours_sql!(),
     " AS sla_paused_hours, ",
@@ -557,6 +560,15 @@ fn map_columns(row: &QueryResult) -> AppResult<InterventionRequest> {
         org_node_code: row
             .try_get::<Option<String>>("", "org_node_code")
             .map_err(|e| decode_err("org_node_code", e))?,
+        // Optional: a few reads select the request without the display joins.
+        asset_criticality_code: row
+            .try_get::<Option<String>>("", "asset_criticality_code")
+            .ok()
+            .flatten()
+            .map(|code| {
+                crate::assets::identity::normalize_criticality_to_canon(&code)
+                    .unwrap_or_else(|_| code.trim().to_ascii_uppercase())
+            }),
         org_node_label: row
             .try_get::<Option<String>>("", "org_node_label")
             .map_err(|e| decode_err("org_node_label", e))?,
@@ -618,6 +630,29 @@ pub fn guard_transition(from: &DiStatus, to: &DiStatus) -> Result<(), String> {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// Safety flag and urgency (CMMS Advisor decision on L4-11, 2026-11-06)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Lowest urgency of a request flagged "sécurité": its reported urgency is raised to it (the
+/// requester may choose `emergency`, never less), and a reviewer may validate it lower only with
+/// the reason of the review, audited (`di::review::screen_di`). The flag itself is kept.
+pub const SAFETY_MIN_URGENCY: crate::reference::urgency_scale::UrgencyCode =
+    crate::reference::urgency_scale::UrgencyCode::Urgent;
+
+/// The urgency a request keeps: `level`, raised to [`SAFETY_MIN_URGENCY`] when it is flagged
+/// "sécurité" and less urgent than that.
+pub fn safety_urgency_floor(
+    safety_flag: bool,
+    level: crate::reference::urgency_scale::UrgencyCode,
+) -> crate::reference::urgency_scale::UrgencyCode {
+    if safety_flag && level.rank() > SAFETY_MIN_URGENCY.rank() {
+        SAFETY_MIN_URGENCY
+    } else {
+        level
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // DI code generator
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -636,6 +671,17 @@ pub async fn generate_di_code(db: &impl ConnectionTrait) -> AppResult<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_safety_flag_raises_the_urgency_to_urgent_at_least() {
+        use crate::reference::urgency_scale::UrgencyCode as U;
+        assert_eq!(safety_urgency_floor(true, U::Normal), U::Urgent);
+        assert_eq!(safety_urgency_floor(true, U::Low), U::Urgent);
+        assert_eq!(safety_urgency_floor(true, U::High), U::Urgent);
+        assert_eq!(safety_urgency_floor(true, U::Urgent), U::Urgent);
+        assert_eq!(safety_urgency_floor(true, U::Emergency), U::Emergency);
+        assert_eq!(safety_urgency_floor(false, U::Low), U::Low);
+    }
 
     #[test]
     fn test_all_status_round_trip() {

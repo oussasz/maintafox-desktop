@@ -17,6 +17,7 @@ import { AssetPicker } from "@/components/assets/AssetPicker";
 import { UrgencySelect } from "@/components/common/urgency/UrgencySelect";
 import { urgencyLevelLabel, useUrgencyScale } from "@/components/common/urgency/use-urgency-scale";
 import { DiAttachmentPanel } from "@/components/di/DiAttachmentPanel";
+import { SAFETY_MIN_URGENCY } from "@/components/di/di-safety";
 import { diStatusToI18nKey } from "@/components/di/status-meta";
 import {
   EntityFormAttachments,
@@ -37,6 +38,7 @@ import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { StatusChip } from "@/components/ui/status-chip";
 import { Textarea } from "@/components/ui/textarea";
+import { useUnsavedFormGuard } from "@/components/ui/unsaved-changes-guard";
 import { DI_STATUS_TONE, mfTone, toneOf } from "@/design-system/tone";
 import { useSession } from "@/hooks/use-session";
 import { describeAppError } from "@/lib/app-error";
@@ -54,6 +56,32 @@ const TITLE_MAX = 100;
 const DESC_MAX = 1000;
 /** Possible duplicates listed before submitting (the most relevant first). */
 const DUPLICATES_SHOWN = 5;
+/**
+ * What the short operator form fills in for the fields it does not ask (L1-11). Every value is a
+ * seeded reference code, shown to the planner on the request and corrected at screening: origin
+ * "Opérateur", type "Réparation", impact "Inconnu"; urgency "Haute" when the machine is stopped,
+ * "Normale" when it still runs.
+ */
+const SHORT_FORM_ORIGIN = "operator";
+const SHORT_FORM_REQUEST_TYPE = "repair";
+const SHORT_FORM_IMPACT = "unknown";
+const SHORT_FORM_URGENCY_STOPPED = "high";
+const SHORT_FORM_URGENCY_RUNNING = "normal";
+
+/** `YYYY-MM-DDTHH:mm` in local time: what the date-time field and the form open with. */
+function nowLocalInput(): string {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/** The subject of a short request: the first line of what was typed, cut to the title limit. */
+function titleFromDescription(description: string): string {
+  const firstLine = description.trim().split(/\r?\n/)[0] ?? "";
+  return firstLine.length > TITLE_MAX
+    ? `${firstLine.slice(0, TITLE_MAX - 1).trimEnd()}…`
+    : firstLine;
+}
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 
@@ -76,7 +104,7 @@ interface FormErrors {
   request_type?: string;
   reported_urgency?: string;
   impact_level?: string;
-  symptom_code_id?: string;
+  machine_stopped?: string;
   equipment?: string;
 }
 
@@ -88,20 +116,25 @@ function validate(
     request_type: string;
     reported_urgency: string;
     impact_level: string;
-    symptomCodeId: number | null;
+    machineStopped: boolean | null;
+    /** The short operator form: only the equipment, the description and the machine state. */
+    short: boolean;
     assetId: number | null;
   },
   t: (key: string) => string,
 ): FormErrors {
   const errors: FormErrors = {};
-  if (!fields.title.trim()) errors.title = t("form.validation.titleRequired");
   if (!fields.description.trim()) errors.description = t("form.validation.descriptionRequired");
+  if (!fields.assetId) errors.equipment = t("form.validation.equipmentRequired");
+  if (fields.machineStopped === null) {
+    errors.machine_stopped = t("form.validation.machineStateRequired");
+  }
+  if (fields.short) return errors;
+  if (!fields.title.trim()) errors.title = t("form.validation.titleRequired");
   if (!fields.origin_type) errors.origin_type = t("form.validation.originRequired");
   if (!fields.request_type) errors.request_type = t("form.validation.requestTypeRequired");
   if (!fields.reported_urgency) errors.reported_urgency = t("form.validation.urgencyRequired");
   if (!fields.impact_level) errors.impact_level = t("form.validation.impactRequired");
-  if (!fields.symptomCodeId) errors.symptom_code_id = t("form.validation.symptomRequired");
-  if (!fields.assetId) errors.equipment = t("form.validation.equipmentRequired");
   return errors;
 }
 
@@ -137,11 +170,22 @@ export function DiCreateForm({
   const [symptomCodeId, setSymptomCodeId] = useState<number | null>(
     initial?.symptom_code_id ?? null,
   );
-  const [observedAt, setObservedAt] = useState(initial?.observed_at ?? "");
+  // A new request opens with the observation date and time of now (the requester just saw it).
+  const openedObservedAt = useRef(isEdit ? (initial?.observed_at ?? "") : nowLocalInput()).current;
+  const [observedAt, setObservedAt] = useState(openedObservedAt);
+  // New requests open on the short operator form; the full form is one click away.
+  const [fullForm, setFullForm] = useState(isEdit);
+  const short = !fullForm;
+  // "Machine à l'arrêt" is asked outright (no preselected answer on a new request).
+  const [machineStopped, setMachineStopped] = useState<boolean | null>(
+    initial ? initial.production_impact : null,
+  );
   const [safetyFlag, setSafetyFlag] = useState(initial?.safety_flag ?? false);
+  // A request saved flagged "sécurité" stays flagged (the server refuses the untick): only the
+  // reviewer may lower its urgency, with a reason.
+  const safetyFlagLocked = initial?.safety_flag === true;
   const [environmentalFlag, setEnvironmentalFlag] = useState(initial?.environmental_flag ?? false);
   const [qualityFlag, setQualityFlag] = useState(initial?.quality_flag ?? false);
-  const [productionImpact, setProductionImpact] = useState(initial?.production_impact ?? false);
   const [pendingPhotos, setPendingPhotos] = useState<EntityFormImageItem[]>([]);
   const [pendingFiles, setPendingFiles] = useState<EntityFormFileItem[]>([]);
 
@@ -150,8 +194,17 @@ export function DiCreateForm({
 
   // Open requests already raised on the same asset (duplicate warning)
   const [duplicates, setDuplicates] = useState<PossibleDuplicate[]>([]);
-  const { levelOf, language } = useUrgencyScale();
+  const { levelOf, rankOf, language } = useUrgencyScale();
   const urgencyLevel = levelOf(urgency);
+  const productionImpact = machineStopped === true;
+  const safetyMinRank = levelOf(SAFETY_MIN_URGENCY)?.rank;
+
+  // A request flagged "sécurité" is urgent at least: ticking the flag (or a flagged request whose
+  // urgency is lower or not chosen) takes "Urgent"; a more urgent level stays.
+  useEffect(() => {
+    if (!safetyFlag || safetyMinRank == null) return;
+    if (!urgency || rankOf(urgency) > safetyMinRank) setUrgency(SAFETY_MIN_URGENCY);
+  }, [safetyFlag, safetyMinRank, urgency, rankOf]);
 
   // Validation
   const [touched, setTouched] = useState<Set<string>>(new Set());
@@ -234,7 +287,8 @@ export function DiCreateForm({
           request_type: requestType,
           reported_urgency: urgency,
           impact_level: impactLevel,
-          symptomCodeId: symptomCodeId,
+          machineStopped,
+          short,
           assetId: selectedAsset?.id ?? null,
         },
         (key) => t(key as never),
@@ -246,7 +300,8 @@ export function DiCreateForm({
       requestType,
       urgency,
       impactLevel,
-      symptomCodeId,
+      machineStopped,
+      short,
       selectedAsset,
       t,
     ],
@@ -264,6 +319,30 @@ export function DiCreateForm({
     [touched, currentErrors],
   );
 
+  // ── Unsaved input ─────────────────────────────────────────────────────
+  // Dirty = a field, a chosen photo or file differs from what the form opened with. An equipment
+  // passed in by the caller is not the user's input.
+  const dirty =
+    title !== (initial?.title ?? "") ||
+    description !== (initial?.description ?? "") ||
+    originType !== (initial?.origin_type ?? "") ||
+    requestType !== (initial?.request_type ?? "") ||
+    urgency !== (initial?.reported_urgency ?? "") ||
+    impactLevel !== (initial?.impact_level ?? "") ||
+    symptomCodeId !== (initial?.symptom_code_id ?? null) ||
+    observedAt !== openedObservedAt ||
+    safetyFlag !== (initial?.safety_flag ?? false) ||
+    environmentalFlag !== (initial?.environmental_flag ?? false) ||
+    qualityFlag !== (initial?.quality_flag ?? false) ||
+    machineStopped !== (initial ? initial.production_impact : null) ||
+    pendingPhotos.length > 0 ||
+    pendingFiles.length > 0 ||
+    (selectedAsset != null &&
+      (isEdit
+        ? selectedAsset.id !== initial?.equipment_id
+        : prefillAsset == null && (prefillEquipmentId == null || prefillEquipmentId <= 0)));
+  const { requestCancel, markSaved, guard } = useUnsavedFormGuard({ dirty, onCancel });
+
   // ── Submit ────────────────────────────────────────────────────────────
 
   const handleSubmit = useCallback(async () => {
@@ -276,7 +355,7 @@ export function DiCreateForm({
         "request_type",
         "reported_urgency",
         "impact_level",
-        "symptom_code_id",
+        "machine_stopped",
         "equipment",
       ]),
     );
@@ -307,28 +386,31 @@ export function DiCreateForm({
           reported_urgency: urgency,
           observed_at: observedAt || null,
         });
+        markSaved();
         const updated = useDiStore.getState().activeDi?.di;
         onSubmitted(updated && updated.id === initial.id ? updated : initial);
       } else {
         const input: DiCreateInput = {
           equipment_id: selectedAsset.id,
           org_node_id: selectedAsset.org_node_id,
-          title: title.trim(),
+          title: short ? titleFromDescription(description) : title.trim(),
           description: description.trim(),
-          origin_type: originType,
-          request_type: requestType,
+          origin_type: originType || SHORT_FORM_ORIGIN,
+          request_type: requestType || SHORT_FORM_REQUEST_TYPE,
           symptom_code_id: symptomCodeId,
-          impact_level: impactLevel,
+          impact_level: impactLevel || SHORT_FORM_IMPACT,
           production_impact: productionImpact,
           safety_flag: safetyFlag,
           environmental_flag: environmentalFlag,
           quality_flag: qualityFlag,
-          reported_urgency: urgency,
+          reported_urgency:
+            urgency || (productionImpact ? SHORT_FORM_URGENCY_STOPPED : SHORT_FORM_URGENCY_RUNNING),
           observed_at: observedAt || null,
           source_inspection_anomaly_id: null,
           submitter_id: info.user_id,
         };
         const di = await submitNewDi(input);
+        markSaved();
 
         const photos = orderImagesForUpload(pendingPhotos).filter((p) => Boolean(p.path));
         const files = pendingFiles.filter((f) => Boolean(f.path));
@@ -390,6 +472,7 @@ export function DiCreateForm({
     info,
     isEdit,
     initial,
+    short,
     title,
     description,
     originType,
@@ -406,6 +489,7 @@ export function DiCreateForm({
     pendingFiles,
     submitNewDi,
     updateDraft,
+    markSaved,
     onSubmitted,
     t,
   ]);
@@ -427,17 +511,21 @@ export function DiCreateForm({
   return (
     <div className="flex flex-col gap-6 overflow-y-auto max-h-[70vh] px-1 py-2">
       {/* ── Section 1: Requester (read-only) ─────────────────────────── */}
-      <section>
-        <h3 className="text-sm font-semibold text-text-primary mb-3">
-          {t("form.section.requester")}
-        </h3>
-        <div className="rounded-lg border border-surface-border bg-surface-1 p-3 space-y-1">
-          <p className="text-sm text-text-primary">{info?.display_name ?? "—"}</p>
-          <p className="text-xs text-text-muted">{info?.username ?? ""}</p>
-        </div>
-      </section>
+      {short ? null : (
+        <>
+          <section>
+            <h3 className="text-sm font-semibold text-text-primary mb-3">
+              {t("form.section.requester")}
+            </h3>
+            <div className="rounded-lg border border-surface-border bg-surface-1 p-3 space-y-1">
+              <p className="text-sm text-text-primary">{info?.display_name ?? "—"}</p>
+              <p className="text-xs text-text-muted">{info?.username ?? ""}</p>
+            </div>
+          </section>
 
-      <Separator />
+          <Separator />
+        </>
+      )}
 
       {/* ── Section 2: Equipment Selection ───────────────────────────── */}
       <section>
@@ -512,150 +600,161 @@ export function DiCreateForm({
       <section className="space-y-4">
         <h3 className="text-sm font-semibold text-text-primary">{t("form.section.general")}</h3>
 
-        {/* Title */}
-        <FormField
-          name="title"
-          label={t("form.subject.label")}
-          error={fieldError("title")}
-          required
-        >
-          <div className="relative">
-            <Input
-              id="title"
-              value={title}
-              maxLength={TITLE_MAX}
-              onChange={(e: ChangeEvent<HTMLInputElement>) => setTitle(e.target.value)}
-              onBlur={() => markTouched("title")}
-              placeholder={t("form.subject.placeholder")}
-            />
-            <span className="absolute right-2 top-2 text-[10px] text-text-muted">
-              {title.length}/{TITLE_MAX}
-            </span>
-          </div>
-        </FormField>
+        {short ? null : (
+          <>
+            {/* Title */}
+            <FormField
+              name="title"
+              label={t("form.subject.label")}
+              error={fieldError("title")}
+              required
+            >
+              <div className="relative">
+                <Input
+                  id="title"
+                  value={title}
+                  maxLength={TITLE_MAX}
+                  onChange={(e: ChangeEvent<HTMLInputElement>) => setTitle(e.target.value)}
+                  onBlur={() => markTouched("title")}
+                  placeholder={t("form.subject.placeholder")}
+                />
+                <span className="absolute right-2 top-2 text-[10px] text-text-muted">
+                  {title.length}/{TITLE_MAX}
+                </span>
+              </div>
+            </FormField>
 
-        {/* Origin type */}
-        <FormField
-          name="origin_type"
-          label={t("form.originType.label")}
-          error={fieldError("origin_type")}
-          required
-        >
-          <ReferenceCombobox
-            id="origin_type"
-            referenceType="di.origin"
-            value={originType || null}
-            onChange={(code) => {
-              setOriginType(code ?? "");
-              markTouched("origin_type");
-            }}
-            allowClear={false}
-            disabled={isEdit}
-            placeholder={t("form.originType.placeholder")}
-            aria-invalid={Boolean(fieldError("origin_type"))}
-          />
-        </FormField>
+            {/* Origin type */}
+            <FormField
+              name="origin_type"
+              label={t("form.originType.label")}
+              error={fieldError("origin_type")}
+              required
+            >
+              <ReferenceCombobox
+                id="origin_type"
+                referenceType="di.origin"
+                value={originType || null}
+                onChange={(code) => {
+                  setOriginType(code ?? "");
+                  markTouched("origin_type");
+                }}
+                allowClear={false}
+                disabled={isEdit}
+                placeholder={t("form.originType.placeholder")}
+                aria-invalid={Boolean(fieldError("origin_type"))}
+              />
+            </FormField>
 
-        <FormField
-          name="request_type"
-          label={t("form.requestType.label")}
-          error={fieldError("request_type")}
-          required
-        >
-          <ReferenceCombobox
-            id="request_type"
-            referenceType="di.request_type"
-            value={requestType || null}
-            onChange={(code) => {
-              setRequestType(code ?? "");
-              markTouched("request_type");
-            }}
-            allowClear={false}
-            allowCreate={false}
-            placeholder={t("form.requestType.placeholder")}
-            aria-invalid={Boolean(fieldError("request_type"))}
-          />
-        </FormField>
+            <FormField
+              name="request_type"
+              label={t("form.requestType.label")}
+              error={fieldError("request_type")}
+              required
+            >
+              <ReferenceCombobox
+                id="request_type"
+                referenceType="di.request_type"
+                value={requestType || null}
+                onChange={(code) => {
+                  setRequestType(code ?? "");
+                  markTouched("request_type");
+                }}
+                allowClear={false}
+                allowCreate={false}
+                placeholder={t("form.requestType.placeholder")}
+                aria-invalid={Boolean(fieldError("request_type"))}
+              />
+            </FormField>
 
-        <FormField
-          name="symptom_code_id"
-          label={t("form.symptom.label")}
-          error={fieldError("symptom_code_id")}
-          required
-        >
-          <ReferenceCombobox
-            id="symptom_code_id"
-            referenceType="work.symptom"
-            valueMode="id"
-            value={symptomCodeId != null ? String(symptomCodeId) : null}
-            onChange={(idStr) => {
-              setSymptomCodeId(idStr ? Number(idStr) : null);
-              markTouched("symptom_code_id");
-            }}
-            allowClear={false}
-            placeholder={t("form.symptom.placeholder")}
-            aria-invalid={Boolean(fieldError("symptom_code_id"))}
-          />
-        </FormField>
+            <FormField
+              name="symptom_code_id"
+              label={t("form.symptom.label")}
+              description={t("form.symptom.optionalHint")}
+            >
+              <ReferenceCombobox
+                id="symptom_code_id"
+                referenceType="work.symptom"
+                valueMode="id"
+                value={symptomCodeId != null ? String(symptomCodeId) : null}
+                onChange={(idStr) => {
+                  setSymptomCodeId(idStr ? Number(idStr) : null);
+                  markTouched("symptom_code_id");
+                }}
+                placeholder={t("form.symptom.placeholder")}
+              />
+            </FormField>
 
-        {/* Urgency */}
-        <FormField
-          name="reported_urgency"
-          label={t("form.priority.label")}
-          error={fieldError("reported_urgency")}
-          required
-        >
-          <UrgencySelect
-            id="reported_urgency"
-            value={urgency || null}
-            onChange={(code) => {
-              setUrgency(code);
-              markTouched("reported_urgency");
-            }}
-            placeholder={t("form.priority.placeholder")}
-            aria-invalid={Boolean(fieldError("reported_urgency"))}
-            aria-describedby="reported_urgency-hint"
-          />
-          <p id="reported_urgency-hint" className="mt-1 text-xs text-text-secondary">
-            {urgencyLevel
-              ? [
-                  urgencyLevel.description,
-                  urgencyLevel.response_target_hours != null &&
-                  urgencyLevel.completion_target_hours != null
-                    ? t("form.priority.targetHint", {
-                        level: urgencyLevelLabel(urgencyLevel, language),
-                        response: urgencyLevel.response_target_hours,
-                        completion: urgencyLevel.completion_target_hours,
-                      })
-                    : t("form.priority.noTarget"),
-                ]
-                  .filter(Boolean)
-                  .join(" ")
-              : t("form.priority.chooseHint")}
-          </p>
-        </FormField>
+            {/* Urgency */}
+            <FormField
+              name="reported_urgency"
+              label={t("form.priority.label")}
+              error={fieldError("reported_urgency")}
+              required
+            >
+              <UrgencySelect
+                id="reported_urgency"
+                value={urgency || null}
+                onChange={(code) => {
+                  setUrgency(code);
+                  markTouched("reported_urgency");
+                }}
+                placeholder={t("form.priority.placeholder")}
+                aria-invalid={Boolean(fieldError("reported_urgency"))}
+                aria-describedby="reported_urgency-hint"
+                {...(safetyFlag && safetyMinRank != null ? { leastUrgentRank: safetyMinRank } : {})}
+              />
+              {safetyFlag ? (
+                <p
+                  id="reported_urgency-safety"
+                  className="mt-1 text-xs font-medium text-status-danger"
+                  data-testid="di-safety-urgency-hint"
+                >
+                  {t("form.safetyFlag.minUrgencyHint")}
+                </p>
+              ) : null}
+              <p id="reported_urgency-hint" className="mt-1 text-xs text-text-secondary">
+                {urgencyLevel
+                  ? [
+                      urgencyLevel.description,
+                      urgencyLevel.response_target_hours != null &&
+                      urgencyLevel.completion_target_hours != null
+                        ? t("form.priority.targetHint", {
+                            level: urgencyLevelLabel(urgencyLevel, language),
+                            response: urgencyLevel.response_target_hours,
+                            completion: urgencyLevel.completion_target_hours,
+                          })
+                        : t("form.priority.noTarget"),
+                    ]
+                      .filter(Boolean)
+                      .join(" ")
+                  : t("form.priority.chooseHint")}
+              </p>
+            </FormField>
 
-        {/* Impact level */}
-        <FormField
-          name="impact_level"
-          label={t("form.impactLevel.label")}
-          error={fieldError("impact_level")}
-          required
-        >
-          <ReferenceCombobox
-            id="impact_level"
-            referenceType="di.impact"
-            value={impactLevel || null}
-            onChange={(code) => {
-              setImpactLevel(code ?? "");
-              markTouched("impact_level");
-            }}
-            allowClear={false}
-            allowCreate={false}
-            placeholder={t("form.impactLevel.placeholder")}
-            aria-invalid={Boolean(fieldError("impact_level"))}
-          />
-        </FormField>
+            {/* Impact level */}
+            <FormField
+              name="impact_level"
+              label={t("form.impactLevel.label")}
+              error={fieldError("impact_level")}
+              required
+            >
+              <ReferenceCombobox
+                id="impact_level"
+                referenceType="di.impact"
+                value={impactLevel || null}
+                onChange={(code) => {
+                  setImpactLevel(code ?? "");
+                  markTouched("impact_level");
+                }}
+                allowClear={false}
+                allowCreate={false}
+                placeholder={t("form.impactLevel.placeholder")}
+                aria-invalid={Boolean(fieldError("impact_level"))}
+              />
+            </FormField>
+          </>
+        )}
 
         {/* Description */}
         <FormField
@@ -685,41 +784,94 @@ export function DiCreateForm({
           <DateTimeField id="observed_at" value={observedAt} onChange={(v) => setObservedAt(v)} />
         </FormField>
 
+        {/* Machine stopped: asked outright */}
+        <FormField
+          name="machine_stopped"
+          label={t("form.machineStopped.label")}
+          error={fieldError("machine_stopped")}
+          required
+        >
+          <div role="radiogroup" aria-label={t("form.machineStopped.label")} className="flex gap-4">
+            {([true, false] as const).map((stopped) => (
+              <label
+                key={String(stopped)}
+                htmlFor={`machine_stopped_${stopped ? "yes" : "no"}`}
+                className="flex items-center gap-2 text-sm"
+              >
+                <input
+                  id={`machine_stopped_${stopped ? "yes" : "no"}`}
+                  type="radio"
+                  name="machine_stopped"
+                  checked={machineStopped === stopped}
+                  onChange={() => {
+                    setMachineStopped(stopped);
+                    markTouched("machine_stopped");
+                  }}
+                />
+                {t(stopped ? "form.machineStopped.yes" : "form.machineStopped.no")}
+              </label>
+            ))}
+          </div>
+        </FormField>
+
+        {short ? (
+          <div>
+            <Button
+              type="button"
+              variant="link"
+              className="h-auto p-0 text-sm"
+              onClick={() => setFullForm(true)}
+            >
+              {t("form.fullForm.open")}
+            </Button>
+            <p className="mt-1 text-xs text-text-secondary">{t("form.fullForm.hint")}</p>
+          </div>
+        ) : null}
+
         {/* Flag checkboxes */}
-        <div className="grid grid-cols-2 gap-3">
-          <label htmlFor="safety_flag" className="flex items-center gap-2 text-sm">
-            <Checkbox
-              id="safety_flag"
-              checked={safetyFlag}
-              onCheckedChange={(v) => setSafetyFlag(v === true)}
-            />
-            {t("form.safetyFlag.label")}
-          </label>
-          <label htmlFor="environmental_flag" className="flex items-center gap-2 text-sm">
-            <Checkbox
-              id="environmental_flag"
-              checked={environmentalFlag}
-              onCheckedChange={(v) => setEnvironmentalFlag(v === true)}
-            />
-            {t("form.environmentalFlag.label")}
-          </label>
-          <label htmlFor="quality_flag" className="flex items-center gap-2 text-sm">
-            <Checkbox
-              id="quality_flag"
-              checked={qualityFlag}
-              onCheckedChange={(v) => setQualityFlag(v === true)}
-            />
-            {t("form.qualityFlag.label")}
-          </label>
-          <label htmlFor="production_impact" className="flex items-center gap-2 text-sm">
-            <Checkbox
-              id="production_impact"
-              checked={productionImpact}
-              onCheckedChange={(v) => setProductionImpact(v === true)}
-            />
-            {t("form.productionImpact.label")}
-          </label>
-        </div>
+        {short ? null : (
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label htmlFor="safety_flag" className="flex items-center gap-2 text-sm">
+                <Checkbox
+                  id="safety_flag"
+                  checked={safetyFlag}
+                  disabled={safetyFlagLocked}
+                  {...(safetyFlagLocked ? { "aria-describedby": "safety_flag-locked" } : {})}
+                  onCheckedChange={(v) => {
+                    if (!safetyFlagLocked) setSafetyFlag(v === true);
+                  }}
+                />
+                {t("form.safetyFlag.label")}
+              </label>
+              {safetyFlagLocked ? (
+                <p
+                  id="safety_flag-locked"
+                  className="mt-1 text-xs text-text-secondary"
+                  data-testid="di-safety-flag-locked-hint"
+                >
+                  {t("form.safetyFlag.lockedHint")}
+                </p>
+              ) : null}
+            </div>
+            <label htmlFor="environmental_flag" className="flex items-center gap-2 text-sm">
+              <Checkbox
+                id="environmental_flag"
+                checked={environmentalFlag}
+                onCheckedChange={(v) => setEnvironmentalFlag(v === true)}
+              />
+              {t("form.environmentalFlag.label")}
+            </label>
+            <label htmlFor="quality_flag" className="flex items-center gap-2 text-sm">
+              <Checkbox
+                id="quality_flag"
+                checked={qualityFlag}
+                onCheckedChange={(v) => setQualityFlag(v === true)}
+              />
+              {t("form.qualityFlag.label")}
+            </label>
+          </div>
+        )}
       </section>
 
       <Separator />
@@ -778,7 +930,7 @@ export function DiCreateForm({
 
       {/* ── Footer ───────────────────────────────────────────────────── */}
       <div className="flex items-center justify-end gap-2 pt-2 border-t border-surface-border">
-        <Button variant="outline" onClick={onCancel} disabled={busy}>
+        <Button variant="outline" onClick={requestCancel} disabled={busy}>
           {t("form.cancel")}
         </Button>
         <Button
@@ -789,6 +941,7 @@ export function DiCreateForm({
           {isEdit ? t("form.update") : t("form.submit")}
         </Button>
       </div>
+      {guard}
     </div>
   );
 }

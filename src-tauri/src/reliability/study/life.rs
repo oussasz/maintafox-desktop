@@ -10,7 +10,7 @@
 
 use crate::reliability::life_metrics::{
     age_replacement_cost_rate, b_life, hazard, mean_life, optimal_age_replacement, probability_plot_correlation,
-    probability_plot_points, reliability,
+    probability_plot_points, reliability, AgeReplacementOptimum, AgeReplacementRejection,
 };
 use crate::reliability::study::domain::{
     BandPoint, CostAnalysis, CostPoint, CurvePoint, LifeFit, PlotPoint, StrategyCost,
@@ -158,7 +158,24 @@ fn log_grid(lo: f64, hi: f64, n: usize) -> Vec<f64> {
         .collect()
 }
 
-fn cost_analysis(inputs: &LifeInputs, beta: f64, eta: f64, mttf: f64) -> Option<CostAnalysis> {
+/// Age replacement only pays when the failure rate rises with age. The interval is recommended
+/// only when the data show it: β's lower 90 % bound above 1 (the wear-out pattern of the reading
+/// shown next to it). With β > 1 but a lower bound ≤ 1 the reading says "no clear wear-out", so
+/// recommending an interval would contradict it (L2-12).
+fn recommended_replacement(
+    planned: f64,
+    failure: f64,
+    beta: f64,
+    beta_lower: f64,
+    eta: f64,
+) -> Result<AgeReplacementOptimum, AgeReplacementRejection> {
+    if beta > 1.0 && beta_lower <= 1.0 {
+        return Err(AgeReplacementRejection::WearOutNotProven);
+    }
+    optimal_age_replacement(planned, failure, beta, eta)
+}
+
+fn cost_analysis(inputs: &LifeInputs, beta: f64, beta_lower: f64, eta: f64, mttf: f64) -> Option<CostAnalysis> {
     let planned = positive(inputs.planned_cost)?;
     let failure = positive(inputs.failure_cost)?;
     let hpy = positive(inputs.hours_per_year);
@@ -176,7 +193,7 @@ fn cost_analysis(inputs: &LifeInputs, beta: f64, eta: f64, mttf: f64) -> Option<
             annual_cost: annual(rate),
         })
     });
-    let (proposed, rejection, saving) = match optimal_age_replacement(planned, failure, beta, eta) {
+    let (proposed, rejection, saving) = match recommended_replacement(planned, failure, beta, beta_lower, eta) {
         Ok(opt) => (
             Some(StrategyCost {
                 interval: Some(opt.interval),
@@ -269,7 +286,7 @@ pub fn analyse_life(inputs: &LifeInputs) -> LifeResult {
             }
         })
         .collect();
-    let cost = cost_analysis(inputs, beta, eta, fitted.fit.mean_life);
+    let cost = cost_analysis(inputs, beta, fitted.fit.beta_lower, eta, fitted.fit.mean_life);
     LifeResult {
         n_failures,
         n_suspensions,
@@ -403,6 +420,55 @@ mod tests {
         assert!(c.proposed.is_none());
         assert_eq!(c.rejection, Some(AgeReplacementRejection::NoWearOut));
         assert!(c.annual_saving_vs_current.is_none());
+    }
+
+    /// L2-12: β above 1 whose lower bound is not: the reading says "no clear wear-out", so no
+    /// replacement interval (nor saving) is recommended, whatever the cost ratio.
+    #[test]
+    fn no_interval_when_wear_out_is_not_proven() {
+        assert_eq!(
+            recommended_replacement(100.0, 10_000.0, 1.3, 0.8, 1000.0).err(),
+            Some(AgeReplacementRejection::WearOutNotProven)
+        );
+        // Proven wear-out keeps the optimum of the age-replacement model.
+        let opt = recommended_replacement(100.0, 10_000.0, 3.0, 1.6, 1000.0).expect("optimum");
+        close(
+            opt.interval,
+            optimal_age_replacement(100.0, 10_000.0, 3.0, 1000.0)
+                .expect("direct")
+                .interval,
+            1e-12,
+        );
+        // β ≤ 1 keeps its own reason.
+        assert_eq!(
+            recommended_replacement(100.0, 10_000.0, 0.9, 0.5, 1000.0).err(),
+            Some(AgeReplacementRejection::NoWearOut)
+        );
+        // Through the analysis: β ≈ 1.36 with a 90 % lower bound ≈ 0.73 (observed-information
+        // bounds, checked against an independent computation): the reading is "random" and no
+        // interval nor saving is proposed, although the cost ratio is 100.
+        let r = analyse_life(&LifeInputs {
+            observations: obs(&[200.0, 700.0, 1500.0, 2300.0, 3200.0], &[]),
+            planned_cost: Some(100.0),
+            failure_cost: Some(10_000.0),
+            current_interval: Some(1000.0),
+            hours_per_year: Some(8000.0),
+        });
+        let f = r.fit.expect("fit");
+        assert!(f.beta > 1.2 && f.beta < 1.5, "β = {}", f.beta);
+        assert!(
+            f.beta_lower < 0.9 && f.beta_upper > 1.0,
+            "bounds {} – {}",
+            f.beta_lower,
+            f.beta_upper
+        );
+        assert_eq!(f.pattern, PATTERN_RANDOM);
+        let c = r.cost.expect("cost");
+        assert!(c.proposed.is_none(), "no interval against a no-wear-out reading");
+        assert_eq!(c.rejection, Some(AgeReplacementRejection::WearOutNotProven));
+        assert!(c.saving_vs_run_to_failure.is_none());
+        assert!(c.annual_saving_vs_current.is_none());
+        assert!(c.current.is_some(), "the current plan is still costed for comparison");
     }
 
     #[test]

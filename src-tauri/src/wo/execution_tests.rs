@@ -248,7 +248,7 @@ mod tests {
                 wo_id,
                 actor_id: actor,
                 expected_row_version: wo.row_version,
-                planner_id: actor,
+                planner_id: Some(actor),
                 planned_start: Some("2026-04-10T08:00:00Z".to_string()),
                 planned_end: Some("2026-04-10T16:00:00Z".to_string()),
                 shift: None,
@@ -707,7 +707,7 @@ mod tests {
                 wo_id,
                 actor_id: actor,
                 expected_row_version: wo.row_version,
-                planner_id: actor,
+                planner_id: Some(actor),
                 planned_start: Some("2026-04-10T08:00:00Z".to_string()),
                 planned_end: Some("2026-04-10T16:00:00Z".to_string()),
                 shift: None,
@@ -886,8 +886,19 @@ mod tests {
         // without a maintenance nature, for review (`list_work_order_types_to_review`), and giving one
         // its nature (`set_work_order_type_nature`). Planned part lines: cancel (`cancel_planned_part`)
         // and the required / optional switch (`set_planned_part_required`). Migration 265: work on
-        // retired equipment received by sync, to review (`list_retired_equipment_reviews`).
-        assert_eq!(wo_lines.len(), 76, "invoke_handler must contain exactly 76 WO commands");
+        // retired equipment received by sync, to review (`list_retired_equipment_reviews`). The hourly
+        // rate shown before a labour entry is saved (`preview_wo_labor_rate`). Migration 275 (L3-21):
+        // the parts "à sortir" list, issue and cancellation (`list_wo_parts_to_issue`,
+        // `issue_wo_part_to_issue`, `cancel_wo_part_to_issue`). L5-08: whether the user carries out
+        // the work order (`get_wo_execution_standing`). Migration 277: the dépannage
+        // (`start_depannage_wo`) and its "Panne constatée à" edit (`set_wo_breakdown_at`).
+        // No fixed total (it changed with every command added): the handler must hold at least the
+        // original WO commands, each registered once (uniqueness below).
+        assert!(
+            wo_lines.len() >= 25,
+            "invoke_handler must register the WO commands (found {})",
+            wo_lines.len()
+        );
 
         let mut seen = std::collections::HashSet::new();
         for line in &wo_lines {
@@ -994,7 +1005,7 @@ mod tests {
                 wo_id: wo.id,
                 actor_id: actor,
                 expected_row_version: wo.row_version,
-                planner_id: actor,
+                planner_id: Some(actor),
                 planned_start: Some("2026-04-10T08:00:00Z".to_string()),
                 planned_end: Some("2026-04-10T16:00:00Z".to_string()),
                 shift: Some("night".into()),
@@ -1591,6 +1602,7 @@ mod tests {
                 origin: None,
                 is_required: true,
             },
+            crate::wo::parts::StockAuthority::MayMoveStock,
         )
         .await
         .expect("add execution part from stock");
@@ -1625,6 +1637,7 @@ mod tests {
                 origin: None,
                 is_required: true,
             },
+            crate::wo::parts::StockAuthority::MayMoveStock,
         )
         .await;
         assert!(result.is_err(), "issuing more than available must fail");

@@ -1356,6 +1356,8 @@ export type UpdateCheckStatus =
   | "up_to_date"
   /** This build has no updater public key: in-app updates are not set up yet. */
   | "not_configured"
+  /** Microsoft Store build: the Store installs updates; the app never downloads one. */
+  | "store_managed"
   /** The device is not activated yet: the server cannot tell which releases it may have. */
   | "not_activated"
   /** The update server could not be reached or answered wrongly (details in `message`). */
@@ -1498,6 +1500,18 @@ export interface SupportBundle {
 }
 
 // â”€â”€â”€ Backup & Restore â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+/** Where scheduled backups go and the last copy outside this PC (L7-03). */
+export interface BackupOverview {
+  external_dir: string | null;
+  external_reachable: boolean;
+  app_backup_dir: string;
+  last_success_at: string | null;
+  last_outside_at: string | null;
+  last_outside_path: string | null;
+  outside_copy_missing_or_old: boolean;
+  outside_copy_max_age_days: number;
+}
 
 export interface BackupRunRecord {
   id: number;
@@ -2301,6 +2315,23 @@ export interface LinkAssetPayload {
   effective_from?: string | null;
 }
 
+/** "Déplacer le composant" (L2-03): the same asset record goes under another parent. */
+export interface MoveAssetComponentPayload {
+  asset_id: number;
+  /** The new parent; null removes the component to stock. */
+  new_parent_asset_id: number | null;
+  /** Effective date YYYY-MM-DD; null is today. */
+  effective_date: string | null;
+  notes: string | null;
+  expected_row_version: number;
+}
+
+export interface MoveAssetComponentResult {
+  ended_relation: AssetHierarchyRow | null;
+  new_relation: AssetHierarchyRow | null;
+  event: AssetLifecycleEvent;
+}
+
 // â”€â”€â”€ Asset â€” Lifecycle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface AssetLifecycleEvent {
@@ -2360,6 +2391,21 @@ export interface AssetMeter {
   is_active: boolean;
   created_at: string;
   updated_at: string;
+  /** Alarm thresholds: a reading that crosses one raises an intervention request. */
+  alert_threshold: number | null;
+  critical_threshold: number | null;
+  /** "above" (too high crosses) or "below" (too low crosses); null without threshold. */
+  threshold_direction: MeterThresholdDirection | null;
+}
+
+export type MeterThresholdDirection = "above" | "below";
+export type MeterThresholdLevel = "alert" | "critical";
+
+export interface SetMeterThresholdsPayload {
+  meter_id: number;
+  alert_threshold: number | null;
+  critical_threshold: number | null;
+  threshold_direction: MeterThresholdDirection | null;
 }
 
 export interface CreateAssetMeterPayload {
@@ -2384,7 +2430,149 @@ export interface MeterReading {
   source_reference: string | null;
   quality_flag: string;
   created_by_id: number | null;
+  created_by_name: string | null;
   created_at: string;
+  entity_sync_id: string;
+  is_cancelled: boolean;
+  cancel_reason: string | null;
+  cancelled_by_name: string | null;
+  cancelled_at: string | null;
+  /** Intervention request this reading raised by crossing a threshold. */
+  raised_request_id: number | null;
+  raised_request_code: string | null;
+  /** Threshold level the reading crossed. */
+  threshold_level: MeterThresholdLevel | null;
+  /** On recording: crossed, but a request for this meter and level is still open (its code). */
+  open_request_code: string | null;
+  /** On recording: crossed, but the request could not be raised (why). */
+  threshold_problem: string | null;
+}
+
+// ── Technical characteristics per family (L2-07) ──────────────────────────
+
+export type CharacteristicDataType = "number" | "text" | "boolean";
+
+export interface AssetCharacteristic {
+  code: string;
+  label: string;
+  /** Null when the definition in Données de référence does not say. */
+  data_type: CharacteristicDataType | null;
+  unit_code: string | null;
+  unit_symbol: string | null;
+  required: boolean;
+  definition_problem: string | null;
+  value: string | null;
+}
+
+export interface AssetCharacteristicSheet {
+  asset_id: number;
+  family_code: string | null;
+  family_label: string | null;
+  items: AssetCharacteristic[];
+  /** Stored values whose characteristic is no longer in the family's list. */
+  unlisted: { code: string; value: string }[];
+}
+
+export interface SaveAssetCharacteristicsPayload {
+  asset_id: number;
+  values: Record<string, string | null>;
+}
+
+// ── Repeat failures (L2-09) ───────────────────────────────────────────────
+
+export interface RepeatFailureRule {
+  min_failures: number;
+  window_days: number;
+  since: string;
+}
+
+export interface RepeatFailureAsset {
+  asset_id: number;
+  asset_code: string;
+  asset_name: string;
+  failure_count: number;
+  last_failure_at: string | null;
+}
+
+export interface RepeatFailureOverview {
+  rule: RepeatFailureRule;
+  assets: RepeatFailureAsset[];
+}
+
+export interface AssetRepeatFailureStatus {
+  asset_id: number;
+  rule: RepeatFailureRule;
+  failure_count: number;
+  last_failure_at: string | null;
+  is_repeat_failure: boolean;
+  open_action_count: number;
+  overdue_action_count: number;
+}
+
+export interface FiveWhyAnalysis {
+  id: number;
+  asset_id: number;
+  problem_statement: string;
+  why_1: string | null;
+  why_2: string | null;
+  why_3: string | null;
+  why_4: string | null;
+  why_5: string | null;
+  root_cause: string | null;
+  created_by_name: string | null;
+  row_version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SaveFiveWhyPayload {
+  id: number | null;
+  asset_id: number;
+  expected_row_version: number | null;
+  problem_statement: string;
+  why_1: string | null;
+  why_2: string | null;
+  why_3: string | null;
+  why_4: string | null;
+  why_5: string | null;
+  root_cause: string | null;
+}
+
+export type CorrectiveActionStatus = "open" | "done" | "cancelled";
+
+export interface CorrectiveAction {
+  id: number;
+  asset_id: number;
+  action_text: string;
+  owner_personnel_id: number | null;
+  owner_name: string | null;
+  owner_employee_code: string | null;
+  due_date: string | null;
+  status: CorrectiveActionStatus;
+  completed_at: string | null;
+  is_overdue: boolean;
+  row_version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SaveCorrectiveActionPayload {
+  id: number | null;
+  asset_id: number;
+  expected_row_version: number | null;
+  action_text: string;
+  owner_personnel_id: number | null;
+  due_date: string | null;
+  status: CorrectiveActionStatus;
+}
+
+export interface MeterReadingWarning {
+  delta: number;
+  expected_delta: number;
+  rate_per_day: number;
+  days: number;
+  previous_value: number;
+  previous_at: string;
 }
 
 export interface RecordMeterReadingPayload {
@@ -2446,6 +2634,18 @@ export interface LibraryDocument {
   uploadedById: number | null;
   uploadedAt: string;
   notes: string | null;
+  /** The plant's reference of the document (e.g. "PR-ELEC-012"). */
+  documentNumber: string | null;
+  /** Revision label as printed on the document. */
+  revision: string | null;
+  /** Last valid day `YYYY-MM-DD`; null when it never expires. */
+  validUntil: string | null;
+  /** The version this one replaces; null for a first version. */
+  previousVersionId: number | null;
+  /** When a newer version replaced this one; null for the current version. */
+  supersededAt: string | null;
+  /** Who uploaded this version. */
+  uploadedByName: string | null;
 }
 
 export interface UpdateLibraryDocumentPayload {
@@ -2453,6 +2653,12 @@ export interface UpdateLibraryDocumentPayload {
   title?: string | null;
   equipmentId?: number | null;
   clearEquipmentLink: boolean;
+  /** New category code; omitted keeps it. */
+  category?: string | null;
+  /** Control fields: omitted keeps the stored value, an empty text clears it. */
+  documentNumber?: string | null;
+  revision?: string | null;
+  validUntil?: string | null;
 }
 
 export interface DomainBindingEntry {
@@ -2592,10 +2798,19 @@ export type AssetHistoryEventType =
   | "failure_recorded"
   | "meter_reading"
   | "document_linked"
-  | "photo_added";
+  | "photo_added"
+  | "history_imported";
 
 export interface AssetHistoryEventRef {
-  entity_type: "asset" | "wo" | "di" | "pm" | "inspection" | "document" | "photo";
+  entity_type:
+    | "asset"
+    | "wo"
+    | "di"
+    | "pm"
+    | "inspection"
+    | "document"
+    | "photo"
+    | "history_record";
   entity_id: number | null;
   entity_code: string | null;
   route_hint: string | null;
@@ -2615,9 +2830,28 @@ export interface AssetHistoryEvent {
   ref: AssetHistoryEventRef | null;
 }
 
+/** Failure coding of an imported maintenance history record (L7-30). */
+export interface WoHistoryCodingInput {
+  record_id: number;
+  expected_row_version: number;
+  failure_mode_id: number | null;
+  failure_cause_id: number | null;
+  failure_mechanism_id: number | null;
+  detection_method_id: number | null;
+  failure_effect_id: number | null;
+}
+
+export interface WoHistoryCodingSaved {
+  record_id: number;
+  row_version: number;
+}
+
 export interface AssetHistorySummary {
   asset_id: number;
   created_at: string | null;
+  /** Commissioning date: the start of the asset's service life. */
+  commissioned_at: string | null;
+  /** Days in service since `commissioned_at`; null while it is not filled in. */
   age_days: number | null;
   wo_count: number;
   pm_count: number;
@@ -3040,6 +3274,7 @@ export interface InventoryReorderRecommendation {
   article_name: string;
   warehouse_id: number;
   warehouse_code: string;
+  warehouse_name: string;
   min_stock: number;
   reorder_point: number;
   max_stock: number | null;
@@ -3229,6 +3464,9 @@ export interface GoodsReceiptLine {
   rejection_reason: string | null;
   status: string;
   created_at: string;
+  returned_qty: number;
+  return_reason: string | null;
+  returned_at: string | null;
 }
 
 export interface ReceivePurchaseOrderLineInput {
@@ -3711,6 +3949,7 @@ export interface InventoryReplenishmentRecommendation {
   article_name: string;
   warehouse_id: number;
   warehouse_code: string;
+  warehouse_name: string;
   min_stock: number;
   reorder_point: number;
   max_stock: number | null;
@@ -3907,6 +4146,25 @@ export interface CreatePmPlanInput {
   requires_shutdown: boolean;
   requires_permit: boolean;
   is_active?: boolean;
+}
+
+/** "Dupliquer ce plan" (L6-11): a draft v1 copy of a plan onto a target asset or scope. */
+export interface DuplicatePmPlanInput {
+  source_plan_id: number;
+  code: string;
+  title: string;
+  /** Target scope; the source plan's scope when omitted. */
+  target_scope_type?: string | null;
+  target_scope_id?: number | null;
+  /** Meter of the target asset with the source meter's unit; omitted: to choose before publishing. */
+  target_meter_id?: number | null;
+}
+
+export interface DuplicatePmPlanResult {
+  plan: PmPlan;
+  version: PmPlanVersion;
+  /** The trigger counts on a meter still to choose before publishing. */
+  meter_to_choose: boolean;
 }
 
 export interface UpdatePmPlanInput {
@@ -4327,6 +4585,8 @@ export interface InterventionRequest {
   /** Display enrichment from JOINs — prefer these over FKs in UI. */
   asset_code?: string | null;
   asset_label?: string | null;
+  /** Criticality code of the equipment (A–D), for the list column and the queue order. */
+  asset_criticality_code?: string | null;
   org_node_code?: string | null;
   org_node_label?: string | null;
   submitter_display_name?: string | null;
@@ -4814,6 +5074,28 @@ export interface OverviewKpiCell {
   quality_badge?: string | null | undefined;
   value_kind: OverviewKpiValueKind;
   trend_sense: OverviewKpiTrendSense;
+  /** Fleet reliability cells only: their window and hours basis (live `study::fleet_kpis`). */
+  fleet?: OverviewFleetBasis | null | undefined;
+}
+
+/**
+ * Window and live figures of a fleet reliability cell of the Vue d'ensemble (`study::fleet_kpis`;
+ * the full shape is `FleetKpis` in `src/services/reliability-study-service.ts`).
+ */
+export interface OverviewFleetBasis {
+  /** The last `window_months` calendar months. */
+  window_months: number;
+  /** The fields the card wording reads (window, hours basis, exclusions). */
+  kpis: {
+    window_too_short: boolean;
+    operating_basis_count: number;
+    calendar_basis_count: number;
+    mtbf_excluded_missing_date: number;
+    mtbf_excluded_outside_service: number;
+    restore_excluded_missing_failed_at: number;
+    restore_excluded_missing_restored_at: number;
+    restore_excluded_inconsistent: number;
+  };
 }
 
 export interface OverviewKpisPayload {
@@ -5239,6 +5521,25 @@ export type WoStatus =
 
 export type WoMacroState = "open" | "executing" | "completed" | "closed" | "cancelled";
 
+/**
+ * One permit type the plant's rules require of a work order (Rust `wo::domain::RequiredPermitView`):
+ * `live` (a permit of that type is linked and not ended), `missing` (none: the start and the
+ * resume are refused) or `cleared` (lifted with the permit-issue right at the site and a reason).
+ */
+export interface RequiredPermitView {
+  permit_type_code: string;
+  permit_type_name: string;
+  rule_code: string;
+  /** The primary rule (`permit_rule_code`): shown first. */
+  primary: boolean;
+  cleared_at: string | null;
+  cleared_by_name: string | null;
+  clear_reason: string | null;
+  live_permit_code: string | null;
+  live_permit_status: string | null;
+  state: "live" | "missing" | "cleared";
+}
+
 export interface WorkOrder {
   id: number;
   code: string;
@@ -5325,6 +5626,16 @@ export interface WorkOrder {
   permit_rule_clear_reason: string | null;
   /** The requirement came from the request it was converted from, flagged "sécurité" (cleared like a rule flag). */
   permit_from_safety_di?: boolean;
+  /** Created and started by the dépannage path: unscheduled, planning validated after the fact. */
+  is_depannage?: boolean;
+  /** "Panne constatée à" (UTC) of a dépannage. */
+  breakdown_at?: string | null;
+  /** "Machine arrêtée" of a dépannage. */
+  machine_stopped?: boolean | null;
+  /** After-the-fact validation of a dépannage (empty until validated). */
+  validated_by_id?: number | null;
+  validated_at?: string | null;
+  validation_auto_approved?: boolean | null;
   entity_sync_id?: string | null;
   closeout_validation_profile_id?: number | null;
   closeout_validation_passed?: boolean;
@@ -5377,11 +5688,11 @@ export interface WorkOrder {
    */
   deisolation_pending?: boolean;
   /**
-   * The permit types of every plant rule that matches this work order now, when they differ
-   * ("plusieurs règles de permis"): display only, filled by `get_wo` (Rust
-   * `permit::requirement_rules::matching_permit_types`).
+   * Every permit type the plant's rules require of this work order (Rust `permit::required_set`,
+   * CMMS Advisor 2026-11-04), each live, missing or cleared: filled by `get_wo` and by the clearing
+   * of a type (Rust `permit::wo_gate::required_permit_views`).
    */
-  permit_rule_matching_types?: string[];
+  required_permits?: RequiredPermitView[];
   /** Inspection round of the finding the OT comes from (directly or through its request). */
   source_inspection_round_id?: number | null;
   source_inspection_round_code?: string | null;
@@ -5530,6 +5841,8 @@ export interface WoListFilter {
   equipment_id?: number | null;
   entity_id?: number | null;
   planner_id?: number | null;
+  /** Only the work orders without a planner ("planificateur à désigner"). */
+  planner_unassigned?: boolean | null;
   primary_responsible_id?: number | null;
   urgency_code?: UrgencyCode | null;
   source_di_id?: number | null;
@@ -5545,8 +5858,18 @@ export interface WoListFilter {
   /** Only work completed in `[completed_from, completed_to)` (ISO instants): the SMRP work-mix population. */
   completed_from?: string | null;
   completed_to?: string | null;
+  /** Only the work orders behind the failures a RAMS figure counts (same period, class, site). */
+  rams_failures?: WoRamsFailureScope | null;
   limit: number;
   offset: number;
+}
+
+/** Scope of a RAMS failure figure (`wo::queries::WoRamsFailureScope`). */
+export interface WoRamsFailureScope {
+  period_start: string;
+  period_end: string;
+  equipment_class_id?: number | null;
+  org_node_id?: number | null;
 }
 
 export interface WoListPage {
@@ -5561,6 +5884,21 @@ export interface WoListPage {
 export interface WoGetResponse {
   wo: WorkOrder;
   transitions: WoTransitionRow[];
+}
+
+/** Why the signed-in user carries out a work order (`get_wo_execution_standing`, L5-08). */
+export type WoExecutionActorRole = "assignee" | "team_member" | "planner" | "approver";
+
+/**
+ * Whether the signed-in user carries out the work order (its assignee, a member of its team, its
+ * planner, or an `ot.approve` holder at its site), and else why not: a `GATE_WO_EXECUTION_*` code
+ * with the names it shows (`assignee`, `team`).
+ */
+export interface WoExecutionStanding {
+  actor: WoExecutionActorRole | null;
+  refusal: { code: string; params: Record<string, string> } | null;
+  /** The user created this work order and it is not released yet (a draft): they may cancel it. */
+  own_draft: boolean;
 }
 
 export interface WoCancelInput {
@@ -5601,7 +5939,8 @@ export interface WoPlanInput {
   wo_id: number;
   actor_id: number;
   expected_row_version: number;
-  planner_id: number;
+  /** null: the recorded planner is kept (empty stays empty: "planificateur à désigner"). */
+  planner_id: number | null;
   /** Optional; ignored when a schedule commitment exists (Planning SSOT). */
   planned_start?: string | null;
   planned_end?: string | null;
@@ -5627,8 +5966,8 @@ export interface WoAssignInput {
   assigned_team_id?: number | null;
   primary_responsible_id?: number | null;
   scheduled_at?: string | null;
-  /** Required — unguarded assign is retired; use emergency_reassign_wo from UI. */
-  override_reason: string;
+  /** Only the emergency override (`emergency_reassign_wo`) needs a reason. */
+  override_reason?: string;
 }
 
 export interface WoEmergencyReassignInput {
@@ -5648,6 +5987,80 @@ export interface WoStartInput {
   wo_id: number;
   actor_id: number;
   expected_row_version: number;
+}
+
+/**
+ * Dépannage: creates a corrective work order and starts it at once (one transaction). The actor is
+ * the signed-in user (set by the backend).
+ */
+export interface WoDepannageInput {
+  equipment_id: number;
+  /** An OT type of a corrective nature; omitted: the plant's type for immediate corrective work. */
+  type_code?: string | null;
+  urgency_code?: string | null;
+  subtype_code?: string | null;
+  title: string;
+  description?: string | null;
+  /** "Panne constatée à": required, not in the future (the screen defaults it to now). */
+  breakdown_at: string;
+  /** "Machine arrêtée": required, no default. */
+  machine_stopped: boolean;
+  /** Who carries the work out; omitted: the user (another person needs ot.emergency_assign). */
+  assignee_id?: number | null;
+  requires_permit?: boolean | null;
+}
+
+/** Where a dépannage stopped: started, or ready ("prête") and waiting for its permit. */
+export type DepannageOutcome = "started" | "waiting_for_permit";
+
+/**
+ * The dépannage just created. A dépannage is never refused because a permit is needed: it then
+ * stays ready, assigned, not started, until every required permit is live (the normal start).
+ */
+export interface WoDepannageStartResult {
+  wo: WorkOrder;
+  /** The breakdown was found more than 7 days ago (a warning). */
+  breakdown_old_warning: boolean;
+  outcome: DepannageOutcome;
+  /** Every permit type code it waits for, sorted ("En attente de permis : …"); empty when started, or when a permit of no particular type is required. */
+  required_permit_types: string[];
+  /** The permit drafts written for it, at most one per required type (only when the user may issue permits at its site). */
+  permit_draft_ids: number[];
+}
+
+/** A dépannage after its breakdown time changed, and whether that breakdown is more than 7 days old. */
+export interface WoDepannageResult {
+  wo: WorkOrder;
+  breakdown_old_warning: boolean;
+}
+
+/** "Rejoindre" a work order in progress or on hold (`join_wo`): one's own labour starts now. */
+export interface WoJoinInput {
+  wo_id: number;
+}
+
+/** Changes the "Panne constatée à" of a dépannage until it is closed (audited). */
+export interface WoBreakdownAtInput {
+  wo_id: number;
+  expected_row_version: number;
+  breakdown_at: string;
+}
+
+/** After-the-fact validation of a dépannage (`validate_depannage_wo`, ot.approve, never its starter). */
+export interface WoDepannageValidateInput {
+  wo_id: number;
+  expected_row_version: number;
+}
+
+/** Times of a dépannage in hours (EN 13306, `get_depannage_times`); null while an end is unknown. */
+export interface DepannageTimes {
+  breakdown_at: string | null;
+  downtime_start: string | null;
+  restored_at: string | null;
+  response_hours: number | null;
+  active_repair_hours: number | null;
+  restore_hours: number | null;
+  stopped_hours: number | null;
 }
 
 export interface WoPauseInput {
@@ -5901,6 +6314,84 @@ export interface WoExecPart {
   is_required: boolean;
   /** Stock unit symbol of the article; null for a free-text line. */
   unit_symbol?: string | null;
+  /**
+   * Used quantity of a stock article not yet issued from the store ("à sortir"): recorded by
+   * someone without the stock right (inv.manage); the storekeeper issues it or cancels it.
+   */
+  pending_issue_qty: number;
+  /**
+   * Hors-stock article (stocking type NON_STOCK, L3-04): bought for this work order, received
+   * without any stock movement; its use is the receipt.
+   */
+  is_non_stock: boolean;
+  /** Hors-stock quantity received from the supplier ("reçu"). */
+  non_stock_received_qty: number;
+  /** Optional "remis à <personne>" of a received hors-stock part. */
+  handed_to_personnel_id: number | null;
+}
+
+/** A hors-stock article (L3-04): bought for one work order, never in the store. */
+export interface NonStockArticle {
+  id: number;
+  article_code: string;
+  article_name: string;
+  unit_value_id: number | null;
+  unit_symbol: string | null;
+  origin_work_order_id: number | null;
+  origin_work_order_code: string | null;
+  /** null | "TO_REVIEW" | "REVIEWED" | "DUPLICATE" */
+  catalogue_review_state: string | null;
+  duplicate_of_article_id: number | null;
+  is_active: boolean;
+}
+
+/** Ask for a hors-stock part on a work order: reuse `article_id`, or describe a new one. */
+export interface CreateWoNonStockPurchaseInput {
+  work_order_id: number;
+  article_id: number | null;
+  article_name: string | null;
+  unit_value_id: number | null;
+  quantity: number;
+  /** Estimated unit price (tenant currency): approval amount and starting order price. */
+  estimated_unit_cost: number | null;
+  notes: string | null;
+  reason: string | null;
+}
+
+export interface WoNonStockPurchase {
+  part: WoExecPart;
+  article: NonStockArticle;
+  requisition: { id: number; req_number: string; status: string };
+}
+
+/** Catalogue review of a hors-stock article. */
+export interface ReviewNonStockArticleInput {
+  article_id: number;
+  action: "KEEP" | "PROMOTE" | "DUPLICATE";
+  duplicate_of_article_id: number | null;
+}
+
+/** A work-order part line "à sortir", with its work order, for the storekeeper's issue desk. */
+export interface WoPartToIssue extends WoExecPart {
+  wo_code: string;
+  wo_title: string | null;
+  wo_status_code: string;
+  /** `warehouse/location` codes of the line's stock location, when it has one. */
+  location_label: string | null;
+}
+
+export interface IssueWoPartToIssueInput {
+  wo_part_id: number;
+  /** The quantity issued: the quantity "à sortir", or a correction of it (reason required). */
+  quantity: number;
+  /** The location the part leaves from (a line without a reservation). */
+  stock_location_id: number | null;
+  correction_reason: string | null;
+}
+
+export interface CancelWoPartToIssueInput {
+  wo_part_id: number;
+  reason: string;
 }
 
 // ── Plan vs Actual adherence ──────────────────────────────────────────────────
@@ -6127,6 +6618,8 @@ export interface CreateUserInput {
   personnel_id?: number | null;
   initial_password?: string | null;
   force_password_change?: boolean;
+  /** Name shown as author and approver; blank: the linked personnel record's name. */
+  display_name?: string | null;
 }
 
 /** Role row for create-user dropdown (adm.users; no permission matrix). */
@@ -6298,6 +6791,8 @@ export interface AssignRoleScopeInput {
   scope_reference?: string | null;
   valid_from?: string | null;
   valid_to?: string | null;
+  /** Plant-wide assignments of the user to end with this narrower grant (same transaction). */
+  end_plant_wide_assignment_ids?: number[];
 }
 
 export interface RoleWithPermissions {
@@ -7009,6 +7504,17 @@ export interface ExternalCompany {
   service_domain: string | null;
   contract_start: string | null;
   contract_end: string | null;
+  contract_number: string | null;
+  contract_amount: number | null;
+  contract_alert_days: number;
+  consumed_amount: number;
+  contract_state: "none" | "active" | "expiring" | "expired";
+  contract_days_left: number | null;
+  /** Work orders given to the company (cancelled excluded). */
+  wo_count: number;
+  /** Closed work orders that had a planned end, and those closed by it (UX L3-19). */
+  wo_closed_with_deadline: number;
+  wo_on_time: number;
   onboarding_status: string;
   insurance_status: string;
   notes: string | null;
@@ -7676,7 +8182,7 @@ export interface ReliabilityKpiSnapshot {
   analysis_input_spec_json: string;
   plot_payload_json: string;
   row_version: number;
-  /** `reliability_kpi_v2`+; legacy rows `reliability_kpi_v1`. */
+  /** `reliability_kpi_v2`+ (v3: every unplanned failure counts); legacy rows `reliability_kpi_v1`. */
   algorithm_version: string | null;
   /** Governed exposure (uptime) hours used as the KPI denominator. */
   exposure_hours: number | null;
@@ -7971,6 +8477,8 @@ export interface ReliabilityReadinessInput {
   period_start?: string | null;
   period_end?: string | null;
   min_sample_n?: number | null;
+  /** Analysis scoped to one failure mode: only that mode's failures are checked and counted. */
+  failure_mode_id?: number | null;
 }
 
 /** StrictRam readiness gate — guards Weibull fits, R(t) and RUL. */
@@ -9532,6 +10040,18 @@ export interface PlanningGanttFilter {
   team_id?: number | null;
 }
 
+/** A planned OT (start and end on its form) with no commitment yet: a read-only "to commit" bar. */
+export interface ProposedWorkOrder {
+  work_order_id: number;
+  code: string;
+  title: string;
+  planned_start: string;
+  planned_end: string;
+  assigned_team_id: number | null;
+  assigned_team_name: string | null;
+  equipment_label: string | null;
+}
+
 export interface PlanningGanttSnapshot {
   period_start: string;
   period_end: string;
@@ -9541,6 +10061,8 @@ export interface PlanningGanttSnapshot {
   assignee_lanes: PlanningAssigneeLane[];
   /** Plant-wide All Crews overview; empty when filtered to a single crew. */
   crew_lanes: PlanningCrewLane[];
+  /** Planned OTs without a commitment in the period; not counted in `capacity`. */
+  proposed_work_orders: ProposedWorkOrder[];
 }
 
 export interface NotifyTeamsInput {
@@ -9653,16 +10175,25 @@ export interface AnalyticsExecutiveDashboard {
   avg_mtbf_hours: AnalyticsKpiValue;
   avg_mttr_hours: AnalyticsKpiValue;
   avg_availability: AnalyticsKpiValue;
+  /** Coding completeness (complete records / records) of the live calculation (`study::fleet_kpis`). */
   avg_data_quality: AnalyticsKpiValue;
+  /**
+   * "Taille d'échantillon": mean sample-size score of the latest stored KPI snapshot per equipment
+   * refreshed in the horizon. A sample-size measure, never data quality.
+   */
+  sample_size_score: AnalyticsKpiValue;
   /** OT costs settled into the budget over the horizon (Finance settlement flow; finance view). */
   maintenance_cost: AnalyticsKpiValue;
   /** Work orders closed in the horizon whose settlement is pending; null without finance view. */
   maintenance_cost_pending: number | null;
+  /** Equipment with a stored KPI snapshot refreshed in the horizon. */
   reliability_snapshot_count: number;
+  /** Unplanned failures of the horizon (live calculation). */
   reliability_total_events: number;
   workload_days: AnalyticsWorkloadDay[];
   workload_quality_badge: string | null;
   di_status_segments: AnalyticsDiStatusSegment[];
+  /** Trend series from the stored KPI snapshots (not the live calculation). */
   reliability_series: AnalyticsReliabilitySeriesPoint[];
   bad_actor_assets: AnalyticsBadActorAsset[];
 }
@@ -11070,6 +11601,8 @@ export interface WorkPermitStatusInput {
   id: number;
   status: WorkPermitStatus;
   expected_row_version: number;
+  /** Required (not blank) when cancelling the permit; ignored otherwise. */
+  reason?: string | null;
 }
 
 export interface PermitSuspendInput {
@@ -11131,6 +11664,11 @@ export interface PermitIsolationActionInput {
   expected_row_version: number;
   /** Only used by apply: lock number fitted at application time. */
   lock_number: string | null;
+  /** Only used by verify (required there): the zero-energy test was done (start attempt,
+   * absence-of-voltage measurement). */
+  zero_energy_confirmed?: boolean | null;
+  /** Only used by verify (required there): what was measured or seen, at most 500 characters. */
+  zero_energy_note?: string | null;
 }
 
 /** One attempt to reach an absent worker before a forced lock removal. */
@@ -11258,6 +11796,8 @@ export interface AssetMaintenanceProfile {
   downtime_hours: number;
   last_failure_at: string | null;
   cost_lifetime: AssetCostBreakdown;
+  /** Date of the earliest work counted in `cost_lifetime`; null when there is none. */
+  cost_since: string | null;
   cost_recent: AssetCostBreakdown;
   recent_window_months: number;
   cost_by_year: AssetYearCost[];

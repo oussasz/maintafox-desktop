@@ -1,4 +1,3 @@
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use uuid::Uuid;
 
@@ -13,17 +12,6 @@ use crate::reliability::markov_mc::mc_eval::evaluate_mc;
 
 fn decode_err(field: &str, err: impl std::fmt::Display) -> AppError {
     AppError::SyncError(format!("markov_mc decode '{field}': {err}"))
-}
-
-async fn last_insert_id(db: &DatabaseConnection) -> AppResult<i64> {
-    let row = db
-        .query_one(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT last_insert_rowid() AS id".to_string(),
-        ))
-        .await?
-        .ok_or_else(|| AppError::SyncError("last_insert_rowid missing.".into()))?;
-    row.try_get("", "id").map_err(|e| decode_err("id", e))
 }
 
 fn map_mc(row: &sea_orm::QueryResult) -> AppResult<McModel> {
@@ -116,12 +104,12 @@ pub async fn create_mc_model(
     user_id: Option<i64>,
     input: CreateMcModelInput,
 ) -> AppResult<McModel> {
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
     let g = input.graph_json.unwrap_or_else(|| "{}".to_string());
     let st = input.status.unwrap_or_else(|| "draft".to_string());
     let trials = input.trials.unwrap_or(10_000).max(1);
     let eid = format!("mc_model:{}", Uuid::new_v4());
-    db.execute(Statement::from_sql_and_values(
+    let inserted = db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO mc_models (entity_sync_id, equipment_id, title, graph_json, trials, seed, result_json, status, row_version, created_at, created_by_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, '{}', ?, 1, ?, ?, ?)",
         [
@@ -138,12 +126,12 @@ pub async fn create_mc_model(
         ],
     ))
     .await?;
-    let id = last_insert_id(db).await?;
+    let id = crate::db::inserted_id(&inserted)?;
     load_mc_by_id(db, id).await
 }
 
 pub async fn update_mc_model(db: &DatabaseConnection, input: UpdateMcModelInput) -> AppResult<McModel> {
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
     let mut sets = Vec::new();
     let mut vals: Vec<sea_orm::Value> = Vec::new();
     if let Some(t) = input.title {
@@ -230,7 +218,7 @@ pub async fn evaluate_mc_model(db: &DatabaseConnection, id: i64) -> AppResult<Mc
     }
     let ev = evaluate_mc(&m.graph_json, m.trials, m.seed).map_err(|e| AppError::ValidationFailed(vec![e]))?;
     let result_json = serde_json::to_string(&ev).unwrap_or_else(|_| "{}".to_string());
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE mc_models SET result_json = ?, row_version = row_version + 1, updated_at = ? WHERE id = ?",
@@ -266,11 +254,11 @@ pub async fn create_markov_model(
     user_id: Option<i64>,
     input: CreateMarkovModelInput,
 ) -> AppResult<MarkovModel> {
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
     let g = input.graph_json.unwrap_or_else(|| "{}".to_string());
     let st = input.status.unwrap_or_else(|| "draft".to_string());
     let eid = format!("markov_model:{}", Uuid::new_v4());
-    db.execute(Statement::from_sql_and_values(
+    let inserted = db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO markov_models (entity_sync_id, equipment_id, title, graph_json, result_json, status, row_version, created_at, created_by_id, updated_at) VALUES (?, ?, ?, ?, '{}', ?, 1, ?, ?, ?)",
         [
@@ -285,12 +273,12 @@ pub async fn create_markov_model(
         ],
     ))
     .await?;
-    let id = last_insert_id(db).await?;
+    let id = crate::db::inserted_id(&inserted)?;
     load_markov_by_id(db, id).await
 }
 
 pub async fn update_markov_model(db: &DatabaseConnection, input: UpdateMarkovModelInput) -> AppResult<MarkovModel> {
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
     let mut sets = Vec::new();
     let mut vals: Vec<sea_orm::Value> = Vec::new();
     if let Some(t) = input.title {
@@ -373,7 +361,7 @@ pub async fn evaluate_markov_model(db: &DatabaseConnection, id: i64) -> AppResul
     }
     let ev = solve_dtmc_steady_state(&spec, 100_000, 1e-12).map_err(|e| AppError::ValidationFailed(vec![e]))?;
     let result_json = serde_json::to_string(&ev).unwrap_or_else(|_| "{}".to_string());
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE markov_models SET result_json = ?, row_version = row_version + 1, updated_at = ? WHERE id = ?",

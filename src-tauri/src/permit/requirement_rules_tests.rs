@@ -129,7 +129,8 @@ async fn convert_request(
             di_id: di.id,
             actor_id: actor,
             expected_row_version: 2,
-            validated_urgency: "high".into(),
+            // A request flagged "sécurité" is validated at least urgent (L4-11): lower needs a reason.
+            validated_urgency: if safety { "urgent" } else { "high" }.into(),
             classification_code_id: Some(900101),
             reviewer_note: None,
         },
@@ -164,6 +165,15 @@ async fn convert_request(
 async fn with_no_rule_nothing_is_flagged_and_the_conversion_says_so() {
     let db = setup().await;
     let actor = admin(&db).await;
+    // The plant took the shipped rule out of its list (migration 278 seeds it).
+    exec(
+        &db,
+        &format!(
+            "UPDATE reference_values SET is_active = 0 WHERE code = '{}'",
+            rules::CRITICAL_ASSET_RULE_CODE
+        ),
+    )
+    .await;
     let result = convert(&db, actor).await;
     assert!(!result.permit_flag.requires_permit);
     assert_eq!(result.permit_flag.reason_code, reasons::NONE_CONFIGURED);
@@ -251,6 +261,7 @@ async fn a_matching_rule_flags_the_work_order_and_only_the_permit_right_clears_i
         wo_id: wo.id,
         expected_row_version: wo.row_version,
         reason: reason.into(),
+        permit_type_code: None,
     };
     let err = req::clear_permit_rule_flag(&db, clear("No hot work on this pump"), planner)
         .await
@@ -510,6 +521,7 @@ async fn a_safety_request_requirement_is_cleared_with_the_permit_right_at_its_si
         wo_id: wo.id,
         expected_row_version: wo.row_version,
         reason: reason.into(),
+        permit_type_code: None,
     };
 
     // No permit-issue right at all.
@@ -575,10 +587,11 @@ async fn a_safety_request_requirement_is_cleared_with_the_permit_right_at_its_si
     .expect("set again");
 }
 
-/// A work order without a site: the permit-issue right plant-wide only. A plant rule keeps its
-/// plant-wide clearing (a site role does not lift a plant rule), even on a safety request.
+/// A work order without a site: the permit-issue right plant-wide only. A plant rule's permit type
+/// is lifted with the right at the work order's site, like a safety request (lead decision D-a,
+/// CMMS Advisor 2026-11-04: "ptw.issue at the work order's site").
 #[tokio::test]
-async fn without_a_site_or_with_a_plant_rule_a_site_right_does_not_clear() {
+async fn without_a_site_a_site_right_does_not_clear_and_a_plant_rule_clears_at_its_site() {
     let db = setup().await;
     let actor = admin(&db).await;
     let issuer = site_holder(&db, "issuer1", 1, crate::rbac::permissions::PTW_ISSUE).await;
@@ -599,6 +612,7 @@ async fn without_a_site_or_with_a_plant_rule_a_site_right_does_not_clear() {
             wo_id: wo.id,
             expected_row_version: wo.row_version,
             reason: "Inspection visuelle seulement".into(),
+            permit_type_code: None,
         },
         issuer,
     )
@@ -623,14 +637,17 @@ async fn without_a_site_or_with_a_plant_rule_a_site_right_does_not_clear() {
         wo_id: wo.id,
         expected_row_version: wo.row_version,
         reason: "Inspection visuelle seulement".into(),
+        permit_type_code: None,
     };
-    let err = req::clear_permit_rule_flag(&db, input.clone(), issuer)
+    add_second_site(&db).await;
+    let outsider = site_holder(&db, "issuer2", 2, crate::rbac::permissions::PTW_ISSUE).await;
+    let err = req::clear_permit_rule_flag(&db, input.clone(), outsider)
         .await
-        .expect_err("a plant rule stays plant-wide");
+        .expect_err("the right at another site does not lift it");
     assert_eq!(code_of(&err), req::CODE_RULE_FLAG_RIGHT);
-    let cleared = req::clear_permit_rule_flag(&db, input, actor)
+    let cleared = req::clear_permit_rule_flag(&db, input, issuer)
         .await
-        .expect("plant-wide right");
+        .expect("the right at the work order's site");
     assert!(!cleared.requires_permit);
 }
 
@@ -748,6 +765,7 @@ async fn a_cleared_safety_requirement_is_reinstated_when_the_work_order_changes_
             wo_id: wo.id,
             expected_row_version: wo.row_version,
             reason: "Inspection visuelle seulement".into(),
+            permit_type_code: None,
         },
         issuer,
     )
@@ -894,6 +912,7 @@ async fn the_site_right_is_permanent_and_held_on_the_node_or_a_parent() {
         wo_id: wo.id,
         expected_row_version: wo.row_version,
         reason: "Inspection visuelle seulement".into(),
+        permit_type_code: None,
     };
 
     let emergency = site_holder(&db, "emergency1", 1, crate::rbac::permissions::PTW_ISSUE).await;
@@ -963,6 +982,7 @@ async fn a_cleared_requirement_required_again_is_protected_again() {
             wo_id: wo.id,
             expected_row_version: wo.row_version,
             reason: "Inspection visuelle seulement".into(),
+            permit_type_code: None,
         },
         actor,
     )
@@ -1024,6 +1044,7 @@ async fn a_cleared_requirement_required_again_is_protected_again() {
             wo_id: wo.id,
             expected_row_version: wo.row_version,
             reason: "Inspection visuelle seulement".into(),
+            permit_type_code: None,
         },
         actor,
     )
@@ -1793,23 +1814,771 @@ async fn the_first_stamp_prefers_the_isolation_type_and_shows_several_rules() {
         .expect("create");
     assert_eq!(wo.permit_rule_code.as_deref(), Some("B_PUMP_LOTO"));
     assert_eq!(wo.permit_rule_permit_type.as_deref(), Some("loto"));
-    assert_eq!(
-        rules::matching_permit_types(&db, wo.equipment_id, wo.type_id, wo.permit_rule_permit_type.as_deref())
+    let required = || async {
+        crate::permit::required_set::read(&db, wo.id)
             .await
-            .expect("types"),
+            .expect("set")
+            .expect("wo")
+            .uncleared_types()
+    };
+    assert_eq!(
+        required().await,
         vec!["hot_work".to_string(), "loto".to_string()],
-        "several permit rules shown"
+        "every matching permit type is required (L4-10b)"
     );
-    // One type only: nothing shown.
+    // A rule deactivated later never drops a type already required.
     exec(
         &db,
         "UPDATE reference_values SET is_active = 0 WHERE code = 'A_PUMP_HOT'",
     )
     .await;
+    rules::catch_up(&db).await;
+    assert_eq!(required().await, vec!["hot_work".to_string(), "loto".to_string()]);
+}
+
+/// L5-09: a draft moved onto equipment a published plant rule covers is written twice (the edit,
+/// then the rule stamp), and still keeps its old → new values: the proof that nobody else wrote in
+/// between is the edit's own `expected_row_version` check, the values those the edit read back.
+#[tokio::test]
+async fn a_draft_edit_stamped_by_a_rule_keeps_its_old_and_new_values() {
+    let db = setup().await;
+    let actor = admin(&db).await;
+    let tank = plain_equipment(&db).await;
+    add_rule(
+        &db,
+        "PUMPS_LOTO",
+        serde_json::json!({ "equipment_class_code": "PUMP", "permit_type_code": "loto" }),
+    )
+    .await;
+    let mut input = direct_input(actor, Some(false));
+    input.equipment_id = Some(tank);
+    let wo = crate::wo::queries::create_work_order(&db, input).await.expect("create");
+    assert!(!wo.requires_permit, "no rule on the tank");
+    let before = crate::wo::queries::get_work_order(&db, wo.id)
+        .await
+        .expect("q")
+        .expect("wo");
+
+    let edited = crate::wo::queries::update_wo_draft_fields(
+        &db,
+        crate::wo::domain::WoDraftUpdateInput {
+            id: wo.id,
+            expected_row_version: before.row_version,
+            title: None,
+            type_code: None,
+            equipment_id: Some(1),
+            location_id: None,
+            description: None,
+            planned_start: Some("2026-11-20T08:00:00Z".into()),
+            planned_end: None,
+            shift: None,
+            expected_duration_hours: None,
+            notes: None,
+            urgency_code: None,
+            subtype_code: None,
+            requires_permit: None,
+        },
+        Some(actor),
+    )
+    .await
+    .expect("moved onto the pump");
+    assert!(edited.requires_permit, "the rule stamped it");
     assert!(
-        rules::matching_permit_types(&db, wo.equipment_id, wo.type_id, wo.permit_rule_permit_type.as_deref())
-            .await
-            .expect("types")
-            .is_empty()
+        edited.row_version > before.row_version + 1,
+        "edit and stamp both bumped the version"
     );
+
+    crate::wo::audit::record_wo_change_with_diff(
+        &db,
+        crate::wo::audit::WoAuditInput {
+            wo_id: Some(wo.id),
+            action: "equipment_changed".into(),
+            actor_id: Some(actor),
+            summary: None,
+            details_json: None,
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+        Some(&before),
+        Some(&edited),
+        Some(before.row_version),
+    )
+    .await;
+    let raw = text_of(
+        &db,
+        &format!(
+            "SELECT details_json FROM wo_change_events WHERE wo_id = {} AND action = 'equipment_changed'",
+            wo.id
+        ),
+    )
+    .await;
+    let details: serde_json::Value = serde_json::from_str(&raw).expect("json");
+    assert!(
+        details.get(crate::wo::audit::CHANGES_UNAVAILABLE).is_none(),
+        "{details}"
+    );
+    let fields: Vec<&str> = details["changes"]
+        .as_array()
+        .expect("changes")
+        .iter()
+        .filter_map(|c| c["field"].as_str())
+        .collect();
+    for field in ["equipment", "planned_start", "requires_permit"] {
+        assert!(fields.contains(&field), "{field} in {details}");
+    }
+    let equipment = details["changes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["field"] == "equipment")
+        .unwrap();
+    assert_eq!(equipment["old"], "PR-TANK — Tank");
+    assert_eq!(equipment["new"], "PR-PUMP — Pump");
+
+    // A screen that read an older version proves nothing: no values.
+    crate::wo::audit::record_wo_change_with_diff(
+        &db,
+        crate::wo::audit::WoAuditInput {
+            wo_id: Some(wo.id),
+            action: "planned".into(),
+            actor_id: Some(actor),
+            summary: None,
+            details_json: None,
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+        Some(&before),
+        Some(&edited),
+        Some(before.row_version - 1),
+    )
+    .await;
+    let raw = text_of(
+        &db,
+        &format!(
+            "SELECT details_json FROM wo_change_events WHERE wo_id = {} AND action = 'planned'",
+            wo.id
+        ),
+    )
+    .await;
+    assert!(raw.contains("changes_unavailable"), "{raw}");
+}
+
+/// The pump becomes criticality A (its `EQUIPMENT.CRITICALITY` value).
+async fn make_critical(db: &DatabaseConnection, equipment_id: i64) {
+    exec(
+        db,
+        &format!(
+            "UPDATE equipment SET equipment_criticality_ref_id = (SELECT rv.id FROM reference_values rv \
+               JOIN reference_sets rs ON rs.id = rv.set_id AND rs.status = 'published' \
+               JOIN reference_domains d ON d.id = rs.domain_id \
+              WHERE d.code = 'EQUIPMENT.CRITICALITY' AND rv.code = 'A') WHERE id = {equipment_id}"
+        ),
+    )
+    .await;
+}
+
+/// L4-10 (CMMS Advisor decision L4 Q7): the shipped rule flags every work order on a machine of
+/// criticality A with the consignation permit, protected like any rule flag.
+#[tokio::test]
+async fn a_work_order_on_a_critical_machine_needs_a_consignation_permit() {
+    let db = setup().await;
+    let actor = admin(&db).await;
+    make_critical(&db, 1).await;
+    let result = convert(&db, actor).await;
+    assert!(result.permit_flag.requires_permit);
+    assert_eq!(result.permit_flag.reason_code, reasons::RULE_MATCHED);
+    assert_eq!(
+        result.permit_flag.rule_code.as_deref(),
+        Some(rules::CRITICAL_ASSET_RULE_CODE)
+    );
+    assert_eq!(result.permit_flag.permit_type_code.as_deref(), Some("loto"));
+    let wo = crate::wo::queries::get_work_order(&db, result.wo_id)
+        .await
+        .expect("q")
+        .expect("wo");
+    assert!(wo.requires_permit);
+    assert_eq!(wo.permit_rule_code.as_deref(), Some(rules::CRITICAL_ASSET_RULE_CODE));
+    // No start without the permit.
+    assert!(
+        crate::permit::wo_gate::assert_in_progress_permit_gate(&db, result.wo_id)
+            .await
+            .is_err()
+    );
+}
+
+/// The same machine without criticality A: the shipped rule does not match.
+#[tokio::test]
+async fn a_machine_not_critical_is_not_flagged_by_the_criticality_rule() {
+    let db = setup().await;
+    let actor = admin(&db).await;
+    let result = convert(&db, actor).await;
+    assert!(!result.permit_flag.requires_permit);
+    assert_eq!(result.permit_flag.reason_code, reasons::NO_RULE_MATCHED);
+}
+
+/// A machine assessed critical while a work order on it is still open: the work order is flagged
+/// in the same transaction as the assessment, recorded as an equipment change.
+#[tokio::test]
+async fn an_open_work_order_is_flagged_when_its_machine_becomes_critical() {
+    let db = setup().await;
+    let actor = admin(&db).await;
+    let result = convert(&db, actor).await;
+    assert!(!result.permit_flag.requires_permit);
+    let rv = scalar(&db, "SELECT row_version FROM equipment WHERE id = 1").await;
+    crate::assets::criticality::assess_asset_criticality(
+        &db,
+        crate::assets::criticality::AssessCriticalityPayload {
+            asset_id: 1,
+            scores: crate::assets::criticality::CriticalityScores {
+                safety: 5,
+                environment: 1,
+                production: 3,
+                quality: 1,
+                cost: 1,
+                likelihood: 2,
+            },
+            rationale: Some("Presse : risque d'écrasement".into()),
+            expected_row_version: rv,
+        },
+        actor,
+    )
+    .await
+    .expect("assessed");
+    let wo = crate::wo::queries::get_work_order(&db, result.wo_id)
+        .await
+        .expect("q")
+        .expect("wo");
+    assert!(wo.requires_permit);
+    assert_eq!(wo.permit_rule_code.as_deref(), Some(rules::CRITICAL_ASSET_RULE_CODE));
+    assert_eq!(
+        scalar(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM wo_action_events WHERE wo_id = {} AND action_code = 'permit_rule_applied' \
+                   AND json_extract(payload_json, '$.cause') = 'equipment_changed'",
+                result.wo_id
+            ),
+        )
+        .await,
+        1
+    );
+}
+
+/// A rule naming a criticality not in the published list is refused when it is saved.
+#[tokio::test]
+async fn a_rule_naming_an_unknown_criticality_is_refused() {
+    let db = setup().await;
+    let err = rules::checked_rule_metadata(
+        &db,
+        "BAD",
+        Some(r#"{"criticality_code":"Z","permit_type_code":"loto"}"#),
+    )
+    .await
+    .expect_err("refused");
+    assert_eq!(code_of(&err), rules::CODE_RULE_INVALID);
+}
+
+/// A machine whose criticality is only the legacy "CRITIQUE" value is read as A.
+#[tokio::test]
+async fn a_legacy_critique_machine_is_critical_for_the_rule() {
+    let db = setup().await;
+    let actor = admin(&db).await;
+    exec(
+        &db,
+        "UPDATE equipment SET equipment_criticality_ref_id = NULL, \
+         criticality_value_id = (SELECT lv.id FROM lookup_values lv \
+            JOIN lookup_domains ld ON ld.id = lv.domain_id \
+            WHERE ld.domain_key = 'equipment.criticality' AND lv.code = 'CRITIQUE') \
+         WHERE id = 1",
+    )
+    .await;
+    let result = convert(&db, actor).await;
+    assert_eq!(
+        result.permit_flag.rule_code.as_deref(),
+        Some(rules::CRITICAL_ASSET_RULE_CODE)
+    );
+}
+
+/// The plant's own isolation rule comes before the shipped one (sort order 1000), whatever the
+/// codes: the plant's permit type is the one recorded.
+#[tokio::test]
+async fn the_plants_own_isolation_rule_keeps_priority_over_the_shipped_one() {
+    let db = setup().await;
+    let actor = admin(&db).await;
+    make_critical(&db, 1).await;
+    add_rule(
+        &db,
+        "PUMPS_LOTO",
+        serde_json::json!({ "equipment_class_code": "PUMP", "permit_type_code": "loto" }),
+    )
+    .await;
+    let result = convert(&db, actor).await;
+    assert_eq!(result.permit_flag.rule_code.as_deref(), Some("PUMPS_LOTO"));
+}
+
+/// A hot-work rule on a critical machine: the isolation type is recorded (AU-04 R5-S3 option A)
+/// and the hot-work type is shown with it.
+#[tokio::test]
+async fn hot_work_on_a_critical_machine_records_the_isolation_and_shows_both() {
+    let db = setup().await;
+    let actor = admin(&db).await;
+    make_critical(&db, 1).await;
+    add_rule(
+        &db,
+        "PUMPS_HOT",
+        serde_json::json!({ "equipment_class_code": "PUMP", "permit_type_code": "hot_work" }),
+    )
+    .await;
+    let result = convert(&db, actor).await;
+    assert_eq!(
+        result.permit_flag.rule_code.as_deref(),
+        Some(rules::CRITICAL_ASSET_RULE_CODE)
+    );
+    let wo = crate::wo::queries::get_work_order(&db, result.wo_id)
+        .await
+        .expect("q")
+        .expect("wo");
+    let set = crate::permit::required_set::read(&db, wo.id)
+        .await
+        .expect("set")
+        .expect("wo");
+    assert!(
+        set.contains("loto") && set.contains("hot_work"),
+        "both permit types are required"
+    );
+    assert_eq!(set.primary(), Some("loto"), "the isolation rule stays the primary one");
+}
+
+/// The equipment form sets criticality A: its open work orders are flagged in the same save.
+#[tokio::test]
+async fn an_identity_edit_to_criticality_a_flags_the_open_work_orders() {
+    let db = setup().await;
+    let actor = admin(&db).await;
+    let result = convert(&db, actor).await;
+    let rv = scalar(&db, "SELECT row_version FROM equipment WHERE id = 1").await;
+    crate::assets::identity::update_asset_identity(
+        &db,
+        1,
+        crate::assets::identity::UpdateAssetIdentityPayload {
+            criticality_code: Some("A".into()),
+            ..Default::default()
+        },
+        rv,
+        i32::try_from(actor).expect("id"),
+    )
+    .await
+    .expect("updated");
+    let wo = crate::wo::queries::get_work_order(&db, result.wo_id)
+        .await
+        .expect("q")
+        .expect("wo");
+    assert_eq!(wo.permit_rule_code.as_deref(), Some(rules::CRITICAL_ASSET_RULE_CODE));
+}
+
+/// A criticality changed without passing through this PC's forms (received by sync): the catch-up
+/// after the synchronisation pass flags the open work orders.
+#[tokio::test]
+async fn the_catch_up_flags_work_orders_of_a_machine_become_critical_elsewhere() {
+    let db = setup().await;
+    let actor = admin(&db).await;
+    let result = convert(&db, actor).await;
+    make_critical(&db, 1).await;
+    assert_eq!(rules::catch_up(&db).await, 1);
+    let wo = crate::wo::queries::get_work_order(&db, result.wo_id)
+        .await
+        .expect("q")
+        .expect("wo");
+    assert_eq!(wo.permit_rule_code.as_deref(), Some(rules::CRITICAL_ASSET_RULE_CODE));
+}
+
+// ── Every matching permit type is required (L4-10b, CMMS Advisor 2026-11-04) ───────────────────
+
+/// Two rules on the pump naming two permit types without isolation: cold work (`PUMPS_COLD`, first
+/// in the list's order: the primary rule) and hot work (`PUMPS_HOT`).
+async fn two_type_rules(db: &DatabaseConnection) {
+    add_rule(
+        db,
+        "PUMPS_COLD",
+        serde_json::json!({ "equipment_class_code": "PUMP", "permit_type_code": "cold_work" }),
+    )
+    .await;
+    add_rule(
+        db,
+        "PUMPS_HOT",
+        serde_json::json!({ "equipment_class_code": "PUMP", "permit_type_code": "hot_work" }),
+    )
+    .await;
+}
+
+/// An active permit of `permit_type` linked to the work order.
+async fn active_permit(db: &DatabaseConnection, permit_type: &str, wo_id: i64) {
+    use crate::permit::tests::{advance_to_issued, create_from_wo, set_status};
+    let wp = create_from_wo(db, permit_type, wo_id)
+        .await
+        .unwrap_or_else(|e| panic!("{permit_type} permit: {e:?}"));
+    set_status(db, &advance_to_issued(db, wp).await, "active")
+        .await
+        .expect("activate");
+}
+
+/// The permit types the work order requires and not cleared.
+async fn required_types(db: &DatabaseConnection, wo_id: i64) -> Vec<String> {
+    crate::permit::required_set::read(db, wo_id)
+        .await
+        .expect("set")
+        .expect("wo")
+        .uncleared_types()
+}
+
+fn param(err: &AppError, key: &str) -> Option<String> {
+    match err {
+        AppError::OrgValidationFailed(issues) => issues.first().and_then(|i| i.params.get(key).cloned()),
+        _ => None,
+    }
+}
+
+/// The start needs a live permit of every type the rules give; a permit of one type is refused,
+/// naming the type missing; with both, it starts. One open permit per type: a second one of the
+/// same type is refused, another type is accepted.
+#[tokio::test]
+async fn every_matching_permit_type_is_required_to_start() {
+    let db = setup().await;
+    let actor = admin(&db).await;
+    two_type_rules(&db).await;
+    let wo_id = convert(&db, actor).await.wo_id;
+    let wo = crate::wo::queries::get_work_order(&db, wo_id)
+        .await
+        .expect("q")
+        .expect("wo");
+    assert_eq!(wo.permit_rule_code.as_deref(), Some("PUMPS_COLD"), "the primary rule");
+    assert_eq!(
+        required_types(&db, wo_id).await,
+        vec!["cold_work".to_string(), "hot_work".to_string()]
+    );
+
+    active_permit(&db, "hot_work", wo_id).await;
+    let err = crate::permit::wo_gate::assert_in_progress_permit_gate(&db, wo_id)
+        .await
+        .expect_err("a hot-work permit alone does not cover the cold-work rule");
+    assert_eq!(code_of(&err), "PERMIT_TYPE_REQUIRED_TO_START");
+    assert_eq!(param(&err, "permit_type").as_deref(), Some("cold_work"));
+    assert_eq!(param(&err, "missing_types").as_deref(), Some("cold_work"));
+    assert!(param(&err, "missing_type_names").is_some());
+
+    let second = crate::permit::tests::create_from_wo(&db, "hot_work", wo_id).await;
+    assert!(
+        format!("{second:?}").contains("PERMIT_WO_ALREADY_HAS_OPEN"),
+        "one open permit per type: {second:?}"
+    );
+    active_permit(&db, "cold_work", wo_id).await;
+    crate::permit::wo_gate::assert_in_progress_permit_gate(&db, wo_id)
+        .await
+        .expect("a live permit of each type lets the work start");
+}
+
+/// A work order whose set was never stored (a row from before migration 279) is judged by its
+/// primary rule, as before.
+#[tokio::test]
+async fn a_work_order_without_a_stored_set_is_judged_by_its_primary_rule() {
+    let db = setup().await;
+    let actor = admin(&db).await;
+    two_type_rules(&db).await;
+    let wo_id = convert(&db, actor).await.wo_id;
+    exec(
+        &db,
+        &format!("UPDATE work_orders SET permit_required_types_json = NULL WHERE id = {wo_id}"),
+    )
+    .await;
+    assert_eq!(required_types(&db, wo_id).await, vec!["cold_work".to_string()]);
+    active_permit(&db, "hot_work", wo_id).await;
+    let err = crate::permit::wo_gate::assert_in_progress_permit_gate(&db, wo_id)
+        .await
+        .expect_err("the primary type is required");
+    assert_eq!(param(&err, "permit_type").as_deref(), Some("cold_work"));
+}
+
+/// Each type is lifted on its own: named when several are not lifted, with the right at the work
+/// order's site and a reason of 10 characters or more, before the start; the permit stays required
+/// while a type is not lifted (the general edit cannot untick it); lifting the primary type records
+/// the legacy clearing too, and the last one lifts the requirement. Each clearing is audited.
+#[tokio::test]
+async fn each_permit_type_is_lifted_on_its_own() {
+    let db = setup().await;
+    let actor = admin(&db).await;
+    two_type_rules(&db).await;
+    let wo_id = convert(&db, actor).await.wo_id;
+    let version_sql = format!("SELECT row_version FROM work_orders WHERE id = {wo_id}");
+    let input = |rv: i64, permit_type: Option<&str>, reason: &str| WoPermitRuleClearInput {
+        wo_id,
+        expected_row_version: rv,
+        reason: reason.into(),
+        permit_type_code: permit_type.map(str::to_string),
+    };
+    let reason = "Travail à froid seulement, sans flamme";
+
+    let err = req::clear_permit_rule_flag(&db, input(scalar(&db, &version_sql).await, None, reason), actor)
+        .await
+        .expect_err("two types not lifted: the type is named");
+    assert_eq!(code_of(&err), req::CODE_RULE_FLAG_TYPE_REQUIRED);
+    let err = req::clear_permit_rule_flag(
+        &db,
+        input(scalar(&db, &version_sql).await, Some("hot_work"), "court"),
+        actor,
+    )
+    .await
+    .expect_err("short reason");
+    assert_eq!(code_of(&err), req::CODE_RULE_FLAG_REASON);
+    add_second_site(&db).await;
+    let outsider = site_holder(&db, "issuer2", 2, crate::rbac::permissions::PTW_ISSUE).await;
+    let err = req::clear_permit_rule_flag(
+        &db,
+        input(scalar(&db, &version_sql).await, Some("hot_work"), reason),
+        outsider,
+    )
+    .await
+    .expect_err("the right at another site");
+    assert_eq!(code_of(&err), req::CODE_RULE_FLAG_RIGHT);
+    let err = req::clear_permit_rule_flag(&db, input(scalar(&db, &version_sql).await, Some("loto"), reason), actor)
+        .await
+        .expect_err("a type the work order does not require");
+    assert_eq!(code_of(&err), req::CODE_RULE_FLAG_ABSENT);
+
+    // The issuer at the work order's site lifts hot work: cold work is still required.
+    let issuer = site_holder(&db, "issuer1", 1, crate::rbac::permissions::PTW_ISSUE).await;
+    let lifted = req::clear_permit_rule_flag(
+        &db,
+        input(scalar(&db, &version_sql).await, Some("hot_work"), reason),
+        issuer,
+    )
+    .await
+    .expect("hot work lifted");
+    assert!(lifted.requires_permit, "cold work is still required");
+    assert_eq!(lifted.permit_rule_cleared_at, None, "the primary rule is not lifted");
+    assert_eq!(required_types(&db, wo_id).await, vec!["cold_work".to_string()]);
+    let set = crate::permit::required_set::read(&db, wo_id)
+        .await
+        .expect("set")
+        .expect("wo");
+    let clearing = set.get("hot_work").and_then(|i| i.clearing.clone()).expect("cleared");
+    assert_eq!(clearing.by_sync_id.as_deref(), Some("pr-issuer1"));
+    assert_eq!(clearing.reason.as_deref(), Some(reason));
+    let audit = text_of(
+        &db,
+        &format!("SELECT summary FROM wo_change_events WHERE wo_id = {wo_id} AND action = 'permit_rule_flag_cleared'"),
+    )
+    .await;
+    assert!(audit.contains("hot_work") && audit.contains("PUMPS_HOT"), "{audit}");
+    let err = req::clear_permit_rule_flag(
+        &db,
+        input(scalar(&db, &version_sql).await, Some("hot_work"), reason),
+        issuer,
+    )
+    .await
+    .expect_err("already lifted");
+    assert_eq!(code_of(&err), req::CODE_RULE_FLAG_ABSENT);
+    let err = req::set_permit_requirement(
+        &db,
+        WoPermitRequirementInput {
+            wo_id,
+            expected_row_version: scalar(&db, &version_sql).await,
+            requires_permit: false,
+        },
+        actor,
+    )
+    .await
+    .expect_err("the general edit cannot untick a type not lifted");
+    assert_eq!(code_of(&err), req::CODE_RULE_FLAG_NEEDS_CLEAR);
+    // Only hot work live is enough now.
+    active_permit(&db, "hot_work", wo_id).await;
+    assert!(crate::permit::wo_gate::assert_in_progress_permit_gate(&db, wo_id)
+        .await
+        .is_err());
+
+    // The last type, the primary one: named by default, the requirement lifted, legacy columns too.
+    let last = req::clear_permit_rule_flag(&db, input(scalar(&db, &version_sql).await, None, reason), issuer)
+        .await
+        .expect("cold work lifted");
+    assert!(!last.requires_permit);
+    assert!(last.permit_rule_cleared_at.is_some());
+    assert!(required_types(&db, wo_id).await.is_empty());
+    assert_eq!(
+        scalar(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM wo_action_events WHERE wo_id = {wo_id} AND action_code = 'permit_rule_flag_cleared' \
+                 AND json_extract(payload_json, '$.permit_type_code') IS NOT NULL"
+            ),
+        )
+        .await,
+        2
+    );
+
+    // Required again by the general edit: every clearing of the set is withdrawn.
+    req::set_permit_requirement(
+        &db,
+        WoPermitRequirementInput {
+            wo_id,
+            expected_row_version: scalar(&db, &version_sql).await,
+            requires_permit: true,
+        },
+        actor,
+    )
+    .await
+    .expect("required again");
+    assert_eq!(
+        required_types(&db, wo_id).await,
+        vec!["cold_work".to_string(), "hot_work".to_string()]
+    );
+}
+
+/// A type is never lifted once the work started.
+#[tokio::test]
+async fn a_permit_type_is_not_lifted_once_started() {
+    let db = setup().await;
+    let actor = admin(&db).await;
+    two_type_rules(&db).await;
+    let wo_id = convert(&db, actor).await.wo_id;
+    exec(
+        &db,
+        &format!(
+            "UPDATE work_orders SET status_id = (SELECT id FROM work_order_statuses WHERE code = 'in_progress') \
+             WHERE id = {wo_id}"
+        ),
+    )
+    .await;
+    let rv = scalar(&db, &format!("SELECT row_version FROM work_orders WHERE id = {wo_id}")).await;
+    let err = req::clear_permit_rule_flag(
+        &db,
+        WoPermitRuleClearInput {
+            wo_id,
+            expected_row_version: rv,
+            reason: "Travail à froid seulement".into(),
+            permit_type_code: Some("hot_work".into()),
+        },
+        actor,
+    )
+    .await
+    .expect_err("started");
+    assert!(code_of(&err).contains("GATE_WO_PERMIT_REQUIREMENT_LOCKED"), "{err:?}");
+}
+
+/// Lead decision D-b: a work order on hold gets, before its resume, every type the list here gives
+/// it that its set lacks (recorded, checked against the screen's version); the gate then refuses
+/// the resume until a permit of that type is live.
+#[tokio::test]
+async fn a_type_added_while_on_hold_blocks_the_resume() {
+    let db = setup().await;
+    let actor = admin(&db).await;
+    add_rule(
+        &db,
+        "PUMPS_HOT",
+        serde_json::json!({ "equipment_class_code": "PUMP", "permit_type_code": "hot_work" }),
+    )
+    .await;
+    let wo_id = convert(&db, actor).await.wo_id;
+    active_permit(&db, "hot_work", wo_id).await;
+    exec(
+        &db,
+        &format!(
+            "UPDATE work_orders SET status_id = (SELECT id FROM work_order_statuses WHERE code = 'on_hold') \
+             WHERE id = {wo_id}"
+        ),
+    )
+    .await;
+    // Published while it was on hold (the list's own stamp skips work orders already started).
+    add_rule(
+        &db,
+        "PUMPS_COLD",
+        serde_json::json!({ "equipment_class_code": "PUMP", "permit_type_code": "cold_work" }),
+    )
+    .await;
+    let rv = scalar(&db, &format!("SELECT row_version FROM work_orders WHERE id = {wo_id}")).await;
+    assert_eq!(
+        rules::prepare_resume(&db, wo_id, Some(actor), rv - 1)
+            .await
+            .expect("stale"),
+        0,
+        "a stale screen adds nothing"
+    );
+    assert_eq!(required_types(&db, wo_id).await, vec!["hot_work".to_string()]);
+    assert_eq!(
+        rules::prepare_resume(&db, wo_id, Some(actor), rv).await.expect("added"),
+        1
+    );
+    assert_eq!(
+        scalar(&db, &format!("SELECT row_version FROM work_orders WHERE id = {wo_id}")).await,
+        rv + 1
+    );
+    assert_eq!(
+        required_types(&db, wo_id).await,
+        vec!["cold_work".to_string(), "hot_work".to_string()]
+    );
+    assert_eq!(
+        scalar(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM wo_action_events WHERE wo_id = {wo_id} AND action_code = 'permit_rule_applied' \
+                 AND json_extract(payload_json, '$.cause') = 'resumed'"
+            ),
+        )
+        .await,
+        1
+    );
+    let err = crate::permit::wo_gate::assert_in_progress_permit_gate(&db, wo_id)
+        .await
+        .expect_err("the cold-work permit is missing");
+    assert_eq!(param(&err, "permit_type").as_deref(), Some("cold_work"));
+}
+
+/// The catch-up adds a type a rule now gives to a work order not started that already requires
+/// another: recorded with the types added, the permit issuers told once; never twice.
+#[tokio::test]
+async fn the_catch_up_adds_a_missing_permit_type() {
+    let db = setup().await;
+    let actor = admin(&db).await;
+    add_rule(
+        &db,
+        "PUMPS_HOT",
+        serde_json::json!({ "equipment_class_code": "PUMP", "permit_type_code": "hot_work" }),
+    )
+    .await;
+    let wo_id = convert(&db, actor).await.wo_id;
+    add_rule(
+        &db,
+        "PUMPS_COLD",
+        serde_json::json!({ "equipment_class_code": "PUMP", "permit_type_code": "cold_work" }),
+    )
+    .await;
+    assert_eq!(rules::catch_up(&db).await, 1);
+    assert_eq!(
+        required_types(&db, wo_id).await,
+        vec!["cold_work".to_string(), "hot_work".to_string()]
+    );
+    let wo = crate::wo::queries::get_work_order(&db, wo_id)
+        .await
+        .expect("q")
+        .expect("wo");
+    assert_eq!(
+        wo.permit_rule_code.as_deref(),
+        Some("PUMPS_HOT"),
+        "the primary rule is kept"
+    );
+    let payload = text_of(
+        &db,
+        &format!(
+            "SELECT payload_json FROM wo_action_events WHERE wo_id = {wo_id} AND action_code = 'permit_rule_applied' \
+             AND json_extract(payload_json, '$.cause') = 'catch_up'"
+        ),
+    )
+    .await;
+    assert!(payload.contains("\"added_permit_types\":[\"cold_work\"]"), "{payload}");
+    let notices = || {
+        scalar(
+            &db,
+            "SELECT COUNT(*) FROM notification_events WHERE message_key = 'wo_permit_types_added'",
+        )
+    };
+    assert_eq!(notices().await, 1);
+    assert_eq!(rules::catch_up(&db).await, 0, "nothing missing any more");
+    assert_eq!(notices().await, 1);
 }

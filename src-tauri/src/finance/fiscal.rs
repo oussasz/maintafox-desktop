@@ -5,7 +5,7 @@
 //! July and period 12 is June. A fiscal year is named by the calendar year it starts in. With the
 //! default start (January) periods are calendar months and fiscal years calendar years.
 
-use chrono::{Datelike, Local};
+use chrono::Datelike;
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
 use crate::errors::{AppError, AppResult};
@@ -56,7 +56,7 @@ pub fn calendar_month(fiscal_year: i64, period: i64, start: i64) -> (i64, i64) {
 
 /// Fiscal `(year, period)` of today in the plant's local calendar (a month ends at local midnight).
 pub fn current_period(start: i64) -> (i64, i64) {
-    let now = Local::now();
+    let now = crate::clock::now_local();
     fiscal_period(i64::from(now.year()), i64::from(now.month()), start)
 }
 

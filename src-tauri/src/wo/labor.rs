@@ -155,6 +155,11 @@ async fn load_wo_status_code(db: &impl ConnectionTrait, wo_id: i64) -> AppResult
 /// Compute elapsed hours between two ISO timestamp strings.
 /// Returns `None` if either string is not parseable.
 fn elapsed_hours(start: &str, end: &str) -> Option<f64> {
+    signed_elapsed_hours(start, end).filter(|h| *h > 0.0)
+}
+
+/// Hours from `start` to `end`, negative or zero when the end is not after the start.
+fn signed_elapsed_hours(start: &str, end: &str) -> Option<f64> {
     let parse = |s: &str| -> Option<chrono::DateTime<chrono::FixedOffset>> {
         chrono::DateTime::parse_from_rfc3339(s).ok().or_else(|| {
             chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%SZ")
@@ -164,11 +169,7 @@ fn elapsed_hours(start: &str, end: &str) -> Option<f64> {
     };
     let s = parse(start)?;
     let e = parse(end)?;
-    let diff = e.signed_duration_since(s);
-    if diff.num_seconds() <= 0 {
-        return None;
-    }
-    Some(diff.num_seconds() as f64 / 3600.0)
+    Some(e.signed_duration_since(s).num_seconds() as f64 / 3600.0)
 }
 
 /// Stable codes of the labour refusals (texts in `errors:gateError`).
@@ -362,7 +363,7 @@ async fn book_labor(db: &DatabaseConnection, input: LaborBooking) -> AppResult<W
 
     // Labour is recorded after the fact: a start or end later than now (5 min clock tolerance)
     // would book hours that have not been worked.
-    let latest_allowed = chrono::Utc::now() + chrono::Duration::minutes(5);
+    let latest_allowed = crate::clock::now() + chrono::Duration::minutes(5);
     for (raw, field) in [(&input.started_at, "started_at"), (&input.ended_at, "ended_at")] {
         if let Some(raw) = raw.as_deref().filter(|s| !s.trim().is_empty()) {
             let at = crate::wo::time::parse_utc_timestamp(raw, field)?;
@@ -385,9 +386,21 @@ async fn book_labor(db: &DatabaseConnection, input: LaborBooking) -> AppResult<W
         (None, None) => {}
     }
 
-    // Auto-compute hours_worked when both timestamps are provided
+    // Hours from the two timestamps; hours given with them are the net time (a break deducted)
+    // and are kept when they fit in the span (L1-36).
     let computed_hours = match (&input.started_at, &input.ended_at) {
-        (Some(s), Some(e)) => elapsed_hours(s, e).or(input.hours_worked),
+        (Some(s), Some(e)) => match signed_elapsed_hours(s, e) {
+            Some(gross) if gross <= 0.0 => {
+                return Err(AppError::ValidationFailed(vec![
+                    "GATE_WO_LABOR_END_BEFORE_START: La fin doit être après le début.".to_string(),
+                ]));
+            }
+            Some(gross) => match input.hours_worked {
+                Some(net) if net > 0.0 && net <= gross + 1e-9 => Some(net),
+                _ => Some(gross),
+            },
+            None => input.hours_worked,
+        },
         _ => input.hours_worked,
     };
 
@@ -402,7 +415,7 @@ async fn book_labor(db: &DatabaseConnection, input: LaborBooking) -> AppResult<W
             .or(input.ended_at.as_deref())
             .and_then(|t| t.get(..10))
             .map(str::to_string)
-            .unwrap_or_else(|| chrono::Utc::now().format("%Y-%m-%d").to_string());
+            .unwrap_or_else(|| crate::clock::now().format("%Y-%m-%d").to_string());
         match input.personnel_id {
             Some(pid) => match crate::personnel::queries::resolve_rate_pair_on(&txn, pid, &work_day).await? {
                 Some((normal, overtime)) => (
@@ -595,32 +608,48 @@ pub struct WoLaborPerson {
     pub employment_type: String,
     pub company_name: Option<String>,
     pub availability_status: String,
+    /// The signed-in user's own personnel card.
+    pub is_self: bool,
+    pub team_id: Option<i64>,
+    pub team_name: Option<String>,
 }
 
-pub async fn list_labor_people(db: &DatabaseConnection) -> AppResult<Vec<WoLaborPerson>> {
+/// `only_personnel`: when set, the list holds that person alone (a technician without the
+/// right to see the staff register books himself only). `viewer_personnel` marks `is_self`.
+pub async fn list_labor_people(
+    db: &DatabaseConnection,
+    only_personnel: Option<i64>,
+    viewer_personnel: Option<i64>,
+) -> AppResult<Vec<WoLaborPerson>> {
     let rows = db
-        .query_all(Statement::from_string(
+        .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT p.id AS personnel_id, \
                     (SELECT ua.id FROM user_accounts ua \
                       WHERE ua.personnel_id = p.id AND ua.deleted_at IS NULL AND ua.is_active = 1 \
                       ORDER BY ua.id LIMIT 1) AS user_id, \
                     p.employee_code, p.full_name, pos.name AS position_name, p.employment_type, \
-                    ec.name AS company_name, p.availability_status \
+                    ec.name AS company_name, p.availability_status, \
+                    p.primary_team_id AS team_id, t.name AS team_name \
              FROM personnel p \
              LEFT JOIN positions pos ON pos.id = p.position_id \
              LEFT JOIN external_companies ec ON ec.id = p.external_company_id \
-             WHERE p.employment_status = 'active' \
-             ORDER BY p.full_name COLLATE NOCASE ASC, p.id ASC"
-                .to_string(),
+             LEFT JOIN teams t ON t.id = p.primary_team_id \
+             WHERE p.employment_status = 'active' AND (?1 IS NULL OR p.id = ?1) \
+             ORDER BY p.full_name COLLATE NOCASE ASC, p.id ASC",
+            [only_personnel.into()],
         ))
         .await?;
     rows.iter()
         .map(|row| {
+            let personnel_id = row
+                .try_get::<i64>("", "personnel_id")
+                .map_err(|e| AppError::Internal(anyhow::anyhow!("personnel_id decode: {e}")))?;
             Ok(WoLaborPerson {
-                personnel_id: row
-                    .try_get::<i64>("", "personnel_id")
-                    .map_err(|e| AppError::Internal(anyhow::anyhow!("personnel_id decode: {e}")))?,
+                personnel_id,
+                is_self: viewer_personnel == Some(personnel_id),
+                team_id: row.try_get::<Option<i64>>("", "team_id").unwrap_or(None),
+                team_name: row.try_get::<Option<String>>("", "team_name").unwrap_or(None),
                 user_id: row.try_get::<Option<i64>>("", "user_id").unwrap_or(None),
                 employee_code: row.try_get::<String>("", "employee_code").unwrap_or_default(),
                 full_name: row.try_get::<String>("", "full_name").unwrap_or_default(),
@@ -635,6 +664,25 @@ pub async fn list_labor_people(db: &DatabaseConnection) -> AppResult<Vec<WoLabor
             })
         })
         .collect()
+}
+
+/// Hourly rates that will be frozen on a labour entry booked for `day` (`YYYY-MM-DD`).
+#[derive(Debug, Clone, Serialize)]
+pub struct WoLaborRatePreview {
+    pub normal_rate: Option<f64>,
+    pub overtime_rate: Option<f64>,
+}
+
+pub async fn preview_labor_rate(
+    db: &DatabaseConnection,
+    personnel_id: i64,
+    day: &str,
+) -> AppResult<WoLaborRatePreview> {
+    let pair = crate::personnel::queries::resolve_rate_pair_on(db, personnel_id, day).await?;
+    Ok(WoLaborRatePreview {
+        normal_rate: pair.map(|p| p.0),
+        overtime_rate: pair.map(|p| p.1),
+    })
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

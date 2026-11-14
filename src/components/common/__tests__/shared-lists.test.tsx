@@ -107,7 +107,8 @@ describe("LinkedEntityBadge — inspection round", () => {
 describe("UrgencyBadge", () => {
   it("shows the plant's label of the level and its target times", () => {
     render(<UrgencyBadge code="normal" />);
-    const chip = screen.getByText("Planned");
+    // L1-29: the rank in front says the order of the scale.
+    const chip = screen.getByText("P4 · Planned");
     expect(chip.closest("span[title]")).toHaveAttribute(
       "title",
       "Target times: response ≤ 24 h, completion ≤ 72 h",

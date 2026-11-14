@@ -61,7 +61,7 @@ pub(crate) async fn started_file_db(path: &std::path::Path) -> DatabaseConnectio
     db
 }
 
-async fn prepare_started(db: &DatabaseConnection) {
+pub(crate) async fn prepare_started(db: &DatabaseConnection) {
     prepare_started_up_to(db, None).await;
 }
 
@@ -326,6 +326,30 @@ impl TestServer {
 /// Literal values for columns the generic generator cannot guess (enumerations checked by code,
 /// cross-column constraints). `(entity type, column, SQL literal)`.
 const VALUE_OVERRIDES: &[(&str, &str, &str)] = &[
+    // A permit worker is a personnel record or an external worker (name + company), never both
+    // (migration 294 CHECK): the generic row is a personnel record.
+    ("permit_workers", "external_name", "NULL"),
+    ("permit_workers", "external_company_id", "NULL"),
+    // The generic worker is still listed: a withdrawal while their padlock is on the box is refused
+    // (`permit::workers_sync`, `PERMIT_WORKER_WITHDRAWN_LOCK_ON`).
+    ("permit_workers", "withdrawn_at", "NULL"),
+    ("permit_workers", "withdrawn_by_id", "NULL"),
+    // A personal padlock received is judged (`permit::workers_sync`): the generic one is still on
+    // the box (a removal needs its owner or a whole forced-removal record, which generic people
+    // cannot give), placed by the worker of its line (the round trip links the placer's account to
+    // that worker's card), and its number is set at placement, never the column the round trip edits.
+    ("permit_personal_locks", "lock_number", "'CAD-01'"),
+    ("permit_personal_locks", "removed_at", "NULL"),
+    ("permit_personal_locks", "removed_by_id", "NULL"),
+    ("permit_personal_locks", "forced_removal", "0"),
+    ("permit_personal_locks", "forced_reason", "NULL"),
+    ("permit_personal_locks", "forced_authorized_by_id", "NULL"),
+    ("permit_personal_locks", "forced_worker_absent", "0"),
+    ("permit_personal_locks", "forced_contact_attempts_json", "NULL"),
+    ("permit_personal_locks", "informed_by_id", "NULL"),
+    ("permit_personal_locks", "informed_at", "NULL"),
+    ("permit_personal_locks", "informed_method", "NULL"),
+    ("permit_personal_locks", "informed_in_app", "0"),
     // What a reliability decision proposes never changes once proposed (a received change is a
     // `DECISION_CONTENT_CHANGED` conflict, `reliability::study::decision_sync`, AU-76b): these are
     // set at creation and never the column the round trip edits (its decision note is).
@@ -441,6 +465,20 @@ const VALUE_OVERRIDES: &[(&str, &str, &str)] = &[
     // A requirement asks for one certification or one skill, never both.
     ("qualification_requirements", "skill_reference_value_id", "NULL"),
     ("qualification_requirements", "min_proficiency_level", "NULL"),
+    // A requirement profile stores two JSON lists (migration 070 defaults them to '[]'); the generic
+    // `_json` value '{}' is no list, and an unreadable profile refuses every qualification check that
+    // reads it (`qualification::gate::permit_profile_requirements`, never read as "no requirement"),
+    // such as the one of a worker received on a permit (`permit::workers::received_workers_breach`).
+    (
+        "qualification_requirement_profiles",
+        "required_certification_type_ids_json",
+        "'[]'",
+    ),
+    (
+        "qualification_requirement_profiles",
+        "applies_to_permit_type_codes_json",
+        "'[]'",
+    ),
     // An override states its reason (at least 10 characters).
     (
         "qualification_overrides",
@@ -470,6 +508,10 @@ const VALUE_OVERRIDES: &[(&str, &str, &str)] = &[
     // active (its generic times are in order: fitted, verified, activated, lock removed, expiry),
     // so its generic isolations arrive with it as a valid group.
     ("work_permits", "status", "'active'"),
+    // An active permit of a type that needs a gas test is judged on its latest gas test at its
+    // activation (L4-04, `permit::sync_check::gas_verdict`); the generic permit is created alone,
+    // with no gas test, so its generic type needs none (a generic `requires_*` flag is otherwise 1).
+    ("permit_types", "requires_atmospheric_test", "0"),
     // An active permit names who approved it (four-eyes, `permit::sync_check::four_eyes_check`): its
     // author, submitter and approver are three generic accounts (one parent row per reference), so
     // a four-eyes approval, not flagged a self-approval, approved after it was submitted.
@@ -497,11 +539,18 @@ const VALUE_OVERRIDES: &[(&str, &str, &str)] = &[
     ("permit_isolations", "informed_at", "NULL"),
     ("permit_isolations", "informed_method", "NULL"),
     ("permit_isolations", "informed_in_app", "0"),
+    // Verified with its zero-energy test recorded (L4-13, `permit::sync_check::zero_energy_breach`).
+    (
+        "permit_isolations",
+        "zero_energy_note",
+        "'Essai de démarrage refusé, VAT 0 V'",
+    ),
     // A generic work order carries no plant-rule permit flag (that trace is written at conversion and
     // judged on arrival, `permit::sync_check::inbound_permit_rule_check`).
     ("work_orders", "permit_rule_code", "NULL"),
     ("work_orders", "permit_rule_permit_type", "NULL"),
     ("work_orders", "permit_rule_cleared_at", "NULL"),
+    ("work_orders", "permit_required_types_json", "NULL"),
     // Nor a permit requirement from a request flagged "sécurité" (migration 255, judged on arrival
     // the same way).
     ("work_orders", "permit_from_safety_di", "0"),
@@ -510,6 +559,14 @@ const VALUE_OVERRIDES: &[(&str, &str, &str)] = &[
     ("work_orders", "site_assigned_by_id", "NULL"),
     ("work_orders", "site_assigned_at", "NULL"),
     ("work_orders", "site_assign_reason", "NULL"),
+    // A generic work order is not a dépannage (its facts are judged on arrival,
+    // `wo::depannage::inbound_depannage_check`) and was never validated after the fact.
+    ("work_orders", "is_depannage", "0"),
+    ("work_orders", "breakdown_at", "NULL"),
+    ("work_orders", "machine_stopped", "NULL"),
+    ("work_orders", "validated_by_id", "NULL"),
+    ("work_orders", "validated_at", "NULL"),
+    ("work_orders", "validation_auto_approved", "NULL"),
     // A generic request is not flagged "sécurité": its generic work order carries no safety origin
     // (migration 255, judged on arrival).
     ("intervention_requests", "safety_flag", "0"),

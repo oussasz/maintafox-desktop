@@ -1,11 +1,13 @@
 //! PM delete IPC commands.
 //!
-//! Restricted to `pm.delete` and guarded by optimistic concurrency checks.
+//! Restricted to `pm.delete` at the plan's anchor (`pm::access`: its equipment's site, its
+//! location; a family or criticality-group plan: plant-wide roles only) and guarded by optimistic
+//! concurrency checks.
 
 use sea_orm::{ConnectionTrait, DbBackend, Statement, TransactionTrait};
 use tauri::State;
 
-use crate::commands::pm::require_pm_delete_or_manage;
+use crate::commands::pm::{require_on_plan, require_on_version};
 use crate::errors::{AppError, AppResult};
 use crate::require_session;
 use crate::state::AppState;
@@ -17,7 +19,7 @@ pub async fn delete_pm_plan_version(
     state: State<'_, AppState>,
 ) -> AppResult<()> {
     let user = require_session!(state);
-    require_pm_delete_or_manage(&state, &user).await?;
+    require_on_version(&state, &user, crate::rbac::permissions::PM_DELETE, version_id).await?;
 
     let row = state
         .db
@@ -92,7 +94,7 @@ pub async fn delete_pm_plan_version(
 #[tauri::command]
 pub async fn delete_pm_plan(plan_id: i64, expected_row_version: i64, state: State<'_, AppState>) -> AppResult<()> {
     let user = require_session!(state);
-    require_pm_delete_or_manage(&state, &user).await?;
+    require_on_plan(&state, &user, crate::rbac::permissions::PM_DELETE, plan_id).await?;
 
     let plan_row = state
         .db
@@ -154,8 +156,16 @@ pub async fn delete_pm_plan(plan_id: i64, expected_row_version: i64, state: Stat
         ]));
     }
 
-    let delete_result = state
-        .db
+    // Plans this draft covered stand alone again (nested plans, migration 292).
+    let tx = state.db.begin().await?;
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE pm_plans SET covered_by_plan_id = NULL, row_version = row_version + 1 WHERE covered_by_plan_id = ?",
+        [plan_id.into()],
+    ))
+    .await?;
+
+    let delete_result = tx
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "DELETE FROM pm_plans WHERE id = ? AND row_version = ? AND lifecycle_status = 'draft'",
@@ -163,10 +173,12 @@ pub async fn delete_pm_plan(plan_id: i64, expected_row_version: i64, state: Stat
         ))
         .await?;
     if delete_result.rows_affected() == 0 {
+        tx.rollback().await?;
         return Err(AppError::ValidationFailed(vec![
             "GATE_RECORD_CHANGED_ELSEWHERE: PM plan delete failed.".to_string(),
         ]));
     }
+    tx.commit().await?;
 
     Ok(())
 }

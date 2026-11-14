@@ -12,6 +12,7 @@
  */
 
 import {
+  ArrowLeft,
   CheckCircle2,
   ClipboardCheck,
   FileCheck2,
@@ -23,11 +24,13 @@ import {
   Printer,
   RotateCcw,
   Settings,
+  UserPlus,
   X,
   XCircle,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useNavigate } from "react-router-dom";
 
 import { LinkedEntityBadge, roundTitle } from "@/components/common/LinkedEntityBadge";
 import { UrgencyBadge } from "@/components/common/urgency/UrgencyBadge";
@@ -44,6 +47,7 @@ import {
 } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { WoAssetDocumentsCard } from "@/components/wo/WoAssetDocumentsCard";
 import { WoAttachmentPanel } from "@/components/wo/WoAttachmentPanel";
 import { WoAuditTimeline } from "@/components/wo/WoAuditTimeline";
 import { WoCancelDialog } from "@/components/wo/WoCancelDialog";
@@ -51,23 +55,31 @@ import { WoCloseOutPanel } from "@/components/wo/WoCloseOutPanel";
 import { WoCompletionDialog } from "@/components/wo/WoCompletionDialog";
 import { completionGatesProgress } from "@/components/wo/WoCompletionGatesChecklist";
 import { WoDeisolationBadge } from "@/components/wo/WoDeisolationBadge";
+import { WoDepannageFacts } from "@/components/wo/WoDepannageFacts";
 import {
   WoExecutionControls,
   type WoExecutionControlsHandle,
 } from "@/components/wo/WoExecutionControls";
+import { WoPartsRequisitionEntry } from "@/components/wo/WoPartsRequisitionEntry";
 import { WoPlanningPanel } from "@/components/wo/WoPlanningPanel";
 import { printWoFiche } from "@/components/wo/WoPrintFiche";
 import { WoResumeDialog } from "@/components/wo/WoResumeDialog";
 import { WoShutdownBadge } from "@/components/wo/WoShutdownRequirementField";
 import { WoNoSiteBadge, useWoAccess } from "@/components/wo/WoSiteScope";
+import { WoSubcontractingCard } from "@/components/wo/WoSubcontractingCard";
+import { useWoExecutionStanding } from "@/components/wo/use-wo-execution-standing";
 import { useWoTypeLabels } from "@/components/wo/use-wo-type-labels";
 import { formatWoShift } from "@/components/wo/wo-shift-label";
 import { useFormatters } from "@/hooks/use-formatters";
+import { usePermissions } from "@/hooks/use-permissions";
 import { needsPlanningApproval, useWoLifecycleActions } from "@/hooks/use-wo-lifecycle-actions";
 import { describeAppError } from "@/lib/app-error";
 import { formatAssetLabel } from "@/lib/display";
+import { listLinks } from "@/lib/list-links";
+import { joinWo } from "@/services/wo-execution-service";
 import { evaluateWoCompletionGates } from "@/services/wo-service";
 import { pushAppToast } from "@/store/app-toast-store";
+import { useSessionStore } from "@/store/session-store";
 import { useWoStore } from "@/stores/wo-store";
 import { formatDate } from "@/utils/format-date";
 import { isWoLifecycleState } from "@/utils/wo-lifecycle";
@@ -84,7 +96,10 @@ const EXECUTION_VISIBLE: Set<string> = new Set([
 ]);
 
 const CLOSEOUT_VISIBLE: Set<string> = new Set(["in_progress", "on_hold", "completed", "closed"]);
-const CANCELLABLE_DENY = new Set(["closed", "cancelled"]);
+// L1-33: a finished ("Terminé") work order goes to its close, not to a cancellation.
+const CANCELLABLE_DENY = new Set(["completed", "closed", "cancelled"]);
+/** Statuses whose footer offers execution steps (start, hold, resume, complete). */
+const FOOTER_EXECUTION_STATES = new Set(["ready", "in_progress", "on_hold"]);
 const ATTACHMENT_UPLOAD_DENY = new Set(["closed", "cancelled"]);
 
 interface WoDetailDialogProps {
@@ -92,15 +107,43 @@ interface WoDetailDialogProps {
   open: boolean;
   loading?: boolean;
   onClose: () => void;
+  /**
+   * Set when the work order was opened from another screen (a study, a request, the home page):
+   * shows "← Retour", which closes the detail and returns to that screen.
+   */
+  onBackToOrigin?: () => void;
 }
 
-export function WoDetailDialog({ wo, open, loading = false, onClose }: WoDetailDialogProps) {
+export function WoDetailDialog({
+  wo,
+  open,
+  loading = false,
+  onClose,
+  onBackToOrigin,
+}: WoDetailDialogProps) {
   const { t, i18n } = useTranslation("ot");
+  const navigate = useNavigate();
+  const { can: canGlobal } = usePermissions();
   const { formatHours } = useFormatters();
   const { typeLabel, natureLabel } = useWoTypeLabels();
   // The actions offered are the user's rights at this work order's site (its org node), not
   // anywhere in the plant; the backend checks the same and stays the authority.
   const { can } = useWoAccess(wo);
+  const sessionInfo = useSessionStore((s) => s.info);
+  const reopenWo = useWoStore((s) => s.openWo);
+  const [joining, setJoining] = useState(false);
+  // "Terminé" and "Annuler l'OT" are execution actions (L5-08): greyed with who it is assigned to.
+  const execution = useWoExecutionStanding(wo);
+  // The reason under the footer: the execution steps (start … complete) where they are offered,
+  // else cancelling only (which the creator of a draft keeps).
+  const footerStatus = wo?.status_code ?? "";
+  const footerExecutionReason = !can(P.OT_EDIT)
+    ? null
+    : FOOTER_EXECUTION_STATES.has(footerStatus)
+      ? execution.blocker
+      : CANCELLABLE_DENY.has(footerStatus)
+        ? null
+        : execution.cancelBlocker;
 
   const saving = useWoStore((s) => s.saving);
   const openCreateForm = useWoStore((s) => s.openCreateForm);
@@ -213,7 +256,7 @@ export function WoDetailDialog({ wo, open, loading = false, onClose }: WoDetailD
 
   const statusKey = statusToI18nKey(wo.status_code ?? "draft");
   const isCancelled = (wo.status_code ?? "") === "cancelled";
-  const footerBusy = saving || lifecycle.busy;
+  const footerBusy = saving || lifecycle.busy || joining;
 
   return (
     <>
@@ -223,6 +266,18 @@ export function WoDetailDialog({ wo, open, loading = false, onClose }: WoDetailD
           onPointerDownOutside={(e) => e.preventDefault()}
         >
           <DialogHeader className="px-6 pt-5 pb-3">
+            {onBackToOrigin ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="-ml-2 mb-1 w-fit gap-1.5 self-start"
+                onClick={onBackToOrigin}
+              >
+                <ArrowLeft className="h-4 w-4" aria-hidden />
+                {t("detail.backToOrigin")}
+              </Button>
+            ) : null}
             <div className="flex items-start justify-between gap-4">
               <div className="space-y-1 min-w-0">
                 <DialogTitle className="text-lg font-bold flex items-center gap-2">
@@ -245,7 +300,9 @@ export function WoDetailDialog({ wo, open, loading = false, onClose }: WoDetailD
                 >
                   {t(`status.${statusKey}` as const)}
                 </Badge>
-                {isWoLifecycleState(wo.lifecycle_state) ? (
+                {/* L1-33: the lifecycle badge only when it says more than the status. */}
+                {isWoLifecycleState(wo.lifecycle_state) &&
+                t(`lifecycle.${wo.lifecycle_state}`) !== t(`status.${statusKey}` as const) ? (
                   <Badge
                     variant="outline"
                     className="text-xs"
@@ -299,6 +356,13 @@ export function WoDetailDialog({ wo, open, loading = false, onClose }: WoDetailD
 
             <Card>
               <CardContent className="p-3 grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-2 text-xs">
+                <WoDepannageFacts
+                  wo={wo}
+                  canEdit={can(P.OT_EDIT)}
+                  canApprove={can(P.OT_APPROVE)}
+                  userId={sessionInfo?.user_id ?? null}
+                  onChanged={(updated) => void reopenWo(updated.id)}
+                />
                 <InfoRow
                   label={t("detail.fields.type")}
                   value={typeLabel(wo.type_code, wo.type_label) || "—"}
@@ -338,7 +402,11 @@ export function WoDetailDialog({ wo, open, loading = false, onClose }: WoDetailD
                 />
                 <InfoRow
                   label={t("detail.fields.planner")}
-                  value={wo.planner_display_name ?? wo.planner_username ?? "—"}
+                  value={
+                    wo.planner_display_name ??
+                    wo.planner_username ??
+                    (wo.planner_id == null ? t("planning.plannerToName") : "—")
+                  }
                 />
                 <InfoRow
                   label={t("detail.fields.plannedStart")}
@@ -404,8 +472,22 @@ export function WoDetailDialog({ wo, open, loading = false, onClose }: WoDetailD
                   <InfoRow
                     label={t("detail.fields.sourceRca")}
                     value={
-                      <span className="text-text-secondary">
-                        {t("detail.fields.sourceRcaCause")}: {wo.source_rca_cause_text}
+                      <span className="flex flex-col items-end gap-1 text-text-secondary">
+                        <span>
+                          {t("detail.fields.sourceRcaCause")}: {wo.source_rca_cause_text}
+                        </span>
+                        {canGlobal(P.RAM_VIEW) && wo.equipment_id != null ? (
+                          <Button
+                            variant="link"
+                            className="h-auto min-h-[36px] p-0 text-xs"
+                            onClick={() => {
+                              if (wo.equipment_id != null)
+                                void navigate(listLinks.ramsAsset(wo.equipment_id));
+                            }}
+                          >
+                            {t("detail.fields.sourceRcaOpen")}
+                          </Button>
+                        ) : null}
                       </span>
                     }
                   />
@@ -414,6 +496,12 @@ export function WoDetailDialog({ wo, open, loading = false, onClose }: WoDetailD
             </Card>
 
             <WoCostPanel woId={wo.id} status={wo.status_code ?? "draft"} />
+
+            {/* "Créer une demande d'achat" (L6-11): on the sheet itself; on the Plan tab of an order in
+                planning the planning panel already shows the same block. */}
+            {!(activeTab === "plan" && wo.status_code === "planning") && (
+              <WoPartsRequisitionEntry woId={wo.id} statusCode={wo.status_code ?? ""} />
+            )}
 
             <Tabs value={activeTab} onValueChange={setActiveTab}>
               <TabsList className="w-full justify-start">
@@ -450,6 +538,9 @@ export function WoDetailDialog({ wo, open, loading = false, onClose }: WoDetailD
 
               <TabsContent value="plan" className="pt-3">
                 <WoPlanningPanel wo={wo} canEdit={canEditWo} />
+                <div className="mt-4">
+                  <WoSubcontractingCard wo={wo} canEdit={canEditWo} />
+                </div>
               </TabsContent>
 
               {showExecution && (
@@ -468,7 +559,11 @@ export function WoDetailDialog({ wo, open, loading = false, onClose }: WoDetailD
                 <WoAuditTimeline woId={wo.id} />
               </TabsContent>
 
-              <TabsContent value="attachments" className="pt-3">
+              <TabsContent value="attachments" className="space-y-4 pt-3">
+                <WoAssetDocumentsCard
+                  equipmentId={wo.equipment_id}
+                  assetLabel={formatAssetLabel(wo.asset_code, wo.asset_label)}
+                />
                 <WoAttachmentPanel
                   woId={wo.id}
                   canUpload={canUploadAttachments}
@@ -489,6 +584,12 @@ export function WoDetailDialog({ wo, open, loading = false, onClose }: WoDetailD
               </ul>
             </div>
           )}
+          {/* Said once, under the actions it greys: open work orders only. */}
+          {footerExecutionReason ? (
+            <p id="wo-execution-blocker" className="px-6 pt-3 text-xs text-text-muted">
+              {footerExecutionReason}
+            </p>
+          ) : null}
           {/* Single footer action line */}
           <div className="flex flex-wrap items-center justify-between gap-2 px-6 py-3">
             <Button variant="outline" size="sm" onClick={handlePrint} className="gap-1.5">
@@ -500,6 +601,8 @@ export function WoDetailDialog({ wo, open, loading = false, onClose }: WoDetailD
                 wo={wo}
                 busy={footerBusy}
                 can={can}
+                executionBlocker={execution.blocker}
+                cancelBlocker={execution.cancelBlocker}
                 t={t}
                 needsApproval={
                   lifecycle.readinessReport
@@ -525,6 +628,20 @@ export function WoDetailDialog({ wo, open, loading = false, onClose }: WoDetailD
                 onResume={() => setShowResumeDialog(true)}
                 onComplete={openCompletionDialog}
                 onCancel={() => setShowCancelDialog(true)}
+                onJoin={() => {
+                  if (joining) return;
+                  setJoining(true);
+                  setActiveTab("execution");
+                  joinWo({ wo_id: wo.id })
+                    .then(() => {
+                      pushAppToast({ title: t("join.done"), variant: "success" });
+                      void reopenWo(wo.id);
+                    })
+                    .catch((err: unknown) =>
+                      pushAppToast({ title: describeAppError(err).title, variant: "destructive" }),
+                    )
+                    .finally(() => setJoining(false));
+                }}
               />
               <Button variant="outline" size="sm" onClick={onClose} className="gap-1.5">
                 <X className="h-3.5 w-3.5" />
@@ -577,6 +694,10 @@ interface FooterActionsProps {
   wo: WorkOrder;
   busy: boolean;
   can: (p: PermissionName) => boolean;
+  /** Why the execution actions (start, hold, resume, complete) are greyed; null when open. */
+  executionBlocker: string | null;
+  /** Why cancelling is greyed (the creator of a draft cancels it); null when open. */
+  cancelBlocker: string | null;
   t: (key: string) => string;
   needsApproval: boolean;
   onEdit: () => void;
@@ -589,12 +710,16 @@ interface FooterActionsProps {
   onResume: () => void;
   onComplete: () => void;
   onCancel: () => void;
+  /** "Rejoindre": start one's own labour on a work order one does not carry out. */
+  onJoin: () => void;
 }
 
 function FooterActions({
   wo,
   busy,
   can,
+  executionBlocker,
+  cancelBlocker,
   t,
   needsApproval,
   onEdit,
@@ -607,6 +732,7 @@ function FooterActions({
   onResume,
   onComplete,
   onCancel,
+  onJoin,
 }: FooterActionsProps) {
   const s = (wo.status_code ?? "") as WoStatus;
 
@@ -614,7 +740,16 @@ function FooterActions({
     <>
       {s === "draft" && can(P.OT_EDIT) && (
         <>
-          <Button size="sm" variant="outline" onClick={onEdit} disabled={busy} className="gap-1.5">
+          {/* L1-35: a draft is edited by its creator or its execution actors (the cancel rule). */}
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={onEdit}
+            disabled={busy || cancelBlocker !== null}
+            title={cancelBlocker ?? undefined}
+            aria-describedby={cancelBlocker ? "wo-execution-blocker" : undefined}
+            className="gap-1.5"
+          >
             <Pencil className="h-3.5 w-3.5" />
             {t("action.edit")}
           </Button>
@@ -663,7 +798,14 @@ function FooterActions({
             <RotateCcw className="h-3.5 w-3.5" />
             {t("planning.returnToPlanning")}
           </Button>
-          <Button size="sm" onClick={onStart} disabled={busy} className="gap-1.5">
+          <Button
+            size="sm"
+            onClick={onStart}
+            disabled={busy || executionBlocker !== null}
+            title={executionBlocker ?? undefined}
+            aria-describedby={executionBlocker ? "wo-execution-blocker" : undefined}
+            className="gap-1.5"
+          >
             <Play className="h-3.5 w-3.5" />
             {t("action.start")}
           </Button>
@@ -672,11 +814,26 @@ function FooterActions({
 
       {s === "in_progress" && can(P.OT_EDIT) && (
         <>
-          <Button size="sm" variant="outline" onClick={onHold} disabled={busy} className="gap-1.5">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={onHold}
+            disabled={busy || executionBlocker !== null}
+            title={executionBlocker ?? undefined}
+            aria-describedby={executionBlocker ? "wo-execution-blocker" : undefined}
+            className="gap-1.5"
+          >
             <Pause className="h-3.5 w-3.5" />
             {t("action.hold")}
           </Button>
-          <Button size="sm" onClick={onComplete} disabled={busy} className="gap-1.5">
+          <Button
+            size="sm"
+            onClick={onComplete}
+            disabled={busy || executionBlocker !== null}
+            title={executionBlocker ?? undefined}
+            aria-describedby={executionBlocker ? "wo-execution-blocker" : undefined}
+            className="gap-1.5"
+          >
             <CheckCircle2 className="h-3.5 w-3.5" />
             {t("action.complete")}
           </Button>
@@ -684,9 +841,31 @@ function FooterActions({
       )}
 
       {s === "on_hold" && can(P.OT_EDIT) && (
-        <Button size="sm" onClick={onResume} disabled={busy} className="gap-1.5">
+        <Button
+          size="sm"
+          onClick={onResume}
+          disabled={busy || executionBlocker !== null}
+          title={executionBlocker ?? undefined}
+          aria-describedby={executionBlocker ? "wo-execution-blocker" : undefined}
+          className="gap-1.5"
+        >
           <Play className="h-3.5 w-3.5" />
           {t("footer.resume")}
+        </Button>
+      )}
+
+      {(s === "in_progress" || s === "on_hold") && can(P.OT_EDIT) && executionBlocker !== null && (
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={onJoin}
+          disabled={busy}
+          title={t("join.hint")}
+          className="gap-1.5"
+          data-testid="wo-join"
+        >
+          <UserPlus className="h-3.5 w-3.5" />
+          {t("join.action")}
         </Button>
       )}
 
@@ -695,7 +874,9 @@ function FooterActions({
           size="sm"
           variant="outline"
           onClick={onCancel}
-          disabled={busy}
+          disabled={busy || cancelBlocker !== null}
+          title={cancelBlocker ?? undefined}
+          aria-describedby={cancelBlocker ? "wo-execution-blocker" : undefined}
           className="gap-1.5 text-destructive"
         >
           <XCircle className="h-3.5 w-3.5" />

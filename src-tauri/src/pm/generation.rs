@@ -70,6 +70,8 @@ struct PlanRow {
     version_id: i64,
     strategy: String,
     effective_from: String,
+    /// The plan that covers this one (nested plans, `pm::coverage`).
+    covered_by: Option<i64>,
 }
 
 /// Assets in service matching a plan scope (see module docs), optionally restricted to one asset.
@@ -228,13 +230,18 @@ pub async fn resolve_meter(
 /// Lifetime reading of a meter at `at` (latest accepted reading at or before it; the first
 /// reading when none is older; the current value when the meter has no reading).
 pub async fn lifetime_at(db: &impl ConnectionTrait, meter: &MeterState, at: &str) -> AppResult<f64> {
+    let valid = crate::assets::meters::VALID_READING_SQL;
     for sql in [
-        "SELECT COALESCE(lifetime_value, reading_value) AS v FROM asset_meter_readings
-         WHERE meter_id = ? AND quality_flag != 'corrected' AND reading_at <= ?
-         ORDER BY reading_at DESC LIMIT 1",
-        "SELECT COALESCE(lifetime_value, reading_value) AS v FROM asset_meter_readings
-         WHERE meter_id = ? AND quality_flag != 'corrected' AND ? IS NOT NULL
-         ORDER BY reading_at ASC LIMIT 1",
+        format!(
+            "SELECT COALESCE(mr.lifetime_value, mr.reading_value) AS v FROM asset_meter_readings mr
+             WHERE mr.meter_id = ? AND {valid} AND mr.reading_at <= ?
+             ORDER BY mr.reading_at DESC, mr.entity_sync_id DESC LIMIT 1"
+        ),
+        format!(
+            "SELECT COALESCE(mr.lifetime_value, mr.reading_value) AS v FROM asset_meter_readings mr
+             WHERE mr.meter_id = ? AND {valid} AND ? IS NOT NULL
+             ORDER BY mr.reading_at ASC, mr.entity_sync_id ASC LIMIT 1"
+        ),
     ] {
         if let Some(row) = db
             .query_one(Statement::from_sql_and_values(
@@ -330,22 +337,17 @@ async fn insert_occurrence(
             ],
         ))
         .await;
-    if let Err(db_err) = inserted {
-        let err = AppError::Database(db_err);
-        if is_occurrence_idempotency_conflict(&err) {
-            return Ok(None);
+    let inserted = match inserted {
+        Ok(result) => result,
+        Err(db_err) => {
+            let err = AppError::Database(db_err);
+            if is_occurrence_idempotency_conflict(&err) {
+                return Ok(None);
+            }
+            return Err(err);
         }
-        return Err(err);
-    }
-    let row = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT id FROM pm_occurrences WHERE rowid = last_insert_rowid()",
-            [],
-        ))
-        .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("failed to read inserted PM occurrence")))?;
-    Ok(Some(row.try_get("", "id")?))
+    };
+    Ok(Some(crate::db::inserted_id(&inserted)?))
 }
 
 /// Creates the occurrence unless it exists; records the trigger event either way.
@@ -372,6 +374,17 @@ async fn emit_occurrence(
         due_meter_value,
     )
     .await?;
+    // Nested plans: a covering plan's occurrence on this asset inside this window replaces it.
+    if !exists && plan.covered_by.is_some() {
+        if let (Some(equipment_id), Some(due)) = (target.equipment_id, due_at.as_deref()) {
+            let from = window.start_at.as_deref().unwrap_or(due);
+            let to = window.end_at.as_deref().unwrap_or(due);
+            if crate::pm::coverage::is_covered_in_window(db, plan.plan_id, equipment_id, from, to).await? {
+                counters.skipped += 1;
+                return Ok(());
+            }
+        }
+    }
     let created = if exists {
         None
     } else {
@@ -836,7 +849,7 @@ pub async fn generate(
 
     let mut sql = String::from(
         "SELECT p.id AS pm_plan_id, p.strategy_type, p.asset_scope_type, p.asset_scope_id,
-                pv.id AS version_id, pv.effective_from, pv.trigger_definition_json
+                pv.id AS version_id, pv.effective_from, pv.trigger_definition_json, p.covered_by_plan_id
          FROM pm_plans p
          JOIN pm_plan_versions pv ON pv.id = p.current_version_id
          WHERE p.is_active = 1
@@ -848,9 +861,30 @@ pub async fn generate(
         sql.push_str(" AND p.id = ?");
         binds.push(plan_id.into());
     }
-    let rows = db
+    let mut rows = db
         .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, binds))
         .await?;
+    // Covering plans first: a covered plan checks the occurrences of the plans above it.
+    let covered_by: std::collections::HashMap<i64, i64> = db
+        .query_all(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT id, covered_by_plan_id FROM pm_plans WHERE covered_by_plan_id IS NOT NULL".to_string(),
+        ))
+        .await?
+        .iter()
+        .filter_map(|r| {
+            Some((
+                r.try_get::<i64>("", "id").ok()?,
+                r.try_get::<i64>("", "covered_by_plan_id").ok()?,
+            ))
+        })
+        .collect();
+    if !covered_by.is_empty() {
+        rows.sort_by_key(|r| {
+            r.try_get::<i64>("", "pm_plan_id")
+                .map_or(0, |id| crate::pm::coverage::depth_of(id, &covered_by))
+        });
+    }
 
     let tx = db.begin().await?;
     // Occurrences are derived by every device from the synchronised plans (each device runs the
@@ -865,6 +899,7 @@ pub async fn generate(
             version_id: row.try_get("", "version_id")?,
             strategy: row.try_get("", "strategy_type")?,
             effective_from: row.try_get("", "effective_from")?,
+            covered_by: row.try_get("", "covered_by_plan_id")?,
         };
         let scope_type: String = row.try_get("", "asset_scope_type")?;
         let scope_id: Option<i64> = row.try_get("", "asset_scope_id")?;

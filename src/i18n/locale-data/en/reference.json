@@ -4,20 +4,23 @@
     "problem": {
       "unknownClass": "Class “{{code}}” is not in the published class list.",
       "unknownWorkType": "Work type “{{code}}” is not in the published list.",
+      "unknownCriticality": "Criticality “{{code}}” is not in the published criticality list.",
       "unknownPermitType": "Unknown permit type “{{code}}”."
     },
     "unusableBanner_one": "{{count}} rule cannot be applied ({{codes}}): it is ignored when a request becomes a work order. Fix it.",
     "unusableBanner_other": "{{count}} rules cannot be applied ({{codes}}): they are ignored when a request becomes a work order. Fix them.",
-    "intro": "Each rule names an equipment class and / or a work type, and the permit type it calls for. When a request becomes a matching work order, the work order is flagged “permit required”.",
+    "intro": "Each rule names an equipment class, a work type and / or an equipment criticality, and the permit type it calls for. Every matching work order is flagged “permit required” when it is created; the shipped rule CRITICITE_A requires one for every equipment of criticality A.",
     "colClass": "Equipment class",
     "colWorkType": "Work type",
+    "colCriticality": "Criticality",
     "colPermitType": "Permit type required",
     "anyClass": "Any class",
     "anyWorkType": "Any work type",
+    "anyCriticality": "Any criticality",
     "choosePermitType": "Choose a permit type",
     "incomplete": "Incomplete rule",
-    "incompleteHint": "A rule names a permit type and at least an equipment class or a work type.",
-    "optionsLoadError": "The classes, work types or permit types could not be read"
+    "incompleteHint": "A rule names a permit type and at least an equipment class, a work type or a criticality.",
+    "optionsLoadError": "The classes, work types, criticalities or permit types could not be read"
   },
   "page": {
     "title": "Reference Data",
@@ -55,7 +58,13 @@
       "unknown": "Unknown status"
     },
     "liveTable": "Live table",
-    "domainActions": "Actions for {{domain}}"
+    "domainActions": "Actions for {{domain}}",
+    "legend": {
+      "title": "What do the labels mean?",
+      "operationalDictionary": "Your company's own list: add, edit and deactivate values freely, with no version or publication.",
+      "controlledCatalog": "Versioned list: you edit a draft, then publish it; screens only use the published version.",
+      "systemCatalog": "List provided by Maintafox, read-only: you can only add aliases (labels of your own plant)."
+    }
   },
   "governance": {
     "category": {
@@ -115,9 +124,14 @@
     "alreadyInactive": "Already inactive",
     "cancel": "Cancel",
     "deactivate": "Deactivate",
+    "addedToast": "Value \"{{label}}\" added",
+    "savedToast": "Value \"{{label}}\" saved",
+    "codeProposedHint": "Proposed from the label; you can change it. Capitals, digits and _ only.",
     "save": "Save",
     "edit": "Edit",
-    "aliases": "Aliases",
+    "aliases": "Local labels",
+    "aliasesHint": "Other names for this value in your plant (synonyms, another language): offered in forms and recognised on import.",
+    "codeHint": "Internal code, used for imports and data exchange. Users see the label.",
     "disabledReason": {
       "noPermission": "You do not have permission to change this value.",
       "systemValue": "System values cannot be modified or removed.",
@@ -133,7 +147,15 @@
     "systemValue": "Value provided by the product",
     "activeToggle": "Value \"{{label}}\" active",
     "editValue": "Edit \"{{label}}\"",
-    "deactivateValue": "Deactivate \"{{label}}\""
+    "deactivateValue": "Deactivate \"{{label}}\"",
+    "parentMissing": "Choose the parent to be able to save.",
+    "parentChoose": "— Choose —",
+    "orphanParent": "No parent: never offered in forms",
+    "hierarchy": {
+      "EQUIPMENT_FAMILY": "Class → family → sub-family: each family belongs to a class (Parent column, required). The equipment form asks for the class first, then offers only that class's families: a family without a class would never appear.",
+      "EQUIPMENT_SUBFAMILY": "Class → family → sub-family: each sub-family belongs to a family (Parent column, required). The equipment form only offers the sub-families of the chosen family.",
+      "generic": "Each value of this list depends on a value of \"{{parent}}\" (Parent column, required): without a parent it is never offered in forms."
+    }
   },
   "alias": {
     "title": "Aliases – {{label}}",
@@ -260,6 +282,7 @@
     "next": "Next",
     "back": "Back",
     "apply": "Apply import",
+    "noneImportable": "No valid row to import. Fix the errors in the file or include the rows with warnings.",
     "done": "Done",
     "applied": "Import completed successfully",
     "created": "Created",
@@ -352,7 +375,7 @@
       "articleFamilies": "Stock article families",
       "taxCategories": "Article VAT categories",
       "woStatuses": "Work-order statuses",
-      "urgencyScale": "Urgency scale (requests / work orders)",
+      "urgencyScale": "Urgency / priority of requests and work orders",
       "notificationRules": "Notifications (recipients and escalation)",
       "notificationCategories": "Notification categories",
       "fmecaScales": "FMECA rating scales"
@@ -391,7 +414,7 @@
     "PERSONNEL_EMPLOYMENT_TYPES": "Employment types",
     "PERSONNEL_HABILITATIONS": "Authorisations",
     "PERSONNEL_POSITION_CATEGORIES": "Position categories",
-    "PERSONNEL_SKILLS": "Technical skills",
+    "PERSONNEL_SKILLS": "Trades and technical skills",
     "PLANNING_BREAK_IN_REASONS": "Break-in reasons",
     "PLANNING_WINDOW_TYPES": "Planning window types",
     "PM_DEFERRAL_REASONS": "Preventive maintenance deferral reasons",
@@ -405,14 +428,16 @@
     "WORK_FAILURE_CAUSES": "Failure causes",
     "WORK_FAILURE_EFFECTS": "Failure effects",
     "WORK_FAILURE_MECHANISMS": "Failure mechanisms",
+    "WORK_FAILURE_REMEDIES": "Remedies / corrective actions",
     "WORK_FAILURE_MODES": "Failure modes",
     "WORK_MAINTENANCE_NATURES": "Maintenance natures",
-    "WORK_ORDER_SUBTYPES": "Work order subtypes",
+    "WORK_ORDER_SUBTYPES": "Types of work (work-order sub-types)",
     "WORK_ORDER_TYPES": "Work order types",
     "WORK_PART_UNUSED_REASON": "Unused part reasons",
     "WORK_PRIORITY": "Work order priorities",
     "WORK_SYMPTOMS": "Symptoms",
-    "WORK_URGENCY": "Urgency"
+    "WORK_URGENCY": "Urgency / priority (shared request and work-order scale)",
+    "EQUIPMENT_CHARACTERISTICS": "Technical characteristics per family"
   },
   "combobox": {
     "searchPlaceholder": "Search…",
@@ -562,5 +587,33 @@
     "reasonMin": "Write at least {{min}} characters.",
     "cancel": "Cancel",
     "save": "Save"
+  },
+  "characteristics": {
+    "colType": "Value type",
+    "colUnit": "Unit",
+    "colRequired": "Required",
+    "chooseType": "Choose…",
+    "noUnit": "No unit",
+    "typeMissing": "Type missing",
+    "yes": "Yes",
+    "no": "No",
+    "types": {
+      "number": "Number",
+      "text": "Text",
+      "boolean": "Yes / no"
+    }
+  },
+  "groups": {
+    "requests": "Intervention requests",
+    "workOrders": "Work orders",
+    "preventive": "Preventive maintenance and planning",
+    "equipment": "Equipment",
+    "stock": "Stock and purchasing",
+    "permits": "Work permits",
+    "personnel": "Personnel and organisation",
+    "reliability": "Reliability (FMECA)",
+    "finance": "Finance",
+    "measures": "Measures, documents and notifications",
+    "other": "Other lists"
   }
 }

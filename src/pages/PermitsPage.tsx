@@ -11,10 +11,10 @@
  */
 
 import type { ColumnDef } from "@tanstack/react-table";
-import { CalendarCheck, HardHat, Plus, Settings2, ShieldCheck } from "lucide-react";
+import { AlertTriangle, CalendarCheck, HardHat, Plus, Settings2, ShieldCheck } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 
 import { PermissionGate } from "@/components/PermissionGate";
 import { LinkedEntityBadge } from "@/components/common/LinkedEntityBadge";
@@ -41,8 +41,11 @@ import {
   PERMIT_QUERY_SELECT,
   PERMIT_REFUSAL_NAMESPACES,
   formatAssetLabel,
+  isPermitOverdue,
 } from "@/components/permits/permit-rules";
 import { usePermitTypeName } from "@/components/permits/permit-type-name";
+import { ExportCsvButton } from "@/components/ui/ExportCsvButton";
+import { BackToOriginButton, hasScreenToReturnTo } from "@/components/ui/back-to-origin-button";
 import { Button } from "@/components/ui/button";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import {
@@ -55,6 +58,7 @@ import {
 import { StatusChip } from "@/components/ui/status-chip";
 import { mfLayout } from "@/design-system/tokens";
 import { PERMIT_STATUS_TONE, toneOf } from "@/design-system/tone";
+import { permitExportRows } from "@/export/list-exports";
 import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
 import { i18n } from "@/i18n";
@@ -65,6 +69,7 @@ import {
   type WorkPermitRecord,
   getWorkPermit,
   listOpenPermitsReport,
+  listOverduePermitsReport,
   listPermitTypes,
   listWorkPermits,
   permitComplianceKpi30d,
@@ -97,6 +102,9 @@ export function PermitsPage() {
   const typeName = usePermitTypeName();
   const { formatDateTime, formatNumber, formatPercent } = useFormatters();
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
+  // True when the open permit came from a link on another screen: it then offers "Retour".
+  const [openedFromLink, setOpenedFromLink] = useState(false);
   const { can } = usePermissions();
   // Permit types are plant-wide: the issue right counts at no node only.
   const plantWide = usePermitPlantWideAccess();
@@ -111,6 +119,9 @@ export function PermitsPage() {
   /** Permits the list / the open report leave out: outside the user's sites, or without a site. */
   const [hidden, setHidden] = useState({ outsideScope: 0, withoutSite: 0 });
   const [openHidden, setOpenHidden] = useState(0);
+  /** Open permits past their expiry, isolations possibly still in place (L4-08). */
+  const [overdueCount, setOverdueCount] = useState<number | null>(null);
+  const [overdueHidden, setOverdueHidden] = useState(0);
   const [kpi30d, setKpi30d] = useState<PermitComplianceKpi30dRecord | null>(null);
   const [kpiError, setKpiError] = useState<unknown>(null);
   const [kpiLoading, setKpiLoading] = useState(true);
@@ -166,15 +177,23 @@ export function PermitsPage() {
     setKpiLoading(true);
     setKpiError(null);
     try {
-      const [kpi, open] = await Promise.all([permitComplianceKpi30d(), listOpenPermitsReport()]);
+      const [kpi, open, overdue] = await Promise.all([
+        permitComplianceKpi30d(),
+        listOpenPermitsReport(),
+        listOverduePermitsReport(),
+      ]);
       setKpi30d(kpi);
       setOpenCount(open.items.length);
+      setOverdueCount(overdue.items.length);
+      setOverdueHidden(overdue.hidden_outside_scope + overdue.hidden_without_site);
       setOpenHidden(open.hidden_outside_scope + open.hidden_without_site);
     } catch (e) {
       setKpiError(e);
       setKpi30d(null);
       setOpenCount(null);
+      setOverdueCount(null);
       setOpenHidden(0);
+      setOverdueHidden(0);
     } finally {
       setKpiLoading(false);
     }
@@ -198,7 +217,10 @@ export function PermitsPage() {
     const woParam = searchParams.get(PERMIT_QUERY_CREATE_FOR_WO);
     if (selectParam) {
       const id = Number(selectParam);
-      if (Number.isFinite(id) && id > 0) setSelectedId(id);
+      if (Number.isFinite(id) && id > 0) {
+        setSelectedId(id);
+        setOpenedFromLink(hasScreenToReturnTo());
+      }
     }
     if (!woParam) return;
     let cancelled = false;
@@ -301,6 +323,9 @@ export function PermitsPage() {
               tone={toneOf(PERMIT_STATUS_TONE, row.original.status)}
               dot
             />
+            {isPermitOverdue(row.original) ? (
+              <StatusChip label={t("overdue.chip")} tone="danger" />
+            ) : null}
             <PermitNoSiteBadge permit={row.original} />
           </span>
         ),
@@ -354,6 +379,29 @@ export function PermitsPage() {
       },
     ],
     [t, statusLabel, formatDateTime, typeName],
+  );
+
+  // Export: the permits the list holds now, with the labels the screen shows.
+  const exportHeader = useMemo(
+    () => [
+      t("columns.code"),
+      t("columns.status"),
+      t("columns.type"),
+      t("columns.asset"),
+      t("columns.workOrder"),
+      t("columns.expires"),
+    ],
+    [t],
+  );
+  const getExportRows = useCallback(
+    () =>
+      permitExportRows(permits, {
+        statusLabel,
+        typeLabel: typeName,
+        assetLabel: formatAssetLabel,
+        formatDateTime: (iso) => formatDateTime(iso),
+      }),
+    [permits, statusLabel, typeName, formatDateTime],
   );
 
   const filterDefs = useMemo<SmartFilterDef[]>(
@@ -414,6 +462,13 @@ export function PermitsPage() {
               {t("actions.newPermit")}
             </Button>
           </PermissionGate>
+          <ExportCsvButton
+            permission={P.PTW_VIEW}
+            fileName="permis-de-travail.csv"
+            header={exportHeader}
+            getRows={getExportRows}
+            moreAvailable={hasMore}
+          />
           {/* Permit types live in Données de référence; a permit issuer without access to it
               edits them here, in the same editor. */}
           {can(P.REF_VIEW) ? (
@@ -475,7 +530,7 @@ export function PermitsPage() {
             ) : kpiLoading && kpi30d == null ? (
               <LoadingState />
             ) : (
-              <div className="grid gap-3 sm:grid-cols-3" data-testid="permits-kpis">
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4" data-testid="permits-kpis">
                 <KpiTile
                   label={t("kpi.open")}
                   value={openCount != null ? formatNumber(openCount) : "—"}
@@ -487,14 +542,26 @@ export function PermitsPage() {
                   icon={HardHat}
                 />
                 <KpiTile
+                  label={t("kpi.overdue")}
+                  value={overdueCount != null ? formatNumber(overdueCount) : "—"}
+                  hint={
+                    overdueHidden > 0
+                      ? `${t("kpi.overdueHint")} · ${t("siteScope.overdueHidden", { count: overdueHidden })}`
+                      : t("kpi.overdueHint")
+                  }
+                  icon={AlertTriangle}
+                  {...(overdueCount != null && overdueCount > 0 ? { tone: "danger" as const } : {})}
+                />
+                <KpiTile
                   label={t("kpi.activated")}
                   value={kpi30d ? formatNumber(kpi30d.activated_count) : "—"}
                   hint={t("kpi.period30d")}
                   icon={CalendarCheck}
                 />
+                {/* The server sends a share (0 to 1); `formatPercent` takes a percentage. */}
                 <KpiTile
                   label={t("kpi.onTimeRate")}
-                  value={kpi30d?.rate != null ? formatPercent(kpi30d.rate) : "—"}
+                  value={kpi30d?.rate != null ? formatPercent(kpi30d.rate * 100) : "—"}
                   hint={
                     kpi30d
                       ? t("kpi.onTimeHint", {
@@ -554,12 +621,22 @@ export function PermitsPage() {
         onOpenChange={(open) => {
           if (open) return;
           setSelectedId(null);
+          setOpenedFromLink(false);
           setLinkError(null);
           clearParam(PERMIT_QUERY_SELECT);
         }}
       >
         <DialogContent className="flex max-h-[90vh] w-full max-w-4xl flex-col gap-0 p-0">
           <DialogHeader className="px-6 pt-5 pb-3">
+            {openedFromLink ? (
+              <BackToOriginButton
+                onClick={() => {
+                  setSelectedId(null);
+                  setOpenedFromLink(false);
+                  void navigate(-1);
+                }}
+              />
+            ) : null}
             <DialogTitle>
               {selected ? t("detail.title", { code: selected.code }) : t("page.title")}
             </DialogTitle>

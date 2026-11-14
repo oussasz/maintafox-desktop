@@ -134,6 +134,7 @@ describe("maintenance profile", () => {
       downtime_hours: 6.5,
       last_failure_at: "2026-09-01T00:00:00Z",
       cost_lifetime: { labor: 900, parts: 600, services: 0, total: 1500 },
+      cost_since: "2025-03-10T00:00:00Z",
       cost_recent: { labor: 300, parts: 200, services: 0, total: 500 },
       recent_window_months: 12,
       cost_by_year: [{ year: 2026, total: 500, work_order_count: 2 }],

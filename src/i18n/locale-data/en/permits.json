@@ -20,13 +20,15 @@
       "outsideScope_other": "{{count}} permits are not shown: outside your sites.",
       "withoutSite_one": "{{count}} permit is not shown: it has no site.",
       "withoutSite_other": "{{count}} permits are not shown: they have no site.",
-      "allPermits": "These counts cover all permits, whatever the filters or search.",
+      "allPermits": "Total over all permits, ignoring the filters.",
       "askPlantWide": "Ask a plant-wide user to see them."
     },
     "noSite": {
       "badge": "To review: no site",
       "hint": "Permit recorded without a site. Only users with a plant-wide role see it and can act on it."
     },
+    "overdueHidden_one": "{{count}} more expired permit is outside your sites or has no site: not counted",
+    "overdueHidden_other": "{{count}} more expired permits are outside your sites or have no site: not counted",
     "openHidden_one": "{{count}} more open permit is outside your sites or has no site: not counted",
     "openHidden_other": "{{count}} more open permits are outside your sites or have no site: not counted",
     "noIssueRightAtSite": "You do not hold the permit issue right at the site of this equipment."
@@ -40,8 +42,15 @@
     "openHint": "Not closed, handed back, cancelled or expired",
     "activated": "Permits activated",
     "period30d": "Last 30 days",
-    "onTimeRate": "Handed back on time",
-    "onTimeHint": "{{onTime}} of {{activated}} activated permits, last 30 days"
+    "onTimeRate": "Hand-backs before expiry",
+    "overdue": "Expired permits, isolation in place",
+    "overdueHint": "Open permits past their expiry time: stop the work, remove the locks, close and hand back.",
+    "onTimeHint": "{{onTime}} of the {{activated}} permits activated in the last 30 days were handed back before their expiry time"
+  },
+  "overdue": {
+    "chip": "Expired",
+    "title": "Permit expired — isolation still in place",
+    "body": "The expiry time ({{date}}) has passed: this permit no longer covers the work. Stop it, have every lock removed and verified, then close the permit and hand it back."
   },
   "open": {
     "title": "Open permits (not expired)",
@@ -97,6 +106,10 @@
     "unknownPerson": "Unknown user",
     "approverNotRecorded": "approver not recorded",
     "approverNotRecordedHint": "Approved before the app recorded who approved permits.",
+    "cancelledBy": "Cancelled by",
+    "cancelNotRecorded": "Cancelled (person not recorded)",
+    "cancelReason": "Reason: {{reason}}",
+    "cancelReasonNotRecorded": "Reason not recorded (cancelled before the app asked for one)",
     "selfApproved": "self-approval (site without four-eyes)",
     "selfApprovedHint": "Approved without a second person: this permit's site opted out of four-eyes (Settings › Rules per site).",
     "none": "—",
@@ -104,17 +117,26 @@
     "linkError": "This permit could not be opened"
   },
   "transition": {
-    "submitReview": "Submit for review",
-    "approve": "Approve",
-    "issue": "Issue",
-    "activate": "Activate",
+    "submitReview": "Submit for approval",
+    "approve": "Approve (second person)",
+    "issue": "Issue the permit to the team",
+    "activate": "Authorise work to start",
     "revalidate": "Request revalidation",
     "reinstate": "Reinstate",
     "close": "Close permit",
     "handBack": "Hand back",
     "cancel": "Cancel permit",
     "suspend": "Suspend",
-    "confirmCancel": "Cancel this permit? This cannot be undone."
+    "confirmCancel": "Cancel this permit? This cannot be undone.",
+    "cancelReason": "Reason for cancelling",
+    "keep": "Keep the permit",
+    "next": {
+      "pending_review": "Next step: the writer submits the permit; another person will review it.",
+      "approved": "Next step: a second person, who neither wrote nor submitted the permit, checks and approves it.",
+      "issued": "Next step: the approved permit is issued to the team who will do the work.",
+      "active": "Next step: once the isolations are applied and verified, work is authorised to start.",
+      "approvalChecking": "Checking the four-eyes rule…"
+    }
   },
   "gate": {
     "noIsolation": "This permit type requires at least one energy isolation before activation.",
@@ -136,11 +158,19 @@
     "apply": "Mark applied",
     "verify": "Verify",
     "verifyRemoval": "Verify removal",
-    "appliedBy": "Applied by {{name}}",
-    "verifiedBy": "Verified by {{name}}",
-    "removalVerifiedBy": "Removal verified by {{name}}",
+    "appliedBy": "Applied by {{name}} on {{date}}",
+    "verifiedBy": "Verified by {{name}} on {{date}}",
+    "removalVerifiedBy": "Removal verified by {{name}} on {{date}}",
     "twoPersonHint": "Two-person rule: the person who applied an isolation cannot verify it or its removal.",
     "selfBlocked": "You applied this isolation — another person must verify.",
+    "verifyTitle": "Verify the isolation — zero-energy test",
+    "verifyDescription": "{{point}}: do the zero-energy test before verifying the isolation.",
+    "zeroEnergyConfirm": "Zero-energy test done (start attempt / absence-of-voltage measurement)",
+    "zeroEnergyNote": "Measure or observation",
+    "zeroEnergyNotePlaceholder": "E.g. local start attempt refused, 0 V between phases",
+    "verifyCancel": "Cancel",
+    "zeroEnergyShown": "Zero-energy test: {{note}}",
+    "zeroEnergyNotRecorded": "Zero-energy test: not recorded",
     "state": {
       "pending": "Not applied",
       "applied": "Applied",
@@ -189,10 +219,12 @@
     "point": "Point",
     "lock": "Lock",
     "verifier": "Verifier",
+    "zeroEnergy": "Zero-energy test",
     "expiry": "Expiry",
     "show": "Show card",
     "recordPrint": "Record print",
     "print": "Print LOTO tag",
+    "printSheet": "Print the permit's LOTO sheet",
     "doNotOperate": "DANGER — DO NOT OPERATE. Equipment locked out.",
     "signature": "Worker signature",
     "forcedRemoval": "Forced removal",
@@ -215,8 +247,8 @@
   "handover": {
     "handedTo": "handed to",
     "rolesHint": "Pick the role of the person handing over and of the one receiving, from the plant's hand-over roles.",
-    "onlyWhenClosed": "The hand-over is recorded once the permit is closed.",
-    "title": "Handovers",
+    "onlyWhenClosed": "Once the permit is closed, record here the hand-back of the installation: who hands it back and who takes it over.",
+    "title": "Hand-back of the installation (after closing)",
     "empty": "No handover recorded.",
     "add": "Record handover",
     "from": "Handed from (role)",
@@ -253,7 +285,13 @@
     "expiresAt": "Expires at",
     "expiresHint": "Defaults to the permit type's maximum duration.",
     "submit": "Create permit",
-    "assetSearchError": "Asset search failed: {{message}}"
+    "assetSearchError": "Asset search failed: {{message}}",
+    "workOrderPick": "Work order covered by this permit",
+    "workOrderNone": "None (permit without a work order)",
+    "workOrderHint": "The chosen equipment's work orders that are still open.",
+    "workOrderChooseAsset": "Choose the equipment first.",
+    "workOrderEmpty": "No open work order on this equipment.",
+    "workOrderLoadError": "The equipment's work orders could not be read: {{message}}"
   },
   "edit": {
     "title": "Edit permit",
@@ -268,7 +306,8 @@
       "hot_work": "Hot work",
       "confined_space": "Confined space",
       "cold_work": "Cold work",
-      "electrical_lv": "Electrical LV"
+      "electrical_lv": "Electrical LV",
+      "work_at_height": "Work at height"
     },
     "new": "New type",
     "code": "Code",
@@ -379,5 +418,122 @@
     "hint": "Locks taken off while their worker was absent: the worker must be told (at their next sign-in, or record it here).",
     "item": "{{point}} — {{worker}}, taken off on {{date}}, authorised by {{authoriser}}",
     "loadError": "The forced removals to follow up could not be loaded"
+  },
+  "safety": {
+    "title": "Permit content and safety",
+    "loading": "Loading the permit content…",
+    "loadError": "The permit content could not be read.",
+    "issueBlockersTitle": "Before the issue:",
+    "issueBlocked": "The issue waits for the permit content, its HSE approval or its atmospheric test (see below).",
+    "field": {
+      "work_description": "Work to be done",
+      "risk_assessment": "Risk assessment",
+      "preventive_measures": "Preventive measures",
+      "ppe_required": "Required PPE"
+    },
+    "ppeHint": "Personal protective equipment to wear (helmet, gloves, goggles, harness, breathing apparatus…).",
+    "backToDraftHint": "Changing the content sends the permit back to draft: it will be submitted for review again.",
+    "saveContent": "Save the content",
+    "notFilled": "Not filled in",
+    "hse": {
+      "title": "HSE approval",
+      "recorded": "Recorded",
+      "missing": "Required, not recorded",
+      "byAt": "By {{name}} on {{date}}",
+      "note": "Comment (optional)",
+      "record": "Record the HSE approval",
+      "confirm": "Approve (HSE)",
+      "selfApproved": "Recorded by the author (site without four-eyes)"
+    },
+    "gas": {
+      "title": "Atmospheric tests",
+      "required": "Required before issue",
+      "limits": "Limits (Settings): O2 {{o2Min}} to {{o2Max}} %, LEL < {{lel}} %, H2S < {{h2s}} ppm, CO < {{co}} ppm. The latest reading counts.",
+      "empty": "No test recorded.",
+      "ok": "Within limits",
+      "outOfLimits": "Out of limits",
+      "reading": "O2 {{o2}} % · LEL {{lel}} % · H2S {{h2s}} ppm",
+      "readingCo": "CO {{co}} ppm",
+      "measuredBy": "by {{name}} on {{date}} ({{instrument}})",
+      "o2": "O2 (%)",
+      "lel": "LEL (% of LEL)",
+      "h2s": "H2S (ppm)",
+      "co": "CO (ppm, optional)",
+      "measuredAt": "Measured at",
+      "instrument": "Measuring instrument",
+      "invalidReading": "Enter a positive number.",
+      "now": "Now",
+      "record": "Record the test",
+      "validity": "A test stays valid {{hours}} h: after that, test again before issuing, activating or resuming the work.",
+      "notCounting": "No longer counts (before the permit was raised or last sent back to draft)"
+    },
+    "proposed": {
+      "title": "Isolation points of the equipment",
+      "hint": "Points defined on the equipment: \"Use\" pre-fills the form below, which you can change before adding the isolation.",
+      "use": "Use",
+      "alreadyOnPermit": "Already on the permit",
+      "normalState": "Normal state: {{state}}",
+      "loadError": "The isolation points of the equipment could not be read."
+    }
+  },
+  "workers": {
+    "title": "Workers and personal padlocks",
+    "hint": "Each worker places their own padlock on the group lock box. No isolation lock comes off, and the permit is not closed, while a personal padlock is on.",
+    "loading": "Loading the workers…",
+    "loadError": "The workers of the permit could not be read.",
+    "empty": "No worker on this permit.",
+    "external": "External",
+    "internal": "Internal",
+    "withdrawn": "Withdrawn from the permit",
+    "role": "Role: {{role}}",
+    "company": "Company: {{company}}",
+    "inductionDone": "Safety induction on {{date}} by {{name}}",
+    "inductionMissing": "Safety induction not recorded",
+    "recordInduction": "Record the safety induction",
+    "withdraw": "Withdraw from the permit",
+    "lockOn": "Padlock {{lock}} placed on {{date}}",
+    "noLock": "No padlock placed",
+    "me": "You",
+    "openLocks": "{{count}} personal padlock(s) on the box",
+    "add": {
+      "title": "Add a worker",
+      "kindPersonnel": "Personnel (record)",
+      "kindExternal": "External worker without a record",
+      "search": "Search for a person",
+      "searchButton": "Search",
+      "noResult": "Nobody found.",
+      "person": "Person",
+      "choose": "Choose…",
+      "name": "Worker's name",
+      "company": "External company",
+      "companiesError": "The list of external companies could not be read.",
+      "role": "Role on the permit",
+      "inductionNow": "Safety induction given now by me",
+      "submit": "Add"
+    },
+    "myLock": {
+      "number": "My padlock number",
+      "place": "I place my padlock",
+      "remove": "I removed my padlock"
+    },
+    "force": {
+      "open": "Forced removal (owner absent)",
+      "forced": "Removed by force: {{reason}}",
+      "point": "personal padlock {{lock}}"
+    },
+    "history": "Padlocks removed",
+    "removedAt": "Padlock {{lock}} of {{name}} removed on {{date}} by {{by}}",
+    "told": {
+      "pending": "Padlock {{lock}} of {{name}} removed by force (authorised by {{by}}): the worker must be told before placing a padlock.",
+      "acknowledge": "I was told of the removal of my padlock",
+      "method": "How they were told",
+      "record": "Worker told"
+    }
+  },
+  "myPadlocks": {
+    "title": "My padlocks",
+    "hint": "The permits you work under: place your padlock on the group lock box before working, remove it when you leave.",
+    "empty": "You are not a worker on any permit in progress.",
+    "loadError": "Your permits could not be loaded"
   }
 }

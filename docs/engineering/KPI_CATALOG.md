@@ -1315,22 +1315,26 @@ Module:
 Reliability / RAMS & Analytics
 
 Description:
-Operating exposure (uptime) hours per eligible unplanned failure for a repairable equipment. Core RAMS reliability indicator for the Analytics hub. Non-repairable equipment (`equipment.rams_is_repairable = 0`) report MTTF instead (same ratio, stored in `reliability_kpi_snapshots.mttf`; `mtbf` is NULL).
+Fleet hours per unplanned failure. One live calculation, `reliability/study/fleet_kpis.rs` (`fleet_kpis(db, &FleetScope)`), feeds the RAMS home, the Analytique hub and the Vue d'ensemble cards (L2-10 / L2-11), so the same window and site give the same number everywhere. Every unplanned failure (`failure_events.is_planned = 0`) counts, whatever its coding — no mode or cause "not determined" only lower the data quality (CMMS Advisor ruling 2026-11-05). The decision is made live from the record (`compute::counts_in_mtbf`), never from the stored `eligible_flags_json` flag, which is kept as provenance only. Non-repairable equipment report MTTF on their KPI snapshots (same ratio, `reliability_kpi_snapshots.mttf`).
 
 Formula:
-MTBF_hours = t_exp_hours / eligible_failure_count
-Fleet: pooled ratio over the latest snapshot per equipment in the horizon whose data_quality_score ≥ 0.85 (`DQ_GREEN_THRESHOLD`):
-Fleet_MTBF = Σ exposure_hours / Σ event_count (repairable equipment only). Never an average of per-asset MTBF values. See `reliability/fleet.rs`.
+Fleet_MTBF = Σ T / number of unplanned failures of the scope, over [now − window, now] (RAMS: the chosen months; Analytique: 7 / 30 / 90 days or 12 months, default 12 months; Vue d'ensemble: 12 months).
+- T per equipment = the window clipped to its service period [commissioning_date, decommissioned_at]: operating hours when its meter / runtime log / operating schedule covers ≥ 95 % of that window, calendar hours otherwise. The card states the mix ("heures de marche : N équipements / calendrier : M").
+- Failures are counted only inside their equipment's service period; those outside it, and those without a readable date, are left out and shown ("N exclus : …").
+- Windows under 90 days give counts only: no MTBF / MTTR / A_o ("période trop courte pour le MTBF").
+- Never an average of per-asset MTBF values.
+- 12 months = now minus 12 calendar months on every screen (RAMS home, Analytique, Vue d'ensemble).
+A reliability study is a life analysis by failure mode: its default record selection leaves out failures with no mode (decided live from the record; "cause non déterminée" stays in), the analyst can include them, so a study's MTBF can differ from the fleet MTBF.
+Stored KPI snapshots (`reliability_kpi_snapshots`, `reliability/compute.rs`) count the same failures (every unplanned one) but keep their own exposure basis; they feed only the reports, the trend series (said on screen: "série issue des instantanés") and the sample-size score.
 
 Inputs:
-- `runtime_exposure_logs` / inferred exposure hours
-- `failure_events` eligible for reliability denominators
-- `reliability_kpi_snapshots.mtbf`
+- `failure_events` (unplanned, dated by COALESCE(failed_at, detected_at, created_at))
+- `equipment` (class, org node incl. descendants, commissioning / decommissioning dates)
+- Run-hour data (`study::clock`: meter, runtime log, operating schedule)
 
 Required fields:
-- exposure hours denominator
-- eligible failure count
-- `reliability_kpi_snapshots.mtbf`, `period_start`, `period_end`, `equipment_id`
+- `failure_events.is_planned`, `failed_at` / `detected_at` / `created_at`, `equipment_id`
+- equipment hours basis
 
 Trend sense:
 up-good
@@ -1339,7 +1343,7 @@ Stable band:
 ±0.5 % of the previous value — `stableBelow` in `shared/overview-kpi-registry.ts` (the only place it is written; a change smaller than this reads "stable")
 
 Displayed:
-- Deep RAMS KPI snapshots; Executive Dashboards fleet health strip (horizon average + vs-prior Δ + sparkline from snapshot dates); Top 5 bad-actor ranking by event_count with MTBF / availability / closed-WO cost
+- RAMS home; Analytique hub reliability card (vs the previous window of the same length); Vue d'ensemble (12 months vs the 12 months before). Each card states its window and hours basis.
 
 Status:
 Partial
@@ -1355,19 +1359,17 @@ Module:
 Reliability / RAMS & Analytics
 
 Description:
-Average active repair hours per repair-eligible failure event.
+Mean time to restore (EN 13306), live calculation `study::fleet_kpis` (same scope as KPI-033). For a failure raised from a work order the stored times are the work start and the work-order close, so its MTTR is work start → work-order close; for imported records it is failure → back in service. Labelled that way on every card. Mean repair person-hours (Σ of the interveners' hours worked) is a separate, separately labelled figure on the RAMS home.
 
 Formula:
-MTTR_hours = sum(active_repair_hours) / repair_event_count
-Fleet: Σ active_repair_hours_total / Σ repair_event_count over the latest qualified snapshot per equipment (pooled, not averaged).
+MTTR_hours = mean(restored_at − failed_at) over the unplanned failures of the scope that have both times in the right order; the others are left out and shown ("N exclus : heure de panne manquante / heure de remise en service manquante / remise en service avant la panne"). Not given for windows under 90 days.
+KPI snapshots keep their own MTTR (Σ active repair hours / repairs) for the reports.
 
 Inputs:
-- Repair duration on eligible failure / WO closeout events
-- `reliability_kpi_snapshots.mttr`
+- `failure_events.failed_at`, `restored_at`
 
 Required fields:
-- Active repair hours per event
-- `reliability_kpi_snapshots.mttr`
+- failure and back-in-service times
 
 Trend sense:
 up-bad
@@ -1397,12 +1399,11 @@ Operational availability A_o (PRD §6.10.2, MIL-HDBK-911 aligned): uptime over u
 Inherent availability A_i is reported alongside (not under this id): A_i = t_exp / (t_exp + Σ active_repair_hours) — corrective repair time only, no logistics delay (equivalent to MTBF / (MTBF + MTTR)).
 
 Formula:
-A_o = t_exp_hours / (t_exp_hours + downtime_hours)
-A_i = t_exp_hours / (t_exp_hours + active_repair_hours)
-Fleet: Σ exposure_hours / (Σ exposure_hours + Σ downtime_hours_total) over the latest qualified snapshot per equipment (pooled).
+Fleet (RAMS home, Analytique, Vue d'ensemble; live `study::fleet_kpis`): A_o = MTBF / (MTBF + MTTR) with KPI-033 and KPI-034 above (decision L2-11: A_o uses the restore MTTR). Not given for windows under 90 days.
+KPI snapshots (`reliability/compute.rs`, reports only): A_o = t_exp_hours / (t_exp_hours + downtime_hours); A_i = t_exp_hours / (t_exp_hours + active_repair_hours).
 
 Inputs:
-- Exposure hours and downtime hours used by `reliability/compute.rs` (`algorithm_version = reliability_kpi_v2`)
+- Exposure hours and downtime hours used by `reliability/compute.rs` (`algorithm_version = reliability_kpi_v3`; v3 counts every unplanned failure)
 - `reliability_kpi_snapshots.availability_operational` (also written to `availability` for existing consumers)
 - `reliability_kpi_snapshots.availability_inherent`
 
@@ -1823,22 +1824,24 @@ Partial
 # KPI-044
 
 Nom:
-Fleet Data Quality Score (avg)
+Fleet Data Quality (coding completeness)
 
 Module:
-Reliability / Overview
+Reliability / Overview / Analytique
 
 Description:
-Average reliability snapshot data quality score over recent horizon.
+Share of the unplanned failure records of the scope that are completely coded: a failure mode, a cause or "cause not determined", and a mechanism (the close-out coding is used where the record lacks it). Same predicate and filters on the RAMS home card, the RAMS data-quality page, the Analytique hub and the Vue d'ensemble (`study::fleet_kpis::complete_sql`).
+
+The stored snapshot `data_quality_score` is a sample-size score (1 when the failure count reaches the minimum sample, less below), not data quality: the Analytique hub shows its mean as "Taille d'échantillon" (en "Sample size"), from the snapshots, and never calls it quality.
 
 Formula:
-AVG(reliability_kpi_snapshots.data_quality_score) over horizon
+complete records / records over the window (live `study::fleet_kpis`)
 
 Inputs:
-- Snapshot rows in period
+- `failure_events` and `work_order_failure_details` coding
 
 Required fields:
-- data_quality_score on snapshots
+- failure mode, cause / cause not determined, mechanism
 
 Semantic key:
 `DATA_QUALITY`

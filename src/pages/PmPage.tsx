@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { PermissionGate } from "@/components/PermissionGate";
 import { SmartFilterBar } from "@/components/filters/SmartFilterBar";
@@ -29,6 +29,7 @@ import { PmArchivePanel } from "@/components/pm/PmArchivePanel";
 import { PmAutopilotStrip } from "@/components/pm/PmAutopilotStrip";
 import { PmCalendarView } from "@/components/pm/PmCalendarView";
 import { PmDueQueueView } from "@/components/pm/PmDueQueueView";
+import { PmDuplicatePlanDialog } from "@/components/pm/PmDuplicatePlanDialog";
 import { PmExecutionDialog } from "@/components/pm/PmExecutionDialog";
 import { PmMeterReadingDialog } from "@/components/pm/PmMeterReadingDialog";
 import { PmOccurrenceTransitionDialog } from "@/components/pm/PmOccurrenceTransitionDialog";
@@ -37,6 +38,7 @@ import { PmPlanFormDialog } from "@/components/pm/PmPlanFormDialog";
 import { PmPlansView } from "@/components/pm/PmPlansView";
 import { PmRefreshForecastDialog } from "@/components/pm/PmRefreshForecastDialog";
 import { PmVersionFormDialog } from "@/components/pm/PmVersionFormDialog";
+import { pmUnreportedErrorText } from "@/components/pm/pm-errors";
 import {
   PM_ACTIVE_OCCURRENCE_STATUSES,
   PM_LIFECYCLE_STATUSES,
@@ -50,6 +52,7 @@ import {
   filterPlans,
 } from "@/components/pm/pm-model";
 import { usePmCalendarLoad } from "@/components/pm/use-pm-calendar-load";
+import { hasScreenToReturnTo } from "@/components/ui/back-to-origin-button";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ErrorState } from "@/components/ui/data-state";
@@ -102,6 +105,7 @@ type PendingDelete =
 export function PmPage() {
   const { t } = useTranslation("pm");
   const { formatNumber, formatPercent } = useFormatters();
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
   const plans = usePmStore((s) => s.plans);
@@ -133,6 +137,7 @@ export function PmPage() {
   const openPlan = usePmStore((s) => s.openPlan);
   const closePlan = usePmStore((s) => s.closePlan);
   const createPlan = usePmStore((s) => s.createPlan);
+  const duplicatePlan = usePmStore((s) => s.duplicatePlan);
   const updatePlan = usePmStore((s) => s.updatePlan);
   const transitionPlanLifecycle = usePmStore((s) => s.transitionPlanLifecycle);
   const createVersion = usePmStore((s) => s.createVersion);
@@ -151,7 +156,8 @@ export function PmPage() {
 
   const [view, setView] = useState<PmViewMode>(() => {
     const raw = readStorage("pm-view-mode");
-    return isPmViewMode(raw) ? raw : "due";
+    // L1-27: opens on the plans (what the department maintains), not on every due date.
+    return isPmViewMode(raw) ? raw : "plans";
   });
   const [showFilters, setShowFilters] = useState(() => readStorage("pm-show-filters") !== "0");
   const [searchInput, setSearchInput] = useState("");
@@ -162,6 +168,7 @@ export function PmPage() {
   const [dueWindow, setDueWindow] = useState<PmDueWindow>("all");
 
   const [planFormOpen, setPlanFormOpen] = useState(false);
+  const [duplicateOpen, setDuplicateOpen] = useState(false);
   const [planFormMode, setPlanFormMode] = useState<"create" | "edit">("create");
   const [versionFormOpen, setVersionFormOpen] = useState(false);
   const [versionFormMode, setVersionFormMode] = useState<"create" | "edit">("create");
@@ -196,6 +203,7 @@ export function PmPage() {
   }, [refreshCompliance]);
 
   // Notification deep link: `/pm?occurrence=<id>` opens that occurrence in its plan.
+  const [openedFromLink, setOpenedFromLink] = useState(false);
   useEffect(() => {
     const raw = searchParams.get("occurrence");
     if (!raw) return;
@@ -209,6 +217,7 @@ export function PmPage() {
       { replace: true },
     );
     if (!Number.isFinite(id) || id <= 0) return;
+    setOpenedFromLink(hasScreenToReturnTo());
     getPmOccurrence(id)
       .then((occ) => {
         setFocusOccurrenceId(occ.id);
@@ -224,6 +233,7 @@ export function PmPage() {
     if (!raw) return;
     const id = Number(raw);
     if (!Number.isFinite(id) || id <= 0) return;
+    setOpenedFromLink(hasScreenToReturnTo());
     void openPlan(id);
     setSearchParams(
       (prev) => {
@@ -625,13 +635,25 @@ export function PmPage() {
           if (activePlanId != null) void openPlan(activePlanId);
         }}
         onClose={() => {
+          setOpenedFromLink(false);
           setFocusOccurrenceId(null);
           closePlan();
         }}
+        {...(openedFromLink
+          ? {
+              onBackToOrigin: () => {
+                setOpenedFromLink(false);
+                setFocusOccurrenceId(null);
+                closePlan();
+                void navigate(-1);
+              },
+            }
+          : {})}
         onEditPlan={() => {
           setPlanFormMode("edit");
           setPlanFormOpen(true);
         }}
+        onDuplicatePlan={() => setDuplicateOpen(true)}
         onDeletePlan={() => {
           if (!activePlan) return;
           setPendingDelete({
@@ -723,6 +745,36 @@ export function PmPage() {
         }
         destructive
         onConfirm={confirmDelete}
+      />
+
+      <PmDuplicatePlanDialog
+        open={duplicateOpen && activePlan != null}
+        plan={activePlan}
+        versions={versions}
+        saving={saving}
+        onClose={() => setDuplicateOpen(false)}
+        onDuplicate={async (input) => {
+          const result = await duplicatePlan(input);
+          pushAppToast({
+            title: t(
+              result.meter_to_choose
+                ? "messages.planDuplicatedMeterToChoose"
+                : "messages.planDuplicated",
+              { code: result.plan.code },
+            ),
+            variant: "success",
+          });
+          if (result.refreshError != null) {
+            // The copy exists: the refresh failure is said apart, never as a creation error.
+            const reason = pmUnreportedErrorText(result.refreshError);
+            pushAppToast({
+              title: t("messages.planDuplicatedRefreshFailed", { code: result.plan.code }),
+              ...(reason ? { description: reason } : {}),
+              variant: "destructive",
+            });
+          }
+          return result;
+        }}
       />
 
       <PmPlanFormDialog

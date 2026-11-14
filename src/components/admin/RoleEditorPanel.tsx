@@ -14,6 +14,11 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import {
+  type DependencyLink,
+  hardRequirements,
+  planToggle,
+} from "@/components/admin/role-permission-rules";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ErrorState } from "@/components/ui/data-state";
@@ -41,6 +46,12 @@ import { UnsavedChangesGuard } from "@/components/ui/unsaved-changes-guard";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useStepUp } from "@/hooks/use-step-up";
 import { permissionDomain, usePermissionText } from "@/lib/permission-labels";
+import {
+  formerRoleMatches,
+  isShippedRole,
+  useRoleText,
+  withoutFormerRoles,
+} from "@/lib/role-labels";
 import { cn } from "@/lib/utils";
 import {
   cloneRole,
@@ -101,9 +112,32 @@ function CreateRoleDialog({
   withStepUp: <T>(action: () => Promise<T>) => Promise<T>;
 }) {
   const { t } = useTranslation("admin");
+  const roleText = useRoleText();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [templateId, setTemplateId] = useState("__none__");
+  /** Role models by their shown name; the rights a model gives come from the registry. */
+  const sortedTemplates = useMemo(
+    () =>
+      [...templates].sort((a, b) =>
+        roleText.templateLabel(a.name).localeCompare(roleText.templateLabel(b.name)),
+      ),
+    [templates, roleText],
+  );
+  const chosen = templates.find((tmpl) => String(tmpl.id) === templateId) ?? null;
+  const chosenRights = chosen ? (ROLE_TEMPLATES[chosen.name] ?? templatePermissions(chosen)) : null;
+  const chooseTemplate = (id: string) => {
+    const previous = templates.find((tmpl) => String(tmpl.id) === templateId) ?? null;
+    const next = templates.find((tmpl) => String(tmpl.id) === id) ?? null;
+    setTemplateId(id);
+    // The model's name is a starting point for the role's name, never over a name typed in.
+    if (
+      next &&
+      (name.trim() === "" || (previous && name === roleText.templateLabel(previous.name)))
+    ) {
+      setName(roleText.templateLabel(next.name));
+    }
+  };
   const [submitting, setSubmitting] = useState(false);
   const [templateUnreadable, setTemplateUnreadable] = useState(false);
 
@@ -119,7 +153,7 @@ function CreateRoleDialog({
     if (!name.trim()) return;
     setTemplateUnreadable(false);
     let permissionNames: string[] = [];
-    const template = templates.find((tmpl) => String(tmpl.id) === templateId);
+    const template = chosen;
     if (template) {
       const fromGenerated = ROLE_TEMPLATES[template.name];
       const fromStored = fromGenerated ? [...fromGenerated] : templatePermissions(template);
@@ -156,6 +190,32 @@ function CreateRoleDialog({
           <DialogDescription>{t("roles.create.description")}</DialogDescription>
         </DialogHeader>
         <div className="space-y-4 py-2">
+          {templates.length > 0 ? (
+            <div className="space-y-1.5">
+              <Label htmlFor="new-role-template">{t("roles.create.template")}</Label>
+              <Select value={templateId} onValueChange={chooseTemplate}>
+                <SelectTrigger id="new-role-template">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">{t("roles.create.noTemplate")}</SelectItem>
+                  {sortedTemplates.map((tmpl) => (
+                    <SelectItem key={tmpl.id} value={String(tmpl.id)}>
+                      {roleText.templateLabel(tmpl.name)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {chosen ? (
+                <div className="space-y-1 rounded-md border border-surface-border bg-surface-1 px-3 py-2 text-xs text-text-secondary">
+                  <p>{roleText.templateDescription(chosen.name, chosen.description)}</p>
+                  {chosenRights ? (
+                    <p>{t("roles.create.templateRights", { count: chosenRights.length })}</p>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
           <div className="space-y-1.5">
             <Label htmlFor="new-role-name">{t("roles.fields.name")}</Label>
             <Input
@@ -173,24 +233,6 @@ function CreateRoleDialog({
               onChange={(e) => setDescription(e.target.value)}
             />
           </div>
-          {templates.length > 0 ? (
-            <div className="space-y-1.5">
-              <Label htmlFor="new-role-template">{t("roles.create.template")}</Label>
-              <Select value={templateId} onValueChange={setTemplateId}>
-                <SelectTrigger id="new-role-template">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">{t("roles.create.noTemplate")}</SelectItem>
-                  {templates.map((tmpl) => (
-                    <SelectItem key={tmpl.id} value={String(tmpl.id)}>
-                      {tmpl.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          ) : null}
           {templateUnreadable ? (
             <p
               role="alert"
@@ -220,22 +262,28 @@ function CloneRoleDialog({
   onClose,
   onCloned,
   withStepUp,
+  matches,
 }: {
   source: RoleWithPermissions | null;
   onClose: () => void;
   onCloned: (id: number) => void;
   withStepUp: <T>(action: () => Promise<T>) => Promise<T>;
+  /** How each former role's rights compare with the role it stands for. */
+  matches: ReadonlyMap<string, "same" | "different">;
 }) {
   const { t } = useTranslation("admin");
+  const roleText = useRoleText();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     if (!source) return;
-    setName(t("console.roleEditor.copyName", { name: source.name }));
-    setDescription(source.description ?? "");
-  }, [source, t]);
+    // A copy of a shipped role starts from its shown name and description, never the internal key.
+    const match = matches.get(source.name);
+    setName(t("console.roleEditor.copyName", { name: roleText.label(source.name, match) }));
+    setDescription(roleText.description(source.name, source.description, match) ?? "");
+  }, [source, t, roleText, matches]);
 
   const submit = async () => {
     if (!source || !name.trim()) return;
@@ -262,7 +310,9 @@ function CloneRoleDialog({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>
-            {t("console.roleEditor.cloneTitle", { name: source?.name ?? "" })}
+            {t("console.roleEditor.cloneTitle", {
+              name: source ? roleText.label(source.name, matches.get(source.name)) : "",
+            })}
           </DialogTitle>
           <DialogDescription>
             {t("console.roleEditor.cloneBody", { count: source?.permissions.length ?? 0 })}
@@ -312,6 +362,9 @@ function CompareRolesDialog({
   const { t } = useTranslation("admin");
   const moduleLabel = useModuleLabel();
   const text = usePermissionText();
+  const roleText = useRoleText();
+  const matches = useMemo(() => formerRoleMatches(roles), [roles]);
+  const roleName = (name: string) => roleText.label(name, matches.get(name));
   const shown = useMemo(
     () => new Map((catalog?.permissions ?? []).map((p) => [p.name, p.description] as const)),
     [catalog],
@@ -342,7 +395,7 @@ function CompareRolesDialog({
       <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>
-            {t("console.roleEditor.compareTitle", { name: base?.name ?? "" })}
+            {t("console.roleEditor.compareTitle", { name: base ? roleName(base.name) : "" })}
           </DialogTitle>
           <DialogDescription>{t("console.roleEditor.compareBody")}</DialogDescription>
         </DialogHeader>
@@ -357,7 +410,7 @@ function CompareRolesDialog({
                 .filter((r) => r.id !== base?.id)
                 .map((r) => (
                   <SelectItem key={r.id} value={String(r.id)}>
-                    {r.name}
+                    {roleName(r.name)}
                   </SelectItem>
                 ))}
             </SelectContent>
@@ -369,11 +422,11 @@ function CompareRolesDialog({
               <tr>
                 <th className="py-1.5 pr-2 font-medium">{t("console.roleEditor.module")}</th>
                 <th className="py-1.5 pr-2 font-medium">
-                  {t("console.roleEditor.onlyIn", { name: base.name })}
+                  {t("console.roleEditor.onlyIn", { name: roleName(base.name) })}
                 </th>
                 <th className="py-1.5 pr-2 font-medium">{t("console.roleEditor.common")}</th>
                 <th className="py-1.5 font-medium">
-                  {t("console.roleEditor.onlyIn", { name: other.name })}
+                  {t("console.roleEditor.onlyIn", { name: roleName(other.name) })}
                 </th>
               </tr>
             </thead>
@@ -403,17 +456,32 @@ function CompareRolesDialog({
 
 // ── Permission matrix of one role, grouped by module ────────────────────────
 
+/** A right the registry flags as dangerous or as needing a step-up: never ticked by one click. */
+function isSensitive(p: Pick<PermissionWithSystem, "is_dangerous" | "requires_step_up">) {
+  return p.is_dangerous || p.requires_step_up;
+}
+
 function PermissionMatrix({
   catalog,
   active,
   readOnly,
   onToggle,
   filter,
+  autoAdded,
+  onSensitiveGroup,
 }: {
   catalog: RoleEditorCatalog;
   active: Set<string>;
   readOnly: boolean;
-  onToggle: (permission: string, enabled: boolean) => void;
+  /** View right ticked automatically → the rights that needed it (L5-06). */
+  autoAdded: ReadonlyMap<string, readonly string[]>;
+  /** Ticks or unticks the given permissions (one, or a whole group). */
+  onToggle: (permissions: string[], enabled: boolean) => void;
+  /**
+   * The whole-group switch left these sensitive rights unticked (flagged dangerous or needing a
+   * step-up in the registry): the panel asks before ticking them (SF-2).
+   */
+  onSensitiveGroup: (group: string, permissions: string[]) => void;
   filter: string;
 }) {
   const { t } = useTranslation("admin");
@@ -462,6 +530,8 @@ function PermissionMatrix({
     <div className="space-y-3">
       {groups.map(([module, perms]) => {
         const granted = perms.filter((p) => active.has(p.name)).length;
+        const allGranted = granted === perms.length;
+        const groupLabel = moduleLabel(module);
         return (
           <details
             key={module}
@@ -469,12 +539,44 @@ function PermissionMatrix({
             open={filter.trim() !== "" || granted > 0}
           >
             <summary className="flex cursor-pointer items-center justify-between gap-2 px-3 py-2 text-sm font-medium text-text-primary">
-              <span>{moduleLabel(module)}</span>
+              <span>{groupLabel}</span>
               <span className="text-xs font-normal text-text-secondary">
                 {t("console.roleEditor.grantedOf", { granted, total: perms.length })}
               </span>
             </summary>
             <ul className="divide-y divide-surface-border border-t border-surface-border">
+              {readOnly ? null : (
+                // The whole group at once (only the rights the filter shows); each right still goes
+                // through the same rules as a single tick.
+                <li className="flex items-center justify-between gap-3 bg-surface-1 px-3 py-2">
+                  <span className="text-xs font-medium text-text-secondary">
+                    {t("console.roleEditor.wholeGroup")}
+                  </span>
+                  <Switch
+                    checked={allGranted}
+                    onCheckedChange={(checked) => {
+                      if (!checked) {
+                        onToggle(
+                          perms.map((p) => p.name),
+                          false,
+                        );
+                        return;
+                      }
+                      // One click never ticks a right the registry flags as sensitive: the others
+                      // are ticked, the sensitive ones are listed and asked for.
+                      const sensitive = perms
+                        .filter((p) => isSensitive(p) && !active.has(p.name))
+                        .map((p) => p.name);
+                      onToggle(
+                        perms.filter((p) => !sensitive.includes(p.name)).map((p) => p.name),
+                        true,
+                      );
+                      if (sensitive.length > 0) onSensitiveGroup(groupLabel, sensitive);
+                    }}
+                    aria-label={t("console.roleEditor.wholeGroupToggle", { group: groupLabel })}
+                  />
+                </li>
+              )}
               {perms.map((p) => {
                 const deps = requires.get(p.name) ?? [];
                 const enabled = active.has(p.name);
@@ -508,6 +610,13 @@ function PermissionMatrix({
                       {description && description !== label ? (
                         <p className="text-xs text-text-secondary">{description}</p>
                       ) : null}
+                      {enabled && autoAdded.has(p.name) ? (
+                        <p className="text-[11px] font-medium text-tone-info-fg">
+                          {t("console.roleEditor.autoAdded", {
+                            perms: (autoAdded.get(p.name) ?? []).map(labelOf).join(", "),
+                          })}
+                        </p>
+                      ) : null}
                       {deps.length > 0 ? (
                         <p className="flex flex-wrap items-center gap-1 text-[11px] text-text-secondary">
                           <Link2 className="h-3 w-3" aria-hidden />
@@ -540,7 +649,7 @@ function PermissionMatrix({
                     ) : (
                       <Switch
                         checked={enabled}
-                        onCheckedChange={(checked) => onToggle(p.name, checked)}
+                        onCheckedChange={(checked) => onToggle([p.name], checked)}
                         aria-label={t("roles.togglePermission", { perm: label })}
                       />
                     )}
@@ -639,13 +748,26 @@ export function RoleEditorPanel() {
     selected != null && description.trim() !== (selected.description ?? "");
   const dirty = permsChanged || descriptionChanged;
 
-  /** Role the user clicked while the open one has unsaved changes (asks before dropping them). */
-  const [pendingSwitchId, setPendingSwitchId] = useState<number | null>(null);
-  const requestSelect = (id: number) => {
-    if (id === selectedId) return;
-    if (dirty) setPendingSwitchId(id);
-    else setSelectedId(id);
+  /**
+   * What the user asked for while the open role has unsaved changes: another role, a new role or
+   * a copy (each opens another role, which drops the ticks). Asked before anything is dropped.
+   */
+  type PendingLeave =
+    | { kind: "select"; id: number }
+    | { kind: "create" }
+    | { kind: "clone"; source: RoleWithPermissions };
+  const [pendingLeave, setPendingLeave] = useState<PendingLeave | null>(null);
+  const runLeave = (action: PendingLeave) => {
+    if (action.kind === "select") setSelectedId(action.id);
+    else if (action.kind === "create") setShowCreate(true);
+    else setCloneSource(action.source);
   };
+  const requestLeave = (action: PendingLeave) => {
+    if (action.kind === "select" && action.id === selectedId) return;
+    if (dirty) setPendingLeave(action);
+    else runLeave(action);
+  };
+  const requestSelect = (id: number) => requestLeave({ kind: "select", id });
 
   useEffect(() => {
     if (!selected || selected.is_system || !permsChanged) {
@@ -671,22 +793,60 @@ export function RoleEditorPanel() {
     };
   }, [active, selected, permsChanged, validationRun]);
 
-  const toggle = (perm: string, enabled: boolean) => {
+  const hardRequires = useMemo(() => hardRequirements(catalog?.dependencies ?? []), [catalog]);
+  const offered = useMemo(
+    () => new Set((catalog?.permissions ?? []).map((p) => p.name)),
+    [catalog],
+  );
+  /** View rights ticked as a prerequisite → the rights that needed them (L5-06). */
+  const [autoAdded, setAutoAdded] = useState<Map<string, string[]>>(new Map());
+  /** What the last tick left for the user to decide: never ticked or unticked for them. */
+  const [ruleNotice, setRuleNotice] = useState<{
+    notAdded: DependencyLink[];
+    dependents: DependencyLink[];
+  } | null>(null);
+
+  useEffect(() => {
+    // Nothing pending (another role, discarded or saved): the notes have nothing left to explain.
+    if (permsChanged) return;
+    setAutoAdded(new Map());
+    setRuleNotice(null);
+  }, [permsChanged, selected]);
+
+  /** Sensitive rights of a group the whole-group switch left for the user to confirm (SF-2). */
+  const [sensitiveAsk, setSensitiveAsk] = useState<{
+    group: string;
+    permissions: string[];
+  } | null>(null);
+
+  const toggle = (perms: string[], enabled: boolean) => {
+    const plan = planToggle(perms, enabled, active, hardRequires, offered);
     const original = new Set(selected?.permissions ?? []);
-    const edit = (set: Set<string>, add: boolean) => {
-      const n = new Set(set);
-      if (add) n.add(perm);
-      else n.delete(perm);
-      return n;
-    };
-    if (enabled) {
-      if (original.has(perm)) setPendingRemove((s) => edit(s, false));
-      else setPendingAdd((s) => edit(s, true));
-    } else if (original.has(perm)) {
-      setPendingRemove((s) => edit(s, true));
-    } else {
-      setPendingAdd((s) => edit(s, false));
+    const add = new Set(pendingAdd);
+    const remove = new Set(pendingRemove);
+    for (const perm of plan.tick) {
+      if (original.has(perm)) remove.delete(perm);
+      else add.add(perm);
     }
+    for (const perm of plan.untick) {
+      if (original.has(perm)) remove.add(perm);
+      else add.delete(perm);
+    }
+    setPendingAdd(add);
+    setPendingRemove(remove);
+    setAutoAdded((prev) => {
+      const next = new Map(prev);
+      for (const perm of plan.untick) next.delete(perm);
+      for (const [perm, neededBy] of plan.autoAdded) {
+        next.set(perm, [...new Set([...(next.get(perm) ?? []), ...neededBy])]);
+      }
+      return next;
+    });
+    setRuleNotice(
+      plan.notAdded.length > 0 || plan.dependents.length > 0
+        ? { notAdded: plan.notAdded, dependents: plan.dependents }
+        : null,
+    );
   };
 
   const save = async () => {
@@ -722,6 +882,51 @@ export function RoleEditorPanel() {
     ? selected.permissions.filter((p) => !catalogDescriptions.has(p)).length
     : 0;
   const holderCount = selected ? (holders.get(selected.id) ?? 0) : 0;
+  const roleText = useRoleText();
+  /** How each former shipped role's rights compare with the role it stands for (L5-03). */
+  const matches = useMemo(() => formerRoleMatches(roles), [roles]);
+  const roleName = (name: string) => roleText.label(name, matches.get(name));
+  /** Former shipped roles are listed apart, in "Anciens rôles", to open and check them. */
+  const listedRoles = useMemo(() => withoutFormerRoles(roles), [roles]);
+  const formerRoles = useMemo(
+    () => roles.filter((r) => !listedRoles.includes(r)),
+    [roles, listedRoles],
+  );
+  const selectedIsFormer = selected != null && formerRoles.includes(selected);
+  const selectedLabel = selected ? roleName(selected.name) : "";
+  /** A shipped role is described by the application (translated), not by its stored text. */
+  const shipped = selected ? isShippedRole(selected.name) : false;
+
+  const renderRole = (role: RoleWithPermissions) => (
+    <li key={role.id}>
+      <button
+        type="button"
+        onClick={() => requestSelect(role.id)}
+        aria-current={selectedId === role.id ? "true" : undefined}
+        className={cn(
+          "flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors",
+          selectedId === role.id
+            ? "bg-primary/10 text-primary"
+            : "text-text-primary hover:bg-surface-2",
+        )}
+      >
+        {role.is_system ? (
+          <Lock className="h-3.5 w-3.5 shrink-0 text-text-secondary" aria-hidden />
+        ) : null}
+        <span className="min-w-0 flex-1 truncate" title={roleName(role.name)}>
+          {roleName(role.name)}
+        </span>
+        <span
+          className="flex items-center gap-0.5 text-[11px] text-text-secondary"
+          title={t("console.roleEditor.holders")}
+        >
+          <Users className="h-3 w-3" aria-hidden />
+          {holders.get(role.id) ?? 0}
+        </span>
+        <span className="text-[11px] text-text-secondary">· {role.permissions.length}</span>
+      </button>
+    </li>
+  );
 
   return (
     <div className="flex flex-col gap-4 lg:flex-row">
@@ -729,7 +934,7 @@ export function RoleEditorPanel() {
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-semibold text-text-primary">{t("roles.list")}</h3>
           {canEdit ? (
-            <Button variant="outline" size="sm" onClick={() => setShowCreate(true)}>
+            <Button variant="outline" size="sm" onClick={() => requestLeave({ kind: "create" })}>
               <Plus className="mr-1 h-3.5 w-3.5" aria-hidden />
               {t("console.roleEditor.new")}
             </Button>
@@ -744,36 +949,21 @@ export function RoleEditorPanel() {
             retrying={loading}
           />
         ) : null}
-        <ul className="space-y-1">
-          {roles.map((role) => (
-            <li key={role.id}>
-              <button
-                type="button"
-                onClick={() => requestSelect(role.id)}
-                aria-current={selectedId === role.id ? "true" : undefined}
-                className={cn(
-                  "flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors",
-                  selectedId === role.id
-                    ? "bg-primary/10 text-primary"
-                    : "text-text-primary hover:bg-surface-2",
-                )}
-              >
-                {role.is_system ? (
-                  <Lock className="h-3.5 w-3.5 shrink-0 text-text-secondary" aria-hidden />
-                ) : null}
-                <span className="min-w-0 flex-1 truncate">{role.name}</span>
-                <span
-                  className="flex items-center gap-0.5 text-[11px] text-text-secondary"
-                  title={t("console.roleEditor.holders")}
-                >
-                  <Users className="h-3 w-3" aria-hidden />
-                  {holders.get(role.id) ?? 0}
-                </span>
-                <span className="text-[11px] text-text-secondary">· {role.permissions.length}</span>
-              </button>
-            </li>
-          ))}
-        </ul>
+        <ul className="space-y-1">{listedRoles.map(renderRole)}</ul>
+        {formerRoles.length > 0 ? (
+          <details
+            className="rounded-md border border-surface-border"
+            open={selectedIsFormer || undefined}
+          >
+            <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-text-secondary">
+              {t("console.roleEditor.formerRoles", { count: formerRoles.length })}
+            </summary>
+            <p className="px-3 pb-2 text-[11px] text-text-secondary">
+              {t("console.roleEditor.formerRolesHint")}
+            </p>
+            <ul className="space-y-1 px-1 pb-1">{formerRoles.map(renderRole)}</ul>
+          </details>
+        ) : null}
       </aside>
 
       <section className="min-w-0 flex-1 rounded-lg border border-surface-border bg-surface-0 p-4">
@@ -783,7 +973,7 @@ export function RoleEditorPanel() {
           <div className="space-y-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0 space-y-1">
-                <h3 className="text-lg font-semibold text-text-primary">{selected.name}</h3>
+                <h3 className="text-lg font-semibold text-text-primary">{selectedLabel}</h3>
                 <div className="flex flex-wrap items-center gap-2">
                   <StatusChip
                     label={selected.is_system ? t("roles.system") : t("roles.custom")}
@@ -801,7 +991,11 @@ export function RoleEditorPanel() {
                   {t("console.roleEditor.compare")}
                 </Button>
                 {canEdit ? (
-                  <Button variant="outline" size="sm" onClick={() => setCloneSource(selected)}>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => requestLeave({ kind: "clone", source: selected })}
+                  >
                     <Copy className="mr-1.5 h-3.5 w-3.5" aria-hidden />
                     {t("console.roleEditor.clone")}
                   </Button>
@@ -821,16 +1015,26 @@ export function RoleEditorPanel() {
               </div>
             </div>
 
-            <div className="space-y-1.5">
-              <Label htmlFor="role-description">{t("roles.fields.description")}</Label>
-              <Textarea
-                id="role-description"
-                rows={2}
-                value={description}
-                disabled={!canEdit}
-                onChange={(e) => setDescription(e.target.value)}
-              />
-            </div>
+            {shipped ? (
+              <p className="text-sm text-text-secondary">
+                {roleText.description(
+                  selected.name,
+                  selected.description,
+                  matches.get(selected.name),
+                )}
+              </p>
+            ) : (
+              <div className="space-y-1.5">
+                <Label htmlFor="role-description">{t("roles.fields.description")}</Label>
+                <Textarea
+                  id="role-description"
+                  rows={2}
+                  value={description}
+                  disabled={!canEdit}
+                  onChange={(e) => setDescription(e.target.value)}
+                />
+              </div>
+            )}
 
             {selected.is_system ? (
               <p className="rounded-md border border-surface-border bg-surface-1 p-3 text-xs text-text-secondary">
@@ -845,6 +1049,60 @@ export function RoleEditorPanel() {
                 onRetry={() => setValidationRun((n) => n + 1)}
                 className="py-4"
               />
+            ) : null}
+
+            {ruleNotice ? (
+              <div
+                className="rounded-md border border-tone-attention-border bg-tone-attention-bg p-3 text-sm text-tone-attention-fg"
+                role="status"
+              >
+                {ruleNotice.notAdded.length > 0 ? (
+                  <>
+                    <p className="flex items-center gap-1.5 font-medium">
+                      <AlertTriangle className="h-4 w-4" aria-hidden />
+                      {t("console.roleEditor.notAddedTitle")}
+                    </p>
+                    <ul className="mt-1 list-inside list-disc text-xs">
+                      {ruleNotice.notAdded.map((l) => (
+                        <li key={`${l.perm}-${l.required}`}>
+                          {t("console.roleEditor.needs", {
+                            perm: text.label(l.perm, catalogDescriptions.get(l.perm)),
+                            required: text.label(l.required, catalogDescriptions.get(l.required)),
+                          })}
+                        </li>
+                      ))}
+                    </ul>
+                    <p className="mt-1 text-xs">{t("console.roleEditor.notAddedHint")}</p>
+                  </>
+                ) : null}
+                {ruleNotice.dependents.length > 0 ? (
+                  <>
+                    <p className="flex items-center gap-1.5 font-medium">
+                      <AlertTriangle className="h-4 w-4" aria-hidden />
+                      {t("console.roleEditor.dependentsTitle")}
+                    </p>
+                    <ul className="mt-1 list-inside list-disc text-xs">
+                      {ruleNotice.dependents.map((l) => (
+                        <li key={`${l.perm}-${l.required}`}>
+                          {t("console.roleEditor.needs", {
+                            perm: text.label(l.perm, catalogDescriptions.get(l.perm)),
+                            required: text.label(l.required, catalogDescriptions.get(l.required)),
+                          })}
+                        </li>
+                      ))}
+                    </ul>
+                    <p className="mt-1 text-xs">{t("console.roleEditor.dependentsHint")}</p>
+                  </>
+                ) : null}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="mt-1 h-7 px-2 text-xs"
+                  onClick={() => setRuleNotice(null)}
+                >
+                  {t("console.roleEditor.noticeDismiss")}
+                </Button>
+              </div>
             ) : null}
 
             {hardMissing.length > 0 ? (
@@ -889,7 +1147,37 @@ export function RoleEditorPanel() {
                   className="pl-8"
                 />
               </div>
-              {canEdit && dirty ? (
+            </div>
+
+            {hiddenHeld > 0 ? (
+              <p className="text-xs text-text-secondary">
+                {t("console.roleEditor.hiddenRetained", { count: hiddenHeld })}
+              </p>
+            ) : null}
+
+            <PermissionMatrix
+              catalog={catalog}
+              active={active}
+              readOnly={selected.is_system || !canEdit}
+              onToggle={toggle}
+              filter={permissionFilter}
+              autoAdded={autoAdded}
+              onSensitiveGroup={(group, permissions) => setSensitiveAsk({ group, permissions })}
+            />
+
+            {canEdit && dirty ? (
+              // Stays in view at the bottom while the long list of groups scrolls.
+              <div
+                role="region"
+                aria-label={t("console.roleEditor.saveBar")}
+                className="sticky bottom-0 z-10 -mx-4 -mb-4 flex flex-wrap items-center justify-between gap-2 rounded-b-lg border-t border-surface-border bg-surface-0 px-4 py-3 shadow-[0_-4px_12px_rgba(0,0,0,0.06)]"
+              >
+                <span className="text-sm text-text-secondary">
+                  {t("console.roleEditor.unsavedSummary", {
+                    added: pendingAdd.size,
+                    removed: pendingRemove.size,
+                  })}
+                </span>
                 <div className="flex gap-2">
                   <Button
                     variant="ghost"
@@ -913,22 +1201,8 @@ export function RoleEditorPanel() {
                     })}
                   </Button>
                 </div>
-              ) : null}
-            </div>
-
-            {hiddenHeld > 0 ? (
-              <p className="text-xs text-text-secondary">
-                {t("console.roleEditor.hiddenRetained", { count: hiddenHeld })}
-              </p>
+              </div>
             ) : null}
-
-            <PermissionMatrix
-              catalog={catalog}
-              active={active}
-              readOnly={selected.is_system || !canEdit}
-              onToggle={toggle}
-              filter={permissionFilter}
-            />
           </div>
         ) : null}
       </section>
@@ -949,6 +1223,7 @@ export function RoleEditorPanel() {
           void load().then(() => setSelectedId(id));
         }}
         withStepUp={withStepUp}
+        matches={matches}
       />
       <CompareRolesDialog
         base={compareBase}
@@ -959,7 +1234,9 @@ export function RoleEditorPanel() {
       <ConfirmDialog
         open={retireTarget !== null}
         onOpenChange={(v) => !v && setRetireTarget(null)}
-        title={t("console.roleEditor.retireTitle", { name: retireTarget?.name ?? "" })}
+        title={t("console.roleEditor.retireTitle", {
+          name: retireTarget ? roleName(retireTarget.name) : "",
+        })}
         description={t("console.roleEditor.retireBody")}
         confirmLabel={t("console.roleEditor.retire")}
         destructive
@@ -975,19 +1252,52 @@ export function RoleEditorPanel() {
       <UnsavedChangesGuard
         when={dirty}
         title={t("console.roleEditor.unsavedTitle")}
-        description={t("console.roleEditor.unsavedLeaveBody", { name: selected?.name ?? "" })}
+        description={t("console.roleEditor.unsavedLeaveBody", { name: selectedLabel })}
         confirmLabel={t("console.roleEditor.discardChanges")}
       />
       <ConfirmDialog
-        open={pendingSwitchId !== null}
-        onOpenChange={(v) => !v && setPendingSwitchId(null)}
+        open={sensitiveAsk !== null}
+        onOpenChange={(v) => !v && setSensitiveAsk(null)}
+        title={t("console.roleEditor.sensitiveGroupTitle", { group: sensitiveAsk?.group ?? "" })}
+        description={t("console.roleEditor.sensitiveGroupBody", {
+          count: sensitiveAsk?.permissions.length ?? 0,
+        })}
+        confirmLabel={t("console.roleEditor.sensitiveGroupConfirm")}
+        dismissLabel={t("console.roleEditor.sensitiveGroupKeepOut")}
+        onConfirm={() => {
+          if (sensitiveAsk) toggle(sensitiveAsk.permissions, true);
+          setSensitiveAsk(null);
+        }}
+      >
+        <ul className="list-inside list-disc text-sm text-text-primary">
+          {(sensitiveAsk?.permissions ?? []).map((perm) => (
+            <li key={perm} title={perm}>
+              {text.label(perm, catalogDescriptions.get(perm))}
+            </li>
+          ))}
+        </ul>
+      </ConfirmDialog>
+      <ConfirmDialog
+        open={pendingLeave !== null}
+        onOpenChange={(v) => !v && setPendingLeave(null)}
         title={t("console.roleEditor.unsavedTitle")}
-        description={t("console.roleEditor.unsavedBody", { name: selected?.name ?? "" })}
+        description={t(
+          pendingLeave?.kind === "select"
+            ? "console.roleEditor.unsavedBody"
+            : "console.roleEditor.unsavedNewBody",
+          { name: selectedLabel },
+        )}
         confirmLabel={t("console.roleEditor.discardChanges")}
         destructive
         onConfirm={() => {
-          if (pendingSwitchId !== null) setSelectedId(pendingSwitchId);
-          setPendingSwitchId(null);
+          if (pendingLeave) {
+            // Drop the changes first, so the guard does not ask a second time.
+            setPendingAdd(new Set());
+            setPendingRemove(new Set());
+            setDescription(selected?.description ?? "");
+            runLeave(pendingLeave);
+          }
+          setPendingLeave(null);
         }}
       />
       {StepUpDialogElement}

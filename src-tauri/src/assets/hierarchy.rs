@@ -18,8 +18,9 @@
 
 use crate::assets::identity;
 use crate::errors::{AppError, AppResult};
-use chrono::Utc;
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
+use sea_orm::{
+    ConnectionTrait, DatabaseConnection, DatabaseTransaction, DbBackend, QueryResult, Statement, TransactionTrait,
+};
 use serde::{Deserialize, Serialize};
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -82,7 +83,7 @@ fn map_hierarchy_row(row: &QueryResult) -> AppResult<AssetHierarchyRow> {
 
 /// Assert that an equipment row exists, is not deleted, and is not
 /// DECOMMISSIONED or SCRAPPED.
-async fn assert_asset_active(db: &impl ConnectionTrait, asset_id: i64) -> AppResult<()> {
+pub(crate) async fn assert_asset_active(db: &impl ConnectionTrait, asset_id: i64) -> AppResult<()> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -161,7 +162,7 @@ async fn assert_single_parent(db: &impl ConnectionTrait, child_id: i64, relation
 /// Detect hierarchy cycles via BFS. Starting from `parent_id`, walk up through
 /// active relations. If `child_id` is encountered as an ancestor, creating the
 /// proposed link would form a cycle.
-async fn detect_cycle(db: &impl ConnectionTrait, parent_id: i64, child_id: i64) -> AppResult<()> {
+pub(crate) async fn detect_cycle(db: &impl ConnectionTrait, parent_id: i64, child_id: i64) -> AppResult<()> {
     if parent_id == child_id {
         return Err(AppError::ValidationFailed(vec![
             "GATE_ASSET_HIER_SELF_PARENT: Un équipement ne peut pas être son propre parent.".into(),
@@ -265,9 +266,47 @@ pub async fn link_asset_hierarchy(
     assert_single_parent(&txn, payload.child_asset_id, &payload.relation_type).await?;
 
     // ── Insert hierarchy relation ────────────────────────────────────────
-    let now = Utc::now().to_rfc3339();
-    let effective_from = payload.effective_from.unwrap_or_else(|| now.clone());
+    let effective_from = payload
+        .effective_from
+        .unwrap_or_else(|| crate::clock::now().to_rfc3339());
+    let result = insert_relation_in(
+        &txn,
+        payload.parent_asset_id,
+        payload.child_asset_id,
+        &payload.relation_type,
+        &effective_from,
+    )
+    .await?;
 
+    txn.commit().await?;
+
+    tracing::info!(relation_id = result.relation_id, "asset hierarchy link created");
+    Ok(result)
+}
+
+/// Reads one hierarchy relation in the caller's transaction.
+async fn fetch_relation_in(txn: &impl ConnectionTrait, relation_id: i64) -> AppResult<AssetHierarchyRow> {
+    let row = txn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id, parent_equipment_id, child_equipment_id, relationship_type, effective_from, effective_to FROM equipment_hierarchy WHERE id = ?",
+            [relation_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("hierarchy relation {relation_id} not found")))?;
+    map_hierarchy_row(&row)
+}
+
+/// The write of a link, in the caller's transaction (checks are the caller's): a new active
+/// relation from `effective_from`.
+async fn insert_relation_in(
+    txn: &impl ConnectionTrait,
+    parent_asset_id: i64,
+    child_asset_id: i64,
+    relation_type: &str,
+    effective_from: &str,
+) -> AppResult<AssetHierarchyRow> {
+    let now = crate::clock::now().to_rfc3339();
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO equipment_hierarchy \
@@ -275,9 +314,9 @@ pub async fn link_asset_hierarchy(
           effective_from, created_at) \
          VALUES (?, ?, ?, ?, ?)",
         [
-            payload.parent_asset_id.into(),
-            payload.child_asset_id.into(),
-            payload.relation_type.into(),
+            parent_asset_id.into(),
+            child_asset_id.into(),
+            relation_type.into(),
             effective_from.into(),
             now.into(),
         ],
@@ -293,36 +332,16 @@ pub async fn link_asset_hierarchy(
         .await?
         .expect("last_insert_rowid always returns");
     let relation_id: i64 = id_row.try_get("", "id").map_err(|e| decode_err("id", e))?;
-
-    let row = txn
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT id, parent_equipment_id, child_equipment_id, \
-             relationship_type, effective_from, effective_to \
-             FROM equipment_hierarchy WHERE id = ?",
-            [relation_id.into()],
-        ))
-        .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("hierarchy link created but not found after insert")))?;
-    let result = map_hierarchy_row(&row)?;
-
-    txn.commit().await?;
-
-    tracing::info!(relation_id = result.relation_id, "asset hierarchy link created");
-    Ok(result)
+    fetch_relation_in(txn, relation_id).await
 }
 
-/// Unlink an asset hierarchy relation by setting `effective_to`.
-///
-/// The row remains in the table for historical evidence — no hard delete.
-pub async fn unlink_asset_hierarchy(
-    db: &DatabaseConnection,
+/// The write of an unlink, in the caller's transaction: the relation is ended at `effective_to`,
+/// never deleted. A relation already ended is refused.
+async fn end_relation_in(
+    txn: &impl ConnectionTrait,
     relation_id: i64,
-    effective_to: Option<String>,
-    _actor_id: i32,
+    effective_to: &str,
 ) -> AppResult<AssetHierarchyRow> {
-    let txn = db.begin().await?;
-
     // ── Verify relation exists and is currently active ────────────────────
     let existing = txn
         .query_one(Statement::from_sql_and_values(
@@ -347,37 +366,326 @@ pub async fn unlink_asset_hierarchy(
         )]));
     }
 
-    // ── Set effective_to ─────────────────────────────────────────────────
-    let end_date = effective_to.unwrap_or_else(|| Utc::now().to_rfc3339());
-
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE equipment_hierarchy SET effective_to = ? WHERE id = ?",
-        [end_date.into(), relation_id.into()],
+        [effective_to.into(), relation_id.into()],
     ))
     .await?;
+    fetch_relation_in(txn, relation_id).await
+}
 
-    // ── Fetch updated row ────────────────────────────────────────────────
-    let row = txn
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT id, parent_equipment_id, child_equipment_id, \
-             relationship_type, effective_from, effective_to \
-             FROM equipment_hierarchy WHERE id = ?",
-            [relation_id.into()],
-        ))
-        .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!(
-                "hierarchy relation {relation_id} not found after update"
-            ))
-        })?;
-    let result = map_hierarchy_row(&row)?;
-
+/// Unlink an asset hierarchy relation by setting `effective_to`.
+///
+/// The row remains in the table for historical evidence — no hard delete.
+pub async fn unlink_asset_hierarchy(
+    db: &DatabaseConnection,
+    relation_id: i64,
+    effective_to: Option<String>,
+    _actor_id: i32,
+) -> AppResult<AssetHierarchyRow> {
+    let txn = db.begin().await?;
+    let end_date = effective_to.unwrap_or_else(|| crate::clock::now().to_rfc3339());
+    let result = end_relation_in(&txn, relation_id, &end_date).await?;
     txn.commit().await?;
 
     tracing::info!(relation_id, "asset hierarchy link ended");
     Ok(result)
+}
+
+// ─── Component move (L2-03) ───────────────────────────────────────────────────
+
+/// Payload of "Déplacer le composant": the same asset record (and serial number) goes under
+/// another parent asset, from a date.
+#[derive(Debug, Clone, Deserialize)]
+pub struct MoveAssetComponentPayload {
+    pub asset_id: i64,
+    /// The new parent; `None` removes the component to stock (no parent).
+    pub new_parent_asset_id: Option<i64>,
+    /// Effective date `YYYY-MM-DD`; `None` is today.
+    pub effective_date: Option<String>,
+    /// Free-text note of the move (no reference list of move reasons exists).
+    pub notes: Option<String>,
+    /// The component's row version the person saw.
+    pub expected_row_version: i64,
+}
+
+/// What a component move changed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MoveAssetComponentResult {
+    /// The parent relation ended at the effective date (none for a first installation).
+    pub ended_relation: Option<AssetHierarchyRow>,
+    /// The relation created from the effective date (none for a removal to stock).
+    pub new_relation: Option<AssetHierarchyRow>,
+    /// The `PARENT_CHANGED` lifecycle event recorded on the component.
+    pub event: crate::assets::lifecycle::AssetLifecycleEvent,
+}
+
+/// Relation type of a component link when the component has no parent yet: the one the
+/// "Ajouter un composant" flow creates.
+const COMPONENT_RELATION_TYPE: &str = "PARENT_CHILD";
+
+/// Asset state read for a move: version, status and site (installation node).
+struct MoveAssetState {
+    row_version: i64,
+    status: String,
+    node_id: Option<i64>,
+}
+
+async fn move_asset_state(txn: &impl ConnectionTrait, asset_id: i64) -> AppResult<MoveAssetState> {
+    let row = txn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT row_version, lifecycle_status, installed_at_node_id FROM equipment WHERE id = ? AND deleted_at IS NULL",
+            [asset_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "equipment".into(),
+            id: asset_id.to_string(),
+        })?;
+    Ok(MoveAssetState {
+        row_version: row
+            .try_get("", "row_version")
+            .map_err(|e| decode_err("row_version", e))?,
+        status: row
+            .try_get("", "lifecycle_status")
+            .map_err(|e| decode_err("lifecycle_status", e))?,
+        node_id: row
+            .try_get("", "installed_at_node_id")
+            .map_err(|e| decode_err("installed_at_node_id", e))?,
+    })
+}
+
+/// Refuses a retired asset (tag `retired` of the status reference data) in a component move.
+async fn refuse_retired_in_move(txn: &impl ConnectionTrait, asset_id: i64, status: &str) -> AppResult<()> {
+    if identity::is_retired_status_code(txn, status).await? {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "GATE_ASSET_MOVE_RETIRED:status={status}: L'équipement {asset_id} a le statut '{status}' et ne peut \
+             pas être posé ou déposé."
+        )]));
+    }
+    Ok(())
+}
+
+fn parse_rfc3339_utc(value: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    chrono::DateTime::parse_from_rfc3339(value)
+        .ok()
+        .map(|d| d.with_timezone(&chrono::Utc))
+}
+
+/// "Déplacer le composant" (L2-03): ends the component's active parent relation at the effective
+/// date, creates the relation under the new parent from that date, records a `PARENT_CHANGED`
+/// lifecycle event (from/to parent, note, person) and an audit entry, all in one transaction.
+/// Works as a first installation (no current parent) and as a removal to stock (no new parent).
+/// The component, its current parent and its new parent must each be in a site where `scope`
+/// (where the person holds `eq.manage`) allows acting.
+pub async fn move_asset_component(
+    db: &DatabaseConnection,
+    payload: MoveAssetComponentPayload,
+    scope: &crate::auth::scope::AccessScope,
+    actor_id: i32,
+) -> AppResult<MoveAssetComponentResult> {
+    let txn = db.begin().await?;
+    let result = move_asset_component_in(&txn, payload, scope, actor_id).await?;
+    txn.commit().await?;
+    tracing::info!(
+        asset_id = result.event.asset_id,
+        event_id = result.event.id,
+        "asset component moved"
+    );
+    Ok(result)
+}
+
+async fn move_asset_component_in(
+    txn: &DatabaseTransaction,
+    payload: MoveAssetComponentPayload,
+    scope: &crate::auth::scope::AccessScope,
+    actor_id: i32,
+) -> AppResult<MoveAssetComponentResult> {
+    use crate::auth::scope::{check_anchor, Anchor};
+    let permission = crate::rbac::permissions::EQ_MANAGE;
+    let asset_id = payload.asset_id;
+
+    // ── The component: version seen, not retired, in the person's sites ──
+    let component = move_asset_state(txn, asset_id).await?;
+    check_anchor(txn, scope, permission, Anchor::of(component.node_id)).await?;
+    if component.row_version != payload.expected_row_version {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "GATE_RECORD_CHANGED_ELSEWHERE: Conflit de version : version attendue {}, version actuelle {}.",
+            payload.expected_row_version, component.row_version
+        )]));
+    }
+    refuse_retired_in_move(txn, asset_id, &component.status).await?;
+
+    // ── Effective date: a real date, not in the future ───────────────────
+    let now = crate::clock::now();
+    // The person's calendar day (the screen proposes the local date).
+    let today = crate::clock::now_local().date_naive();
+    let date = match payload.effective_date.as_deref().map(str::trim) {
+        None | Some("") => today,
+        Some(raw) => chrono::NaiveDate::parse_from_str(raw, "%Y-%m-%d").map_err(|_| {
+            AppError::ValidationFailed(vec![format!(
+                "GATE_ASSET_MOVE_DATE_INVALID: Date d'effet illisible '{raw}' (attendu AAAA-MM-JJ)."
+            )])
+        })?,
+    };
+    if date > today {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "GATE_ASSET_MOVE_DATE_FUTURE: La date d'effet {date} est dans le futur."
+        )]));
+    }
+
+    // ── The current parent (single-parent relation types) ────────────────
+    let types_sql = SINGLE_PARENT_TYPES
+        .iter()
+        .map(|t| format!("'{t}'"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let active = txn
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT id, parent_equipment_id, child_equipment_id, relationship_type, effective_from, effective_to FROM equipment_hierarchy WHERE child_equipment_id = ? AND effective_to IS NULL AND relationship_type IN ({types_sql}) ORDER BY id"
+            ),
+            [asset_id.into()],
+        ))
+        .await?
+        .iter()
+        .map(map_hierarchy_row)
+        .collect::<AppResult<Vec<_>>>()?;
+    // One parent per type is allowed by a link, so a component can be under two parents at once
+    // (one per single-parent type): which one it leaves is then not known, the move is refused.
+    if active.len() > 1 {
+        let count = active.len();
+        return Err(AppError::ValidationFailed(vec![format!(
+            "GATE_ASSET_MOVE_SEVERAL_PARENTS:count={count}: Ce composant est rattaché à {count} équipements \
+             parents à la fois ; corrigez la structure avant de le déplacer."
+        )]));
+    }
+    let current = active.into_iter().next();
+    let from_parent = current.as_ref().map(|r| r.parent_asset_id);
+
+    if from_parent == payload.new_parent_asset_id {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_ASSET_MOVE_SAME_PARENT: Le composant est déjà à cet emplacement (même parent).".into(),
+        ]));
+    }
+
+    // ── Current parent's site; the date is not before the installation ───
+    let mut effective_at = if date == today {
+        now
+    } else {
+        date.and_hms_opt(0, 0, 0).expect("midnight exists").and_utc()
+    };
+    // Not before the component's last removal: its history of parents never overlaps.
+    let last_removal: Option<String> = txn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT MAX(effective_to) AS last_to FROM equipment_hierarchy WHERE child_equipment_id = ? AND effective_to IS NOT NULL AND relationship_type IN ({types_sql})"
+            ),
+            [asset_id.into()],
+        ))
+        .await?
+        .map(|row| row.try_get::<Option<String>>("", "last_to"))
+        .transpose()
+        .map_err(|e| decode_err("last_to", e))?
+        .flatten();
+    if let Some(removed_at) = last_removal.as_deref() {
+        let removed_on = removed_at.get(..10).unwrap_or(removed_at);
+        if let Ok(removed_date) = chrono::NaiveDate::parse_from_str(removed_on, "%Y-%m-%d") {
+            if date < removed_date {
+                return Err(AppError::ValidationFailed(vec![format!(
+                    "GATE_ASSET_MOVE_DATE_BEFORE_REMOVAL:removed_on={removed_date}: La date d'effet {date} \
+                     précède la dernière dépose du composant, le {removed_date}."
+                )]));
+            }
+        }
+        // Same day as the last removal: the new installation is not stamped before it.
+        if let Some(removed) = parse_rfc3339_utc(removed_at) {
+            if effective_at < removed {
+                effective_at = removed;
+            }
+        }
+    }
+    if let Some(cur) = &current {
+        let parent = move_asset_state(txn, cur.parent_asset_id).await?;
+        check_anchor(txn, scope, permission, Anchor::of(parent.node_id)).await?;
+        if let Some(installed_at) = cur.effective_from.as_deref() {
+            let installed_on = installed_at.get(..10).unwrap_or(installed_at);
+            if let Ok(installed_date) = chrono::NaiveDate::parse_from_str(installed_on, "%Y-%m-%d") {
+                if date < installed_date {
+                    return Err(AppError::ValidationFailed(vec![format!(
+                        "GATE_ASSET_MOVE_DATE_BEFORE_INSTALL:installed_on={installed_date}: La date d'effet {date} \
+                         précède la pose actuelle du {installed_date}."
+                    )]));
+                }
+            }
+            // Same day as the installation: the removal is not stamped before it.
+            if let Some(installed) = parse_rfc3339_utc(installed_at) {
+                if effective_at < installed {
+                    effective_at = installed;
+                }
+            }
+        }
+    }
+
+    // ── New parent: no cycle, not retired, in the person's sites ─────────
+    let relation_type = current
+        .as_ref()
+        .map(|r| r.relation_type.clone())
+        .unwrap_or_else(|| COMPONENT_RELATION_TYPE.to_string());
+    if let Some(new_parent) = payload.new_parent_asset_id {
+        detect_cycle(txn, new_parent, asset_id).await?;
+        let parent = move_asset_state(txn, new_parent).await?;
+        check_anchor(txn, scope, permission, Anchor::of(parent.node_id)).await?;
+        refuse_retired_in_move(txn, new_parent, &parent.status).await?;
+        validate_relationship_type(txn, &relation_type).await?;
+    }
+
+    // ── Writes: end, link, version, event + audit ────────────────────────
+    let effective_at = effective_at.to_rfc3339();
+    let ended_relation = match &current {
+        Some(cur) => Some(end_relation_in(txn, cur.relation_id, &effective_at).await?),
+        None => None,
+    };
+    let new_relation = match payload.new_parent_asset_id {
+        Some(new_parent) => Some(insert_relation_in(txn, new_parent, asset_id, &relation_type, &effective_at).await?),
+        None => None,
+    };
+    txn.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE equipment SET updated_at = ?, row_version = row_version + 1 WHERE id = ?",
+        [now.to_rfc3339().into(), asset_id.into()],
+    ))
+    .await?;
+
+    let notes = payload
+        .notes
+        .as_deref()
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .map(str::to_string);
+    let event = crate::assets::lifecycle::record_parent_change_in(
+        txn,
+        crate::assets::lifecycle::ParentChange {
+            asset_id,
+            occurred_at: effective_at,
+            from_parent_asset_id: from_parent,
+            to_parent_asset_id: payload.new_parent_asset_id,
+            relation_type,
+            notes,
+        },
+        actor_id,
+    )
+    .await?;
+
+    Ok(MoveAssetComponentResult {
+        ended_relation,
+        new_relation,
+        event,
+    })
 }
 
 /// Move an asset to a different org node.
@@ -469,7 +777,7 @@ pub(crate) async fn move_asset_org_node_in(
     identity::assert_org_node_active(txn, new_org_node_id).await?;
 
     // ── Update org node and increment row_version ────────────────────────
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
 
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,

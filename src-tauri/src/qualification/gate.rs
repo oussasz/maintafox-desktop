@@ -18,7 +18,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use chrono::{Duration, NaiveDate, Utc};
+use chrono::{Duration, NaiveDate};
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 use serde::{Deserialize, Serialize};
 
@@ -178,11 +178,11 @@ fn decode_err(field: &str, err: impl std::fmt::Display) -> AppError {
 }
 
 fn today() -> NaiveDate {
-    Utc::now().date_naive()
+    crate::clock::now().date_naive()
 }
 
 fn now_ts() -> String {
-    Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
+    crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
 
 /// The personnel record linked to a login, if any.
@@ -1149,6 +1149,81 @@ pub async fn check_person_for_permit_role(
     .await
 }
 
+/// Every requirement of a permit type (`qualification_requirements` of target `permit_type`, matched
+/// by id, and the legacy permit-type profiles matched by its code), merged per certification / skill.
+pub async fn permit_type_requirements(
+    db: &impl ConnectionTrait,
+    permit_type_id: i64,
+) -> AppResult<Vec<JobRequirement>> {
+    let sql =
+        format!("{REQUIREMENT_SELECT} AND qr.target_kind = 'permit_type' AND qr.permit_type_id = ? ORDER BY qr.id");
+    let mut rows: Vec<JobRequirement> = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            &sql,
+            [permit_type_id.into()],
+        ))
+        .await?
+        .iter()
+        .map(map_requirement)
+        .collect::<AppResult<_>>()?;
+    let code: Option<String> = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT code FROM permit_types WHERE id = ?",
+            [permit_type_id.into()],
+        ))
+        .await?
+        .map(|r| r.try_get::<String>("", "code").map_err(|e| decode_err("code", e)))
+        .transpose()?;
+    if let Some(code) = code {
+        rows.extend(permit_profile_requirements(db, &[code]).await?);
+    }
+    Ok(merge_requirements(rows))
+}
+
+/// A worker of a permit (L4-06, `permit::workers`) against the personal (`each`) requirements of
+/// the permit's type, valid on `day` (the issue date). Overrides recorded on the work order the
+/// permit is linked to (`linked_wo_id`) are honoured as they are on that work order: an override
+/// covers the gaps it listed, a new gap blocks again. A permit without a work order has no override.
+pub async fn check_person_for_permit_type(
+    db: &impl ConnectionTrait,
+    personnel_id: i64,
+    permit_type_id: i64,
+    linked_wo_id: Option<i64>,
+    day: NaiveDate,
+) -> AppResult<PersonQualificationCheck> {
+    let requirements = permit_type_requirements(db, permit_type_id).await?;
+    match linked_wo_id {
+        Some(wo_id) => {
+            check_person(
+                db,
+                personnel_id,
+                &requirements,
+                day,
+                &OverrideContext::WorkOrder(wo_id),
+                vec!["permit_worker".to_string()],
+            )
+            .await
+        }
+        None => {
+            let (full_name, employee_code) = person_identity(db, personnel_id).await?;
+            let held = load_holdings(db, personnel_id).await?;
+            let (gaps, warnings) = person_gaps(&requirements, &held, day);
+            Ok(PersonQualificationCheck {
+                personnel_id,
+                full_name,
+                employee_code,
+                roles: vec!["permit_worker".to_string()],
+                qualified: gaps.is_empty(),
+                override_info: None,
+                gaps,
+                warnings,
+            })
+        }
+    }
+}
+
 pub(crate) fn validate_role(role: &str) -> AppResult<()> {
     if LOTO_ROLES.contains(&role) {
         Ok(())
@@ -1413,37 +1488,30 @@ async fn write_override(
     let gaps_json = serde_json::to_string(gaps)?;
     let override_sync_id = crate::sync::identity::new_entity_sync_id();
     let now = now_ts();
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO qualification_overrides \
+    let insert_result = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO qualification_overrides \
          (entity_sync_id, personnel_id, user_id, context_kind, work_order_id, permit_id, role_code, gaps_json, \
           reason, approved_by_id, approved_at, created_at) \
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [
-            override_sync_id.clone().into(),
-            personnel_id.into(),
-            user_id.into(),
-            kind.into(),
-            wo_id.into(),
-            permit_id.into(),
-            role.map(str::to_string).into(),
-            gaps_json.into(),
-            reason.to_string().into(),
-            approved_by_id.into(),
-            now.clone().into(),
-            now.into(),
-        ],
-    ))
-    .await?;
-    let id: i64 = db
-        .query_one(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT last_insert_rowid() AS id".to_string(),
+            [
+                override_sync_id.clone().into(),
+                personnel_id.into(),
+                user_id.into(),
+                kind.into(),
+                wo_id.into(),
+                permit_id.into(),
+                role.map(str::to_string).into(),
+                gaps_json.into(),
+                reason.to_string().into(),
+                approved_by_id.into(),
+                now.clone().into(),
+                now.into(),
+            ],
         ))
-        .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("qualification override: no row id")))?
-        .try_get("", "id")
-        .map_err(|e| decode_err("id", e))?;
+        .await?;
+    let id = crate::db::inserted_id(&insert_result)?;
 
     crate::audit::writer::write_audit_event_in(
         db,

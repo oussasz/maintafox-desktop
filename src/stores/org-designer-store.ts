@@ -45,6 +45,43 @@ export function operationalNodeIdOf(
   return row.origin_node_id ?? null;
 }
 
+/**
+ * Mode after a snapshot load: no draft → published; only a draft → draft; a draft that has just
+ * appeared → draft (the user just created it); otherwise keep the mode the user chose. A first
+ * load with both models opens on the published tree.
+ */
+function resolveWorkspaceMode(
+  prev: OrgDesignerSnapshot | null,
+  next: OrgDesignerSnapshot,
+  current: OrgDesignerWorkspaceMode,
+): OrgDesignerWorkspaceMode {
+  if (next.draft_model_id == null) return "published";
+  if (next.active_model_id == null) return "draft";
+  if (prev == null) return "published";
+  if (prev.draft_model_id == null) return "draft";
+  return current;
+}
+
+/**
+ * Keep the selected unit when the tree changes model: a published unit becomes its draft copy
+ * (`origin_node_id`), a draft copy becomes its published unit. Anything else is dropped.
+ */
+function carrySelection(
+  prev: OrgDesignerSnapshot | null,
+  next: OrgDesignerSnapshot,
+  selectedNodeId: number | null,
+): number | null {
+  if (selectedNodeId == null) return null;
+  if (prev == null || prev.display_model_id === next.display_model_id) return selectedNodeId;
+  if (next.display_model_id === next.draft_model_id) {
+    // Published → draft: the draft copy points back at the published unit.
+    return next.nodes.find((n) => n.origin_node_id === selectedNodeId)?.node_id ?? null;
+  }
+  // Draft → published: only the draft row knows its published unit.
+  const origin = prev.nodes.find((n) => n.node_id === selectedNodeId)?.origin_node_id;
+  return origin != null && next.nodes.some((n) => n.node_id === origin) ? origin : null;
+}
+
 interface OrgDesignerStoreState {
   snapshot: OrgDesignerSnapshot | null;
   /** published = viewing live org; draft = working on a draft (when a draft model exists). */
@@ -96,26 +133,26 @@ export const useOrgDesignerStore = create<OrgDesignerStoreState>()((set, get) =>
     const isCurrent = requests.begin("snapshot");
     set({ loading: true, error: null });
     try {
-      const preferDraft = get().workspaceMode === "draft";
-      const snapshot = await getOrgDesignerSnapshot(preferDraft);
+      const st = get();
+      let snapshot = await getOrgDesignerSnapshot(st.workspaceMode === "draft");
       if (!isCurrent()) return;
-      set((st) => {
-        const prev = st.snapshot;
-        let workspaceMode = st.workspaceMode;
-        if (snapshot.draft_model_id == null) {
-          workspaceMode = "published";
-        } else if (snapshot.active_model_id == null) {
-          workspaceMode = "draft";
-        } else {
-          if (prev == null) {
-            workspaceMode = "published";
-          } else if (prev.draft_model_id == null && snapshot.draft_model_id != null) {
-            workspaceMode = "draft";
-          } else {
-            workspaceMode = st.workspaceMode;
-          }
-        }
-        return { snapshot, workspaceMode, error: null, loading: false };
+      const workspaceMode = resolveWorkspaceMode(st.snapshot, snapshot, st.workspaceMode);
+      // A draft that was just created switches the screen to draft mode, but the tree above was
+      // loaded for the previous mode. Showing the published tree in draft mode mixes the two
+      // models: "+ Enfant" then finds no allowed type under a published parent. Load the tree
+      // that belongs to the resolved mode.
+      const wantedModelId =
+        workspaceMode === "draft" ? snapshot.draft_model_id : snapshot.active_model_id;
+      if (wantedModelId != null && snapshot.display_model_id !== wantedModelId) {
+        snapshot = await getOrgDesignerSnapshot(workspaceMode === "draft");
+        if (!isCurrent()) return;
+      }
+      set({
+        snapshot,
+        workspaceMode,
+        selectedNodeId: carrySelection(st.snapshot, snapshot, get().selectedNodeId),
+        error: null,
+        loading: false,
       });
     } catch (err) {
       if (!isCurrent()) return;
@@ -124,7 +161,8 @@ export const useOrgDesignerStore = create<OrgDesignerStoreState>()((set, get) =>
   },
 
   setWorkspaceMode: (value) => {
-    set({ workspaceMode: value, selectedNodeId: null });
+    // The selection is carried to the matching unit of the other tree when it loads.
+    set({ workspaceMode: value });
     void get().loadSnapshot();
   },
 

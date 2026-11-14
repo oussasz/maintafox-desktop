@@ -25,7 +25,14 @@ import type {
 const UpdateKindSchema = z.enum(["upgrade", "rollback"]);
 
 export const UpdateCheckResultSchema = z.object({
-  status: z.enum(["available", "up_to_date", "not_configured", "not_activated", "unreachable"]),
+  status: z.enum([
+    "available",
+    "up_to_date",
+    "not_configured",
+    "store_managed",
+    "not_activated",
+    "unreachable",
+  ]),
   available: z.boolean(),
   current_version: z.string(),
   version: z.string().nullable(),

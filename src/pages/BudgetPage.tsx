@@ -89,6 +89,9 @@ export function BudgetPage() {
   const [allVersions, setAllVersions] = useState<BudgetVersion[]>([]);
   const [versionsError, setVersionsError] = useState<unknown>(null);
   const [versionChoice, setVersionChoice] = useState<string>(AUTO);
+  // Version opened in the planning tab. Kept apart from the cockpit's version so that creating or
+  // opening a draft never replaces the reference version the cockpit (Pilotage) is showing.
+  const [planningChoice, setPlanningChoice] = useState<number | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
   const [review, setReview] = useState<{ row: BudgetCockpitRow; cockpit: BudgetCockpit } | null>(
     null,
@@ -123,6 +126,10 @@ export function BudgetPage() {
   const selectedVersionId =
     versionChoice === AUTO ? (autoVersion?.id ?? null) : Number(versionChoice);
   const selectedVersion = versions.find((v) => v.id === selectedVersionId) ?? null;
+  const planningVersionId =
+    planningChoice != null && versions.some((v) => v.id === planningChoice)
+      ? planningChoice
+      : selectedVersionId;
 
   const refresh = useCallback(() => setReloadToken((n) => n + 1), []);
   const setTab = (next: string) =>
@@ -148,6 +155,7 @@ export function BudgetPage() {
             onValueChange={(v) => {
               setFiscalYear(Number(v));
               setVersionChoice(AUTO);
+              setPlanningChoice(null);
             }}
           >
             <SelectTrigger className="h-11 w-28" aria-label={t("page.fiscalYear")}>
@@ -230,8 +238,9 @@ export function BudgetPage() {
         <TabsContent value="planning">
           <BudgetPlanningPanel
             fiscalYear={fiscalYear}
-            selectedVersionId={selectedVersionId}
-            onSelectVersion={(id) => setVersionChoice(id == null ? AUTO : String(id))}
+            selectedVersionId={planningVersionId}
+            referenceVersionId={autoVersion?.id ?? null}
+            onSelectVersion={setPlanningChoice}
             onChanged={refresh}
             reloadToken={reloadToken}
           />
@@ -241,6 +250,7 @@ export function BudgetPage() {
             budgetVersionId={selectedVersionId}
             currency={selectedVersion?.currency_code ?? currencyCode}
             reloadToken={reloadToken}
+            onOpenCockpit={() => setTab("cockpit")}
           />
         </TabsContent>
         <TabsContent value="assets">

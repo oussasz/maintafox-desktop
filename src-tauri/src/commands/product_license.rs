@@ -902,7 +902,7 @@ async fn user_holds_settings_right_at_any_scope(db: &DatabaseConnection, user_id
     Ok(row.as_ref().and_then(|r| r.try_get::<i64>("", "c").ok()).unwrap_or(0) > 0)
 }
 
-async fn reset_local_tenant_runtime_data_impl(db: &DatabaseConnection) -> AppResult<u64> {
+pub(crate) async fn reset_local_tenant_runtime_data_impl(db: &DatabaseConnection) -> AppResult<u64> {
     // Keep only global bootstrap/settings tables; wipe operational/runtime data to avoid cross-tenant leakage.
     let keep_tables: HashSet<&str> = HashSet::from([
         "seaql_migrations",
@@ -921,6 +921,10 @@ async fn reset_local_tenant_runtime_data_impl(db: &DatabaseConnection) -> AppRes
     // The plant default language is kept across the reset (F11): the wipe below puts its Settings
     // row back to the shipped value, so it is written back right after the reseed (AU-127).
     let plant_language = crate::locale::read_plant_language(db).await?;
+    // The rows the migrations create (system roles, permissions, statuses, catalogs, plant
+    // settings) are put back after the wipe, as a new installation holds them: the migrations are
+    // not run again and sync never sends these rows. Built before anything is deleted.
+    let baseline = crate::db::baseline::MigrationBaseline::build().await?;
 
     tracing::warn!(
         event = "desktop_tenant_runtime_reset_begin",
@@ -949,8 +953,6 @@ async fn reset_local_tenant_runtime_data_impl(db: &DatabaseConnection) -> AppRes
 
     // The wipe and the reseed below are local maintenance, not changes for other devices: capture
     // is off until it is installed again at the end.
-    // The safety rule notices are otherwise never deleted: the reseed below guards them again.
-    crate::settings::received_notice::drop_notice_guards(db).await?;
     crate::sync::capture::suspend_capture(db).await?;
 
     // SQLite ignores (or cannot toggle) foreign_keys inside an active transaction. Run OFF on the
@@ -958,8 +960,11 @@ async fn reset_local_tenant_runtime_data_impl(db: &DatabaseConnection) -> AppRes
     // pool (see init_db) so this pragma applies to the same connection as `begin()`.
     db.execute_unprepared("PRAGMA foreign_keys = OFF").await?;
 
-    let wipe_result: Result<u64, sea_orm::DbErr> = async {
+    let wipe_result: AppResult<u64> = async {
         let tx = db.begin().await?;
+        // The safety rule notices are otherwise never deleted: the reseed below guards them again.
+        // Dropped inside the transaction, so a reset that fails keeps them guarded.
+        crate::settings::received_notice::drop_notice_guards(&tx).await?;
         let mut wiped_rows_total: u64 = 0;
         for table in &tables_to_wipe {
             let escaped = table.replace('"', "\"\"");
@@ -999,6 +1004,15 @@ async fn reset_local_tenant_runtime_data_impl(db: &DatabaseConnection) -> AppRes
             "DELETE FROM app_settings WHERE setting_scope = 'tenant'".to_string(),
         ))
         .await?;
+
+        // What was deleted comes back as the migrations left it on a new database.
+        for table in &tables_to_wipe {
+            baseline.restore_into(&tx, table, None).await?;
+        }
+        baseline
+            .restore_into(&tx, "app_settings", Some("setting_scope = 'tenant'"))
+            .await?;
+        crate::db::baseline::ensure_no_dangling_rows(&tx, &tables_to_wipe).await?;
 
         tx.commit().await?;
         Ok(wiped_rows_total)
@@ -2843,6 +2857,7 @@ pub(crate) async fn reset_to_first_run(state: &State<'_, AppState>, reason: &str
         let mut session_guard = state.session.write().await;
         session_guard.clear_session();
     }
+    crate::sync::signing::end_signing_session_logged(&state.db, "activation_reset").await;
     Ok(wiped_rows)
 }
 
@@ -2871,6 +2886,7 @@ pub async fn reset_local_tenant_runtime_data(state: State<'_, AppState>) -> AppR
         let mut session_guard = state.session.write().await;
         session_guard.clear_session();
     }
+    crate::sync::signing::end_signing_session_logged(&state.db, "tenant_runtime_reset").await;
     tracing::warn!(
         event = "desktop_tenant_runtime_reset",
         wiped_rows,
@@ -3267,7 +3283,7 @@ async fn post_activation_call(
 ) -> AppResult<Result<String, ActivationCallFailure>> {
     let client = crate::sync::transport::client::ControlPlaneClient::new(
         api_base,
-        crate::sync::transport::SyncTiming::production().timeouts,
+        crate::sync::transport::client::ClientTimeouts::interactive(),
     )
     .map_err(AppError::SyncError)?;
     let (status, answer) = match client.post_json_raw(path, bearer, body.to_string()).await {
@@ -3356,10 +3372,14 @@ pub(crate) async fn refresh_product_activation_policy_in(
         return Ok(PolicyRefreshResult::NoToken);
     };
     let version = app_version.map(str::trim).filter(|v| !v.is_empty());
-    let request_body = match version.filter(|v| well_formed_app_version(v)) {
+    let mut request_body = match version.filter(|v| well_formed_app_version(v)) {
         Some(v) => serde_json::json!({ "app_version": v }),
         None => serde_json::json!({}),
     };
+    // The phone names its class on every licence call (server: absent = desktop).
+    if let Some(class) = crate::sync::transport::wire::device_class_if_not_desktop() {
+        request_body["device_class"] = serde_json::Value::from(class);
+    }
     let secrets = [(token.as_str(), TOKEN_MARKER)];
     let body = match post_activation_call(api_base, POLICY_REFRESH_PATH, Some(&token), &request_body, &secrets).await? {
         Ok(body) => body,
@@ -3508,6 +3528,11 @@ fn activation_request_body(
     }
     if let Some(version) = app_version.map(str::trim).filter(|v| well_formed_app_version(v)) {
         body["app_version"] = serde_json::Value::from(version);
+    }
+    // The Android field app claims a mobile slot (its own count on the licence). Desktop requests
+    // stay exactly as before: no field, which the server reads as `desktop`.
+    if let Some(class) = crate::sync::transport::wire::device_class_if_not_desktop() {
+        body["device_class"] = serde_json::Value::from(class);
     }
     body
 }

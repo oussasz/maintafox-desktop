@@ -9,10 +9,23 @@ use crate::commands::dashboard::kpi_quality_badge;
 use crate::errors::{AppError, AppResult};
 use crate::inventory::queries::reorder_triggers_by_article;
 use crate::kpi_definitions;
-use crate::reliability::fleet::{pooled_fleet_kpis, FleetWindow};
-use crate::reliability::readiness::DQ_GREEN_THRESHOLD;
+use crate::reliability::study::domain::FleetKpis;
+use crate::reliability::study::fleet_kpis::{fleet_kpis, months_before, FleetScope};
 
 const OVERVIEW_HORIZON_DAYS: i64 = 30;
+
+/// Window of the fleet reliability cells (MTBF, MTTR, A_o, data quality): 12 rolling calendar
+/// months, the RAMS home default (Advisor Q2). 30 days is under the 90-day minimum for an MTBF.
+pub const OVERVIEW_FLEET_WINDOW_MONTHS: u32 = 12;
+
+/// Window and live figures of a fleet reliability cell (`study::fleet_kpis` of its window): the
+/// card states its window, hours basis and exclusions from them.
+#[derive(Debug, Clone, Serialize)]
+pub struct OverviewFleetBasis {
+    /// The window is the last `window_months` calendar months.
+    pub window_months: u32,
+    pub kpis: FleetKpis,
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct OverviewKpiCell {
@@ -27,6 +40,8 @@ pub struct OverviewKpiCell {
     pub baseline_available: bool,
     pub value_kind: String,
     pub trend_sense: String,
+    /// Fleet reliability cells only: their window and hours basis (shown on the card).
+    pub fleet: Option<OverviewFleetBasis>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -76,6 +91,7 @@ fn count_cell(
         baseline_available: available,
         value_kind: "count".into(),
         trend_sense: trend_sense.into(),
+        fleet: None,
     }
 }
 
@@ -102,6 +118,7 @@ fn float_cell(
         baseline_available: available,
         value_kind: value_kind.into(),
         trend_sense: trend_sense.into(),
+        fleet: None,
     }
 }
 
@@ -131,7 +148,7 @@ pub async fn build_overview_kpis(
     let mut cells = Vec::new();
 
     // Point-in-time measures: now vs the same measure at the start of the horizon (`as_of`).
-    let now = chrono::Utc::now();
+    let now = crate::clock::now();
     let start = as_of::days_before(now, OVERVIEW_HORIZON_DAYS);
 
     let (di_now, di_prev) = if perms.can_di {
@@ -248,77 +265,96 @@ pub async fn build_overview_kpis(
         "up-bad",
     ));
 
-    // Fleet RAMS KPIs: pooled ratios over the latest snapshot per equipment (never mean of ratios).
-    let (mtbf, mtbf_prev, mttr, mttr_prev, avail, avail_prev, dq, dq_prev) = if perms.can_rep {
-        let now = pooled_fleet_kpis(
-            db,
-            FleetWindow {
-                since_days: OVERVIEW_HORIZON_DAYS,
-                until_days: None,
-            },
-            None,
-            DQ_GREEN_THRESHOLD,
-        )
-        .await?;
-        let prev = pooled_fleet_kpis(
-            db,
-            FleetWindow {
-                since_days: OVERVIEW_HORIZON_DAYS * 2,
-                until_days: Some(OVERVIEW_HORIZON_DAYS),
-            },
-            None,
-            DQ_GREEN_THRESHOLD,
-        )
-        .await?;
+    // Fleet RAMS KPIs: the one live calculation (`study::fleet_kpis`, the RAMS home figures) over
+    // the last 12 months vs the 12 months before; data quality = coding completeness.
+    let fleet_start = months_before(now, OVERVIEW_FLEET_WINDOW_MONTHS);
+    let (mtbf, mtbf_prev, mttr, mttr_prev, avail, avail_prev, dq, dq_prev, basis) = if perms.can_rep {
+        let cur_scope = FleetScope {
+            start: fleet_start,
+            end: now,
+            equipment_class_id: None,
+            org_node_id: None,
+        };
+        let prev_scope = FleetScope {
+            start: months_before(fleet_start, OVERVIEW_FLEET_WINDOW_MONTHS),
+            end: fleet_start,
+            ..cur_scope
+        };
+        let cur = fleet_kpis(db, &cur_scope).await?;
+        let prev = fleet_kpis(db, &prev_scope).await?;
         (
-            now.mtbf_hours,
+            cur.mtbf_hours,
             prev.mtbf_hours,
-            now.mttr_hours,
+            cur.mttr_hours,
             prev.mttr_hours,
-            now.availability_operational,
+            cur.availability_operational,
             prev.availability_operational,
-            now.mean_data_quality_score,
-            prev.mean_data_quality_score,
+            cur.data_quality,
+            prev.data_quality,
+            Some(OverviewFleetBasis {
+                window_months: OVERVIEW_FLEET_WINDOW_MONTHS,
+                kpis: cur,
+            }),
         )
     } else {
-        (None, None, None, None, None, None, None, None)
+        (None, None, None, None, None, None, None, None, None)
+    };
+    let fleet_cell = |mut cell: OverviewKpiCell, previous: Option<f64>| {
+        cell.fleet = basis.clone();
+        // No figure for the window before (no failure or no hours then): no trend.
+        if previous.is_none() {
+            cell = without_baseline(cell);
+        }
+        cell
     };
 
-    cells.push(float_cell(
-        kpi_definitions::overview::MTBF,
-        kpi_definitions::catalog::MTBF,
-        mtbf.unwrap_or(0.0),
-        mtbf_prev.unwrap_or(0.0),
-        perms.can_rep && mtbf.is_some(),
-        "hours",
-        "up-good",
+    cells.push(fleet_cell(
+        float_cell(
+            kpi_definitions::overview::MTBF,
+            kpi_definitions::catalog::MTBF,
+            mtbf.unwrap_or(0.0),
+            mtbf_prev.unwrap_or(0.0),
+            perms.can_rep && mtbf.is_some(),
+            "hours",
+            "up-good",
+        ),
+        mtbf_prev,
     ));
-    cells.push(float_cell(
-        kpi_definitions::overview::MTTR,
-        kpi_definitions::catalog::MTTR,
-        mttr.unwrap_or(0.0),
-        mttr_prev.unwrap_or(0.0),
-        perms.can_rep && mttr.is_some(),
-        "hours",
-        "up-bad",
+    cells.push(fleet_cell(
+        float_cell(
+            kpi_definitions::overview::MTTR,
+            kpi_definitions::catalog::MTTR,
+            mttr.unwrap_or(0.0),
+            mttr_prev.unwrap_or(0.0),
+            perms.can_rep && mttr.is_some(),
+            "hours",
+            "up-bad",
+        ),
+        mttr_prev,
     ));
-    cells.push(float_cell(
-        kpi_definitions::overview::AVAILABILITY,
-        kpi_definitions::catalog::AVAILABILITY,
-        avail.unwrap_or(0.0) * 100.0,
-        avail_prev.unwrap_or(0.0) * 100.0,
-        perms.can_rep && avail.is_some(),
-        "percent",
-        "up-good",
+    cells.push(fleet_cell(
+        float_cell(
+            kpi_definitions::overview::AVAILABILITY,
+            kpi_definitions::catalog::AVAILABILITY,
+            avail.unwrap_or(0.0) * 100.0,
+            avail_prev.unwrap_or(0.0) * 100.0,
+            perms.can_rep && avail.is_some(),
+            "percent",
+            "up-good",
+        ),
+        avail_prev,
     ));
-    cells.push(float_cell(
-        kpi_definitions::overview::DATA_QUALITY,
-        kpi_definitions::catalog::DATA_QUALITY,
-        dq.unwrap_or(0.0) * 100.0,
-        dq_prev.unwrap_or(0.0) * 100.0,
-        perms.can_rep && dq.is_some(),
-        "percent",
-        "up-good",
+    cells.push(fleet_cell(
+        float_cell(
+            kpi_definitions::overview::DATA_QUALITY,
+            kpi_definitions::catalog::DATA_QUALITY,
+            dq.unwrap_or(0.0) * 100.0,
+            dq_prev.unwrap_or(0.0) * 100.0,
+            perms.can_rep && dq.is_some(),
+            "percent",
+            "up-good",
+        ),
+        dq_prev,
     ));
 
     // Critical assets down (`assets::taxonomy_reference::CRITICAL_DOWN_SQL`: most critical level
@@ -352,6 +388,8 @@ pub async fn build_overview_kpis(
                SELECT a.id FROM articles a \
                LEFT JOIN stock_balances sb ON sb.article_id = a.id \
                WHERE a.is_active = 1 \
+                 AND NOT EXISTS (SELECT 1 FROM lookup_values nslv \
+                                  WHERE nslv.id = a.stocking_type_value_id AND nslv.code = 'NON_STOCK') \
                GROUP BY a.id \
                HAVING COALESCE(SUM(sb.available_qty), 0) <= 0 \
              )",

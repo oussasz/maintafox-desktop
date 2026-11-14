@@ -49,6 +49,14 @@ const RUNTIME_TYPES: &[(&str, &str)] = &[
         "planning::sync_check::audit_closed (break-in conflict)",
     ),
     ("team", "planning::sync_check::audit_closed (crew site change conflict)"),
+    (
+        "work_order",
+        "wo::execution_actor_sync::record_author_not_received (author not received)",
+    ),
+    (
+        "work_order_task",
+        "wo::execution_actor_sync::record_author_not_received (author not received)",
+    ),
 ];
 
 /// Files that build an audit event with a target type set at run time, and where the types they
@@ -70,11 +78,22 @@ const DYNAMIC_SITES: &[(&str, &str)] = &[
         "planning/sync_check.rs",
         "audit_closed (planning conflict closed by itself): RUNTIME_TYPES",
     ),
+    (
+        "wo/execution_actor_sync.rs",
+        "record_author_not_received (execution change without its author): RUNTIME_TYPES",
+    ),
 ];
 
 /// Types kept on their device by an action-code term of the row filter (not by their type). Only
 /// this action is covered: a notification audit with another action code must be handled on its own.
-const KEPT_BY_ACTION: &[(&str, &str)] = &[("notification", "notification.safety_notice_acknowledged")];
+/// A received execution change applied without its author (`wo::execution_actor_sync`) is kept on
+/// the PC that applied it, whatever its target (a work order or task, both also mapped for the
+/// audits that travel).
+const KEPT_BY_ACTION: &[(&str, &str)] = &[
+    ("notification", "notification.safety_notice_acknowledged"),
+    ("work_order", "WO_EXECUTION_AUTHOR_NOT_RECEIVED"),
+    ("work_order_task", "WO_EXECUTION_AUTHOR_NOT_RECEIVED"),
+];
 
 /// Known gaps, reported to their domain leads (not decided here): written with a target the codec
 /// cannot encode, so their events stay on the PC that wrote them (stub only) and `seal` logs an

@@ -4,7 +4,9 @@
  * Right-click / dropdown context menu for WO rows / cards / calendar chips.
  * Uses DropdownMenu, same pattern as DiContextMenu.
  * Permission-gated items hidden for unauthorized users: the rights are the user's at the work
- * order's site (`useWoAccess`, loaded when the menu opens).
+ * order's site (`useWoAccess`, loaded when the menu opens). "Démarrer", "Terminer" and "Annuler"
+ * are execution actions: someone who does not carry out the work order sees them greyed with the
+ * reason, naming who it is assigned to (`useWoExecutionStanding`, L5-08).
  * Phase 2 – Sub-phase 05 – File 04 – Sprint S4.
  */
 
@@ -19,6 +21,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useWoAccess } from "@/components/wo/WoSiteScope";
+import { useWoExecutionStanding } from "@/components/wo/use-wo-execution-standing";
 import type { WorkOrder } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
@@ -28,7 +31,8 @@ import { P } from "@shared/rbac/permissions.generated";
 const EDITABLE_STATES = new Set(["draft"]);
 const STARTABLE_STATES = new Set(["ready"]);
 const COMPLETABLE_STATES = new Set(["in_progress"]);
-const CANCELLABLE_DENY = new Set(["closed", "cancelled"]);
+// L1-33: a finished ("Terminé") work order goes to its close, not to a cancellation.
+const CANCELLABLE_DENY = new Set(["completed", "closed", "cancelled"]);
 
 // ── Props ───────────────────────────────────────────────────────────────────
 
@@ -70,6 +74,7 @@ function WoContextMenuItems({
 }: Omit<WoContextMenuProps, "children">) {
   const { t } = useTranslation("ot");
   const { can } = useWoAccess(wo);
+  const execution = useWoExecutionStanding(wo);
 
   const canEdit = can(P.OT_EDIT) && EDITABLE_STATES.has(wo.status_code ?? "");
   const canStart = can(P.OT_EDIT) && STARTABLE_STATES.has(wo.status_code ?? "");
@@ -85,10 +90,18 @@ function WoContextMenuItems({
       </DropdownMenuItem>
 
       {/* Edit */}
+      {/* L1-35: a draft is edited by its creator or its execution actors (the cancel rule). */}
       {canEdit && onEdit && (
-        <DropdownMenuItem onClick={() => onEdit(wo)} className="gap-2">
+        <DropdownMenuItem
+          onClick={() => {
+            if (execution.cancelBlocker === null) onEdit(wo);
+          }}
+          className="gap-2"
+          disabled={execution.cancelBlocker !== null}
+          title={execution.cancelBlocker ?? undefined}
+        >
           <Pencil className="h-3.5 w-3.5" />
-          {t("contextMenu.edit")}
+          <ExecutionItemLabel label={t("contextMenu.edit")} blocker={execution.cancelBlocker} />
         </DropdownMenuItem>
       )}
 
@@ -96,17 +109,32 @@ function WoContextMenuItems({
 
       {/* Start */}
       {canStart && onStart && (
-        <DropdownMenuItem onClick={() => onStart(wo)} className="gap-2">
+        <DropdownMenuItem
+          onClick={() => {
+            if (execution.blocker === null) onStart(wo);
+          }}
+          className="gap-2"
+          disabled={execution.blocker !== null}
+          title={execution.blocker ?? undefined}
+        >
           <Play className="h-3.5 w-3.5 text-tone-success-fg" />
-          {t("contextMenu.start")}
+          <ExecutionItemLabel label={t("contextMenu.start")} blocker={execution.blocker} />
         </DropdownMenuItem>
       )}
 
       {/* Complete */}
       {canComplete && onComplete && (
-        <DropdownMenuItem onClick={() => onComplete(wo)} className="gap-2">
+        <DropdownMenuItem
+          onClick={() => {
+            // A greyed item never runs its action (L5-08).
+            if (execution.blocker === null) onComplete(wo);
+          }}
+          className="gap-2"
+          disabled={execution.blocker !== null}
+          title={execution.blocker ?? undefined}
+        >
           <CheckCircle className="h-3.5 w-3.5 text-tone-warning-fg" />
-          {t("contextMenu.complete")}
+          <ExecutionItemLabel label={t("contextMenu.complete")} blocker={execution.blocker} />
         </DropdownMenuItem>
       )}
 
@@ -133,14 +161,29 @@ function WoContextMenuItems({
         <>
           <DropdownMenuSeparator />
           <DropdownMenuItem
-            onClick={() => onCancel(wo)}
+            onClick={() => {
+              if (execution.cancelBlocker === null) onCancel(wo);
+            }}
             className="gap-2 text-tone-danger-fg focus:text-tone-danger-fg"
+            disabled={execution.cancelBlocker !== null}
+            title={execution.cancelBlocker ?? undefined}
           >
             <XCircle className="h-3.5 w-3.5" />
-            {t("contextMenu.cancel")}
+            <ExecutionItemLabel label={t("contextMenu.cancel")} blocker={execution.cancelBlocker} />
           </DropdownMenuItem>
         </>
       )}
     </>
+  );
+}
+
+/** An execution item's label, with the reason it is greyed as visible text under it. */
+function ExecutionItemLabel({ label, blocker }: { label: string; blocker: string | null }) {
+  if (blocker === null) return <>{label}</>;
+  return (
+    <span className="flex flex-col">
+      <span>{label}</span>
+      <span className="text-xs text-text-muted">{blocker}</span>
+    </span>
   );
 }

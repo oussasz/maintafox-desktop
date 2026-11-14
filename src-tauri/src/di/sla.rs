@@ -11,7 +11,7 @@
 
 use crate::assets::identity::normalize_criticality_to_canon;
 use crate::errors::{AppError, AppResult};
-use chrono::{Duration, NaiveDateTime, Utc};
+use chrono::{Duration, NaiveDateTime};
 use sea_orm::{ConnectionTrait, DbBackend, QueryResult, Statement};
 use serde::{Deserialize, Serialize};
 
@@ -249,7 +249,7 @@ struct ClockTargets {
 /// never at risk or breached.
 fn evaluate_clock(di: &InterventionRequest, t: &ClockTargets) -> AppResult<DiSlaStatus> {
     let submitted_at = parse_iso(&di.submitted_at)?;
-    let now = Utc::now().naive_utc();
+    let now = crate::clock::now().naive_utc();
     let closed_at = match (&di.closed_at, di.status.as_str()) {
         (Some(c), "closed") => Some(parse_iso(c)?),
         _ => None,

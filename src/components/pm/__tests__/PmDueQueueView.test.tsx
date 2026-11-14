@@ -81,7 +81,7 @@ describe("PmDueQueueView", () => {
     expect(buttons).toHaveLength(1);
     fireEvent.click(buttons[0] as HTMLElement);
     expect(execute).toHaveBeenCalledWith(expect.objectContaining({ id: 2 }));
-    expect(screen.getAllByRole("button", { name: "Change status" })).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: "Change the due date's state" })).toHaveLength(2);
   });
 
   it("flags an open occurrence past its due date as overdue", () => {

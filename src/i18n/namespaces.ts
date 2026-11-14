@@ -28,6 +28,7 @@ export const MODULE_NAMESPACES = {
   org: "org", // §6.2 Organization
   personnel: "personnel", // §6.6 Personnel
   reference: "reference", // §6.13 Reference Data / Lookups
+  imports: "imports", // Data imports wizard (organisation, stock, plans, history)
   inventory: "inventory", // §6.8 Inventory
   pm: "pm", // §6.9 Preventive Maintenance
   planning: "planning", // §6.16 Planning
@@ -40,6 +41,7 @@ export const MODULE_NAMESPACES = {
   archive: "archive", // §6.12 Archive Explorer
   notifications: "notifications", // §6.14 Notification System
   documentation: "documentation", // §6.15 Documentation & Support Center
+  help: "help", // In-app user guide (src/pages/HelpPage.tsx)
   activity: "activity", // §6.17 Activity Feed & Audit Log
   users: "users", // §6.7 Users & Roles Admin UI
   admin: "admin", // §6.7 Administration panels, metrics, and role management

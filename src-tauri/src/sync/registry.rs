@@ -20,6 +20,7 @@ use std::sync::OnceLock;
 use serde::Serialize;
 
 use crate::errors::{AppError, AppResult};
+use crate::sync::signing_rules::{author_payload_key, signing_rule, SERVER_ONLY_TYPES};
 
 /// Who receives a replicated row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -116,8 +117,10 @@ pub const SYNC_ENTITIES: &[SyncEntityDef] = &[
     SyncEntityDef { entity_type: "article_cost_profiles", table: "article_cost_profiles", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["external_companies", "lookup_values", "articles"], note: None },
     SyncEntityDef { entity_type: "article_families", table: "article_families", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &[], note: None },
     SyncEntityDef { entity_type: "articles", table: "articles", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["stock_locations", "warehouses", "lookup_values", "reference_values", "article_families"], note: None },
+    SyncEntityDef { entity_type: "asset_corrective_actions", table: "asset_corrective_actions", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["equipment", "personnel", "user_accounts"], note: None },
     SyncEntityDef { entity_type: "asset_document_links", table: "asset_document_links", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["equipment", "user_accounts"], note: None },
     SyncEntityDef { entity_type: "asset_external_ids", table: "asset_external_ids", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["equipment"], note: None },
+    SyncEntityDef { entity_type: "asset_five_why_analyses", table: "asset_five_why_analyses", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["equipment", "user_accounts"], note: None },
     SyncEntityDef { entity_type: "asset_meter_readings", table: "asset_meter_readings", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::AppendOnly, parents: &["equipment_meters", "user_accounts"], note: None },
     SyncEntityDef { entity_type: "asset_photos", table: "asset_photos", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["user_accounts", "equipment"], note: None },
     SyncEntityDef { entity_type: "audit_events", table: "audit_events", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::AppendOnly, parents: &["user_accounts"], note: Some("Device audit trail; step 2.4 decides between append-only sync and a dedicated audit channel.") },
@@ -151,6 +154,7 @@ pub const SYNC_ENTITIES: &[SyncEntityDef] = &[
     SyncEntityDef { entity_type: "equipment_classes", table: "equipment_classes", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &[], note: None },
     SyncEntityDef { entity_type: "equipment_criticality_assessments", table: "equipment_criticality_assessments", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::AppendOnly, parents: &["equipment", "user_accounts"], note: None },
     SyncEntityDef { entity_type: "equipment_hierarchy", table: "equipment_hierarchy", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["equipment"], note: None },
+    SyncEntityDef { entity_type: "equipment_isolation_points", table: "equipment_isolation_points", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["equipment", "reference_values"], note: None },
     SyncEntityDef { entity_type: "equipment_lifecycle_events", table: "equipment_lifecycle_events", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::AppendOnly, parents: &[], note: None },
     SyncEntityDef { entity_type: "equipment_meters", table: "equipment_meters", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["equipment", "reference_values"], note: None },
     SyncEntityDef { entity_type: "equipment_spare_parts", table: "equipment_spare_parts", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["equipment", "articles", "user_accounts"], note: None },
@@ -158,7 +162,7 @@ pub const SYNC_ENTITIES: &[SyncEntityDef] = &[
     SyncEntityDef { entity_type: "external_companies", table: "external_companies", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &[], note: None },
     SyncEntityDef { entity_type: "external_company_contacts", table: "external_company_contacts", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["external_companies"], note: None },
     SyncEntityDef { entity_type: "failure_codes", table: "failure_codes", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["failure_hierarchies"], note: None },
-    SyncEntityDef { entity_type: "failure_events", table: "failure_events", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["failure_codes", "reference_values", "equipment", "work_orders", "user_accounts"], note: None },
+    SyncEntityDef { entity_type: "failure_events", table: "failure_events", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["failure_codes", "reference_values", "equipment", "work_orders", "wo_history_records", "user_accounts"], note: None },
     SyncEntityDef { entity_type: "failure_hierarchies", table: "failure_hierarchies", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &[], note: None },
     SyncEntityDef { entity_type: "fmeca_analyses", table: "fmeca_analyses", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["equipment", "user_accounts"], note: None },
     SyncEntityDef { entity_type: "fmeca_item_parts", table: "fmeca_item_parts", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["articles", "fmeca_items"], note: None },
@@ -175,7 +179,7 @@ pub const SYNC_ENTITIES: &[SyncEntityDef] = &[
     SyncEntityDef { entity_type: "inspection_template_versions", table: "inspection_template_versions", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["inspection_templates"], note: None },
     SyncEntityDef { entity_type: "inspection_templates", table: "inspection_templates", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["org_nodes"], note: None },
     SyncEntityDef { entity_type: "integration_exceptions", table: "integration_exceptions", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["posted_export_batches", "budget_actuals", "budget_forecasts"], note: None },
-    SyncEntityDef { entity_type: "intervention_requests", table: "intervention_requests", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["inspection_anomalies", "equipment", "org_nodes", "user_accounts", "reference_values", "di_sla_rules"], note: None },
+    SyncEntityDef { entity_type: "intervention_requests", table: "intervention_requests", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["inspection_anomalies", "equipment", "org_nodes", "user_accounts", "reference_values", "di_sla_rules", "asset_meter_readings"], note: None },
     SyncEntityDef { entity_type: "inventory_article_equivalents", table: "inventory_article_equivalents", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["articles"], note: None },
     SyncEntityDef { entity_type: "inventory_count_lines", table: "inventory_count_lines", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["inventory_transactions", "stock_locations", "warehouses", "articles", "inventory_count_sessions", "user_accounts"], note: None },
     SyncEntityDef { entity_type: "inventory_count_sessions", table: "inventory_count_sessions", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["stock_locations", "warehouses", "user_accounts"], note: None },
@@ -216,10 +220,13 @@ pub const SYNC_ENTITIES: &[SyncEntityDef] = &[
     SyncEntityDef { entity_type: "org_nodes", table: "org_nodes", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["org_structure_models", "org_node_types"], note: None },
     SyncEntityDef { entity_type: "org_structure_models", table: "org_structure_models", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["user_accounts"], note: None },
     SyncEntityDef { entity_type: "org_type_relationship_rules", table: "org_type_relationship_rules", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["org_structure_models", "org_node_types"], note: None },
+    SyncEntityDef { entity_type: "permit_gas_tests", table: "permit_gas_tests", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::AppendOnly, parents: &["work_permits", "user_accounts"], note: None },
     SyncEntityDef { entity_type: "permit_handover_logs", table: "permit_handover_logs", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::AppendOnly, parents: &["work_permits", "user_accounts"], note: None },
     SyncEntityDef { entity_type: "permit_isolations", table: "permit_isolations", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["work_permits", "user_accounts", "reference_values"], note: None },
+    SyncEntityDef { entity_type: "permit_personal_locks", table: "permit_personal_locks", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["work_permits", "permit_workers", "user_accounts"], note: None },
     SyncEntityDef { entity_type: "permit_suspensions", table: "permit_suspensions", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["work_permits", "user_accounts"], note: None },
     SyncEntityDef { entity_type: "permit_types", table: "permit_types", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["user_accounts"], note: None },
+    SyncEntityDef { entity_type: "permit_workers", table: "permit_workers", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["work_permits", "personnel", "external_companies", "user_accounts"], note: None },
     SyncEntityDef { entity_type: "personnel", table: "personnel", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["external_companies", "reference_values", "teams", "org_nodes", "positions"], note: None },
     SyncEntityDef { entity_type: "personnel_assignment_history", table: "personnel_assignment_history", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["reference_values", "personnel", "positions", "teams", "org_nodes"], note: None },
     SyncEntityDef { entity_type: "personnel_authorizations", table: "personnel_authorizations", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["personnel", "certification_types"], note: None },
@@ -305,6 +312,7 @@ pub const SYNC_ENTITIES: &[SyncEntityDef] = &[
     SyncEntityDef { entity_type: "weibull_fit_results", table: "weibull_fit_results", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["equipment", "failure_codes", "user_accounts"], note: None },
     SyncEntityDef { entity_type: "wo_action_events", table: "wo_action_events", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::AppendOnly, parents: &["work_orders"], note: None },
     SyncEntityDef { entity_type: "wo_change_events", table: "wo_change_events", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::AppendOnly, parents: &[], note: None },
+    SyncEntityDef { entity_type: "wo_history_records", table: "wo_history_records", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["equipment", "reference_values", "user_accounts"], note: None },
     SyncEntityDef { entity_type: "wo_state_transition_log", table: "wo_state_transition_log", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::AppendOnly, parents: &[], note: None },
     SyncEntityDef { entity_type: "work_order_attachments", table: "work_order_attachments", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["user_accounts", "work_orders"], note: None },
     SyncEntityDef { entity_type: "work_order_delay_segments", table: "work_order_delay_segments", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["user_accounts", "reference_values", "work_orders"], note: None },
@@ -312,12 +320,12 @@ pub const SYNC_ENTITIES: &[SyncEntityDef] = &[
     SyncEntityDef { entity_type: "work_order_execution_events", table: "work_order_execution_events", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::AppendOnly, parents: &["user_accounts", "work_orders"], note: None },
     SyncEntityDef { entity_type: "work_order_failure_details", table: "work_order_failure_details", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["failure_codes", "reference_values", "work_orders"], note: None },
     SyncEntityDef { entity_type: "work_order_interveners", table: "work_order_interveners", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["user_accounts", "work_orders", "reference_values", "personnel"], note: None },
-    SyncEntityDef { entity_type: "work_order_parts", table: "work_order_parts", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["reference_values", "lookup_values", "stock_reservations", "work_orders", "articles", "stock_locations"], note: None },
+    SyncEntityDef { entity_type: "work_order_parts", table: "work_order_parts", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["reference_values", "lookup_values", "stock_reservations", "work_orders", "articles", "stock_locations", "personnel"], note: None },
     SyncEntityDef { entity_type: "work_order_statuses", table: "work_order_statuses", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &[], note: None },
     SyncEntityDef { entity_type: "work_order_tasks", table: "work_order_tasks", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["user_accounts", "work_orders"], note: None },
     SyncEntityDef { entity_type: "work_order_tools", table: "work_order_tools", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["work_orders"], note: None },
     SyncEntityDef { entity_type: "work_order_verifications", table: "work_order_verifications", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::AppendOnly, parents: &["user_accounts", "work_orders"], note: None },
-    SyncEntityDef { entity_type: "work_orders", table: "work_orders", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["user_accounts", "ram_ishikawa_diagrams", "closeout_validation_policies", "inspection_anomalies", "equipment", "teams", "intervention_requests", "reference_values", "work_order_statuses", "org_nodes", "schedule_class_versions"], note: None },
+    SyncEntityDef { entity_type: "work_orders", table: "work_orders", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["user_accounts", "ram_ishikawa_diagrams", "closeout_validation_policies", "inspection_anomalies", "equipment", "teams", "intervention_requests", "reference_values", "work_order_statuses", "org_nodes", "schedule_class_versions", "external_companies"], note: None },
     SyncEntityDef { entity_type: "work_permits", table: "work_permits", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["work_orders", "permit_types", "equipment", "org_nodes", "user_accounts"], note: None },
     SyncEntityDef { entity_type: "wo_cost_estimates", table: "wo_cost_estimates", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["user_accounts", "cost_centers", "work_orders"], note: None },
     SyncEntityDef { entity_type: "wo_cost_settlements", table: "wo_cost_settlements", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["user_accounts", "budget_versions", "cost_centers", "work_orders"], note: None },
@@ -391,6 +399,16 @@ pub const LOCAL_ONLY_TABLES: &[LocalOnlyTable] = &[
     LocalOnlyTable {
         table: "sync_capture_suppression",
         category: LocalOnlyCategory::SyncControl,
+    },
+    // Per-user signing (migration 297): who is acting in the current write transaction.
+    LocalOnlyTable {
+        table: "sync_capture_actor",
+        category: LocalOnlyCategory::SyncControl,
+    },
+    // Per-user signing keys of this PC, wrapped under each user's password (migration 297).
+    LocalOnlyTable {
+        table: "user_signing_keys_local",
+        category: LocalOnlyCategory::Secrets,
     },
     LocalOnlyTable {
         table: "sync_capture_baseline",
@@ -496,6 +514,14 @@ pub const LOCAL_ONLY_TABLES: &[LocalOnlyTable] = &[
     },
     LocalOnlyTable {
         table: "personnel_import_rows",
+        category: LocalOnlyCategory::ImportStaging,
+    },
+    LocalOnlyTable {
+        table: "bulk_import_batches",
+        category: LocalOnlyCategory::ImportStaging,
+    },
+    LocalOnlyTable {
+        table: "bulk_import_rows",
         category: LocalOnlyCategory::ImportStaging,
     },
     LocalOnlyTable {
@@ -703,6 +729,26 @@ struct ExportedEntity {
     sync_status: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     note: Option<&'static str>,
+    /// Per-user signing (`sync::signing_rules`): right the maker needs plant-wide.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    authority: Option<&'static str>,
+    /// Per-user signing: payload keys naming who made the change, with the keys they vouch for.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    author_fields: Vec<ExportedAuthorField>,
+}
+
+#[derive(Debug, Serialize)]
+struct ExportedAuthorField {
+    field: String,
+    guards: Vec<&'static str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    vouches: Vec<&'static str>,
+}
+
+#[derive(Debug, Serialize)]
+struct ExportedServerOnlyType {
+    entity_type: &'static str,
+    scope: &'static str,
 }
 
 #[derive(Debug, Serialize)]
@@ -712,10 +758,12 @@ struct ExportedRegistry {
     registry_version: u32,
     entities: Vec<ExportedEntity>,
     local_only_tables: BTreeMap<&'static str, LocalOnlyCategory>,
+    /// Types the server publishes but no device pushes (never staged here).
+    server_only_types: Vec<ExportedServerOnlyType>,
 }
 
 /// Bump when the exported shape changes (not when entries are added).
-const REGISTRY_EXPORT_VERSION: u32 = 1;
+const REGISTRY_EXPORT_VERSION: u32 = 2;
 
 /// Pretty JSON written to `shared/sync/entity-registry.json` for the control-plane allowlist.
 pub fn registry_export_json() -> AppResult<String> {
@@ -729,6 +777,19 @@ pub fn registry_export_json() -> AppResult<String> {
             parents: e.parents.to_vec(),
             sync_status: e.sync_status(),
             note: e.note,
+            authority: signing_rule(e.entity_type).and_then(|r| r.authority),
+            author_fields: signing_rule(e.entity_type)
+                .map(|r| {
+                    r.author_fields
+                        .iter()
+                        .map(|f| ExportedAuthorField {
+                            field: author_payload_key(f),
+                            guards: f.guards.to_vec(),
+                            vouches: f.vouches.to_vec(),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
         })
         .collect();
     let export = ExportedRegistry {
@@ -736,6 +797,10 @@ pub fn registry_export_json() -> AppResult<String> {
         registry_version: REGISTRY_EXPORT_VERSION,
         entities,
         local_only_tables: LOCAL_ONLY_TABLES.iter().map(|t| (t.table, t.category)).collect(),
+        server_only_types: SERVER_ONLY_TYPES
+            .iter()
+            .map(|&(entity_type, scope)| ExportedServerOnlyType { entity_type, scope })
+            .collect(),
     };
     let mut json = serde_json::to_string_pretty(&export)?;
     json.push('\n');

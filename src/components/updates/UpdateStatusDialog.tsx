@@ -29,6 +29,8 @@ function StatusText({ result }: { result: UpdateCheckResult }) {
       return <>{t("updates.status.up_to_date")}</>;
     case "not_configured":
       return <>{t("updates.status.not_configured")}</>;
+    case "store_managed":
+      return <>{t("updates.status.store_managed")}</>;
     case "not_activated":
       return <>{t("updates.status.not_activated")}</>;
     case "unreachable":
