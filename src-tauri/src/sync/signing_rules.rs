@@ -121,7 +121,13 @@ pub static SIGNING_RULES: &[SigningRule] = &[
             author_vouching(
                 "updated_by_id",
                 &[],
-                &["action_text", "due_date", "status", "completed_at"],
+                &[
+                    "action_text",
+                    "owner_personnel_sync_id",
+                    "due_date",
+                    "status",
+                    "completed_at",
+                ],
             ),
         ],
         not_attribution: &[],
@@ -724,7 +730,11 @@ pub static SIGNING_RULES: &[SigningRule] = &[
     },
     SigningRule {
         entity_type: "reliability_cost_profiles",
-        author_fields: &[author_vouching("updated_by_id", &[], &["planned_cost", "failure_cost"])],
+        author_fields: &[author_vouching(
+            "updated_by_id",
+            &[],
+            &["planned_cost", "failure_cost", "currency_code"],
+        )],
         not_attribution: &[],
         authority: None,
     },
@@ -947,10 +957,12 @@ pub static SIGNING_RULES: &[SigningRule] = &[
             "updated_by_id",
             &[],
             &[
+                "cost_center_sync_id",
                 "estimated_labor",
                 "estimated_parts",
                 "estimated_services",
                 "estimated_other",
+                "currency_code",
                 "notes",
             ],
         )],
