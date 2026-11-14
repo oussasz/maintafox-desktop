@@ -370,11 +370,24 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
     // Phase 4a: change capture for every synchronised table. Without it local changes would not
     // reach the outbox, so a failure stops the startup.
     match crate::sync::capture::install_capture(&app_state.db).await {
-        Ok(report) => info!(
-            entity_types = report.entity_types,
-            baseline_rows = report.baseline_rows,
-            "startup: sync capture installed"
-        ),
+        Ok(report) => {
+            info!(
+                entity_types = report.entity_types,
+                baseline_rows = report.baseline_rows,
+                "startup: sync capture installed"
+            );
+            // Nobody is signed in at startup: a session that ended with the PC (crash, power cut)
+            // leaves no capture actor behind (per-user signing, design v9 §9).
+            // Fatal when it fails: the previous user would stay the maker of background writes
+            // until their session's expiry (review of 5feb40ade).
+            if let Err(e) = crate::sync::capture::set_capture_actor(&app_state.db, None).await {
+                let reason = format!("Sync capture actor could not be cleared: {e}");
+                error!("{reason}");
+                emit_event(&app, StartupEvent::Failed { reason });
+                window.show().ok();
+                return Err(e);
+            }
+        }
         Err(e) => {
             let reason = format!("Sync capture could not be installed: {e}");
             error!("{reason}");

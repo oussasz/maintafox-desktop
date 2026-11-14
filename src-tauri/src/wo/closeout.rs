@@ -611,11 +611,19 @@ async fn record_signer_password_outcome(
     input: &WoCloseInput,
     signer: Option<i32>,
     checked: Option<bool>,
+    committed: bool,
 ) -> AppResult<()> {
+    // Committed: the signer's key co-signs this work order's change, nothing else (review F2).
+    let cosigned = committed.then_some(second_signer::CosignedRecord {
+        entity_type: "work_orders",
+        row_id: input.wo_id,
+        author_field: "fmeca_parts_override_signed_by_sync_id",
+    });
     second_signer::record_outcome(
         db,
         signer,
         checked,
+        cosigned,
         &second_signer::SignatureContext {
             actor_id: input.actor_id,
             context: "closeout_override",
@@ -1662,7 +1670,7 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
     // ── Return all blocking errors at once ────────────────────────────────
     if !preflight_errors.is_empty() {
         txn.rollback().await?;
-        record_signer_password_outcome(db, &input, signer_for_password, signer_password_checked).await?;
+        record_signer_password_outcome(db, &input, signer_for_password, signer_password_checked, false).await?;
         return Err(AppError::ValidationFailed(preflight_errors));
     }
 
@@ -1831,7 +1839,8 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
     txn.commit().await?;
     // The close is committed: a failure to record the signer outcome is logged, never turned
     // into an error (the follow-ups below must still run).
-    if let Err(e) = record_signer_password_outcome(db, &input, signer_for_password, signer_password_checked).await {
+    if let Err(e) = record_signer_password_outcome(db, &input, signer_for_password, signer_password_checked, true).await
+    {
         tracing::error!(error = %e, wo_id = input.wo_id, "close-out: signer password outcome not recorded");
     }
 

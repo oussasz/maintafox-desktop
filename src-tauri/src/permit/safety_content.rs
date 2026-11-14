@@ -707,7 +707,7 @@ pub(crate) async fn save_permit_safety_content_in(
     let affected = db
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "UPDATE work_permits SET work_description = ?, risk_assessment = ?, preventive_measures = ?, ppe_required = ?, hse_approved_by_id = NULL, hse_approved_at = NULL, hse_approval_note = NULL, status = ?, row_version = row_version + 1 WHERE id = ? AND row_version = ?",
+            "UPDATE work_permits SET work_description = ?, risk_assessment = ?, preventive_measures = ?, ppe_required = ?, hse_approved_by_id = NULL, hse_approved_at = NULL, hse_approval_note = NULL, hse_self_approved = NULL, status = ?, row_version = row_version + 1 WHERE id = ? AND row_version = ?",
             [
                 work.into(),
                 risk.into(),

@@ -26,7 +26,7 @@ const OUTBOX_UNSENT_STATUSES_SQL: &str = "('pending', 'in_flight')";
 const OUTBOX_COLUMNS: &str = "id, idempotency_key, entity_type, entity_sync_id, operation, row_version,
     payload_json, payload_hash, status, acknowledged_at, rejection_code, rejection_message,
     origin_machine_id, base_row_version, owner_user_sync_id, attempt_count, last_attempt_at, last_error,
-    created_at, updated_at";
+    created_at, updated_at, signatures_json";
 
 const INBOX_COLUMNS: &str = "id, server_batch_id, checkpoint_token, entity_type, entity_sync_id, operation,
     row_version, payload_json, payload_hash, apply_status, rejection_code, rejection_message,
@@ -303,6 +303,9 @@ fn to_sync_outbox_item(row: &sea_orm::QueryResult) -> AppResult<SyncOutboxItem> 
         last_error: row.try_get("", "last_error").map_err(|e| decode_err("last_error", e))?,
         created_at: row.try_get("", "created_at").map_err(|e| decode_err("created_at", e))?,
         updated_at: row.try_get("", "updated_at").map_err(|e| decode_err("updated_at", e))?,
+        signatures_json: row
+            .try_get("", "signatures_json")
+            .map_err(|e| decode_err("signatures_json", e))?,
     })
 }
 
@@ -706,24 +709,27 @@ async fn latest_unsent_outbox_item(
 /// - restaging an unchanged payload while the previous change is still unsent returns that change;
 /// - every new envelope gets a fresh UUID idempotency key, unique per tenant forever.
 pub async fn stage_outbox_item(db: &impl ConnectionTrait, input: StageOutboxItemInput) -> AppResult<SyncOutboxItem> {
-    stage_outbox_item_inner(db, input, None).await
+    stage_outbox_item_inner(db, input, None, None).await
 }
 
 /// [`stage_outbox_item`] with the owner of a user-scoped entity given by the caller (the generic
 /// capture knows it from the row, including for a deleted row and for natural-key rows that have
-/// no `entity_sync_id` column to look the owner up by).
+/// no `entity_sync_id` column to look the owner up by). `maker_user_sync_id` is the session user
+/// whose change this is (per-user signing): only that user's key signs the item.
 pub(crate) async fn stage_outbox_item_with_owner(
     db: &impl ConnectionTrait,
     input: StageOutboxItemInput,
     owner_user_sync_id: Option<String>,
+    maker_user_sync_id: Option<String>,
 ) -> AppResult<SyncOutboxItem> {
-    stage_outbox_item_inner(db, input, Some(owner_user_sync_id)).await
+    stage_outbox_item_inner(db, input, Some(owner_user_sync_id), maker_user_sync_id).await
 }
 
 async fn stage_outbox_item_inner(
     db: &impl ConnectionTrait,
     input: StageOutboxItemInput,
     owner_override: Option<Option<String>>,
+    maker_user_sync_id: Option<String>,
 ) -> AppResult<SyncOutboxItem> {
     validate_outbox_input(&input)?;
     let def = registry::require_entity(&input.entity_type)?;
@@ -761,8 +767,8 @@ async fn stage_outbox_item_inner(
         DatabaseBackend::Sqlite,
         "INSERT INTO sync_outbox (
             idempotency_key, entity_type, entity_sync_id, operation, row_version, base_row_version,
-            owner_user_sync_id, payload_json, payload_hash, status, origin_machine_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)",
+            owner_user_sync_id, payload_json, payload_hash, status, origin_machine_id, maker_user_sync_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)",
         [
             idempotency_key.clone().into(),
             input.entity_type.into(),
@@ -774,6 +780,7 @@ async fn stage_outbox_item_inner(
             input.payload_json.into(),
             payload_hash.into(),
             origin_machine_id.into(),
+            maker_user_sync_id.filter(|m| !m.trim().is_empty()).into(),
         ],
     ))
     .await?;
@@ -929,9 +936,15 @@ pub async fn get_sync_push_payload(db: &DatabaseConnection, limit: Option<i64>) 
     let tx = db.begin().await?;
     // Changes captured by the table triggers become outbox envelopes first.
     crate::sync::capture::drain_capture_journal(&tx).await?;
+    // Per-user signing (design v9 §9): sign what this session can sign; a change still waiting for
+    // its maker's signature is held back with the later changes of the same record.
+    if let Some(tenant_id) = crate::commands::product_license::get_activation_claim_tenant_id(&tx).await? {
+        crate::sync::signing::sign_pending_items(&tx, &tenant_id).await?;
+    }
     let sql = format!(
         "SELECT {OUTBOX_COLUMNS} FROM sync_outbox o
          WHERE o.status IN {OUTBOX_UNSENT_STATUSES_SQL}
+           AND NOT {awaiting_signature}
            AND NOT EXISTS (
                SELECT 1 FROM sync_outbox c
                WHERE c.entity_type = o.entity_type
@@ -942,6 +955,7 @@ pub async fn get_sync_push_payload(db: &DatabaseConnection, limit: Option<i64>) 
          ORDER BY o.id ASC
          LIMIT ?",
         held_reversal = crate::inventory::count_sync::REVERSAL_AWAITING_ITS_POSTING_SQL,
+        awaiting_signature = crate::sync::signing::AWAITING_MAKER_SIGNATURE_SQL,
     );
     let rows = tx
         .query_all(Statement::from_sql_and_values(
