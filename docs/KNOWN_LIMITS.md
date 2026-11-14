@@ -12,7 +12,7 @@ record can be wrong, incomplete or need review) · **UX** (slower or less conven
 plant owner · **Release** = must be done when the version is released · **Accepted** = accepted by
 design, documented.
 
-Last updated: 2026-11-14 (0.9.3 release action list with per-user signed sync; server first, rights to grant, label reprint, what migrations 266–296 change; earlier: planning four-eyes: break-ins signed by a second planner at the crew's site, unfreeze decided at the site, both re-checked on arrival; permit requirement from a safety-flagged request; close-out gates re-checked on received completions and closes; negative stock flagged on the stock screens; four-eyes on permit approval; notice to the settings administrators when a safety rule changed on another PC).
+Last updated: 2026-11-14 (0.9.3 release action list with per-user signed sync: what it proves and what stays open; server first, rights to grant, label reprint, what migrations 266–296 change; earlier: planning four-eyes: break-ins signed by a second planner at the crew's site, unfreeze decided at the site, both re-checked on arrival; permit requirement from a safety-flagged request; close-out gates re-checked on received completions and closes; negative stock flagged on the stock screens; four-eyes on permit approval; notice to the settings administrators when a safety rule changed on another PC).
 
 ---
 
@@ -75,12 +75,28 @@ Last updated: 2026-11-14 (0.9.3 release action list with per-user signed sync; s
      nested PM plans, contractors and returns, permit workers, warranty claims.
 6. **Review the "à revoir" values** listed in the rows below (units, symptoms, LOTO texts,
    personnel/document lists, permit hand-over roles) if not done at 0.9.2.
-7. **Per-user signed changes are in 0.9.3, but the production gate is not met yet** (desktop
-   migration 297, server migration 022; the arrival checks are still to come): the server now checks who
-   made every change to a record that names who did, decided or approved
-   something, and to accounts, rights, organisation and settings. Its remaining limits are the
-   "Per-user signed sync" rows under Administration. Rows below that still name "production gate:
-   per-user signed changes" must be re-assessed against it before a production release.
+7. **What per-user signed changes prove, and what stays open** (desktop migration 297, server
+   migration 022). Every change sent between PCs carries the signature of the person who made it,
+   checked by the sync server. A site's four-eyes opt-out, the three-person lock-removal setting of a
+   permit type and the approval of a reliability decision can no longer be changed in someone else's
+   name: the server refuses a change of these rules unless the person it names signed it. History
+   records (audit events, rule change records) can no longer be rewritten, whether they name someone
+   or nobody (refusal `history_rewrite_refused`). A permit type keeps its code once the server holds
+   it (refusal `permit_type_code_locked`), and any change, archive or delete of a permit type must be
+   signed by a holder of the permit-issue right (`ptw.issue`) plant-wide. A site rule moves to another
+   site in its author's name only when a new organisation structure is published. A PC applies a
+   received decision approval only once the approver's own signed approval record is there.
+   - **Deploy the server (step 1) before any plant data is synchronised:** changes the server accepted
+     before it checked signatures reach new PCs unchecked (there is no production data yet).
+   - **Every PC of a plant is on 0.9.3 before the first sync (step 2):** approvals made on 0.9.1 or
+     earlier have no approval record and wait indefinitely on PCs that did not already hold them
+     approved.
+   - **Still open:** the sync server does not check who may delete a photo or attachment (next
+     version; every delete is archived with the PC that sent it and can be restored from the vendor
+     console); PCs trust the server's signature check (no second check on arrival); a person's own
+     signed-in session can be misused in their name; the desktop does not name the PC that sent a
+     change. Details: the "Per-user signed sync" rows under Administration and the rows on site rules,
+     the three-person setting, the decision approval seal and attachment deletes below.
 
 | Limit | Impact | Handled in |
 |---|---|---|
