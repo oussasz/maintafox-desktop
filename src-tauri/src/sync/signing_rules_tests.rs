@@ -163,6 +163,16 @@ fn signing_rules_are_well_formed() {
                 "{}: author field listed twice",
                 rule.entity_type
             );
+            // The last person to change a row answers for its content: changing it without
+            // their signature must not leave the change credited to them (server rule 4).
+            if matches!(f.column, "updated_by_id" | "last_modified_by_id") {
+                assert!(
+                    !f.guards.is_empty() || !f.vouches.is_empty(),
+                    "{}.{}: a last modifier guards or vouches for the content it changed",
+                    rule.entity_type,
+                    f.column
+                );
+            }
         }
     }
     for (entity_type, scope) in SERVER_ONLY_TYPES {

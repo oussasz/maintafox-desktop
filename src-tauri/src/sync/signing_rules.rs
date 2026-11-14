@@ -109,13 +109,21 @@ pub static SIGNING_RULES: &[SigningRule] = &[
     },
     SigningRule {
         entity_type: "app_settings",
-        author_fields: &[author("last_modified_by_id", &[])],
+        // The last modifier answers for the value; a background write clears it (no false credit).
+        author_fields: &[author_vouching("last_modified_by_id", &[], &["setting_value_json"])],
         not_attribution: &[],
         authority: None,
     },
     SigningRule {
         entity_type: "asset_corrective_actions",
-        author_fields: &[author("created_by_id", &[]), author("updated_by_id", &[])],
+        author_fields: &[
+            author("created_by_id", &[]),
+            author_vouching(
+                "updated_by_id",
+                &[],
+                &["action_text", "due_date", "status", "completed_at"],
+            ),
+        ],
         not_attribution: &[],
         authority: None,
     },
@@ -127,7 +135,22 @@ pub static SIGNING_RULES: &[SigningRule] = &[
     },
     SigningRule {
         entity_type: "asset_five_why_analyses",
-        author_fields: &[author("created_by_id", &[]), author("updated_by_id", &[])],
+        author_fields: &[
+            author("created_by_id", &[]),
+            author_vouching(
+                "updated_by_id",
+                &[],
+                &[
+                    "problem_statement",
+                    "why_1",
+                    "why_2",
+                    "why_3",
+                    "why_4",
+                    "why_5",
+                    "root_cause",
+                ],
+            ),
+        ],
         not_attribution: &[],
         authority: None,
     },
@@ -701,7 +724,7 @@ pub static SIGNING_RULES: &[SigningRule] = &[
     },
     SigningRule {
         entity_type: "reliability_cost_profiles",
-        author_fields: &[author("updated_by_id", &[])],
+        author_fields: &[author_vouching("updated_by_id", &[], &["planned_cost", "failure_cost"])],
         not_attribution: &[],
         authority: None,
     },
@@ -807,7 +830,10 @@ pub static SIGNING_RULES: &[SigningRule] = &[
     },
     SigningRule {
         entity_type: "site_settings",
-        author_fields: &[author("updated_by_id", &[])],
+        // A per-site safety rule is only ever set by a person (`settings::site`): its value needs
+        // that person's signature. The site it applies to is not guarded: an organisation publish
+        // moves the rule to the published node and keeps its author (`org::validation`).
+        author_fields: &[author("updated_by_id", &["setting_key", "value_json"])],
         not_attribution: &[],
         authority: None,
     },
@@ -917,7 +943,17 @@ pub static SIGNING_RULES: &[SigningRule] = &[
     },
     SigningRule {
         entity_type: "wo_cost_estimates",
-        author_fields: &[author("updated_by_id", &[])],
+        author_fields: &[author_vouching(
+            "updated_by_id",
+            &[],
+            &[
+                "estimated_labor",
+                "estimated_parts",
+                "estimated_services",
+                "estimated_other",
+                "notes",
+            ],
+        )],
         not_attribution: &[],
         authority: None,
     },

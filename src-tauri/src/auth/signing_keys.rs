@@ -354,13 +354,13 @@ fn with_store<R>(store: Store, f: impl FnOnce(&mut KeyMap) -> R) -> Option<R> {
     Some(cell.with(|keys| f(&mut keys.borrow_mut())))
 }
 
-/// The live entry of `user_sync_id` in `keys`; an entry past its deadline is removed.
 /// Drops every entry past its deadline (the key is wiped when its last reference goes).
 fn sweep_expired(keys: &mut KeyMap) {
     let now = chrono::Utc::now();
     keys.retain(|_, held| now <= held.deadline);
 }
 
+/// The live entry of `user_sync_id` in `keys`; an entry past its deadline is removed.
 fn live_entry<'a>(keys: &'a mut KeyMap, user_sync_id: &str) -> Option<&'a HeldKey> {
     if keys
         .get(user_sync_id)

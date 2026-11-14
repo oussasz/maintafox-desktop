@@ -88,7 +88,10 @@
       "author_fields": [
         {
           "field": "last_modified_by_sync_id",
-          "guards": []
+          "guards": [],
+          "vouches": [
+            "setting_value_json"
+          ]
         }
       ]
     },
@@ -144,7 +147,13 @@
         },
         {
           "field": "updated_by_sync_id",
-          "guards": []
+          "guards": [],
+          "vouches": [
+            "action_text",
+            "due_date",
+            "status",
+            "completed_at"
+          ]
         }
       ]
     },
@@ -192,7 +201,16 @@
         },
         {
           "field": "updated_by_sync_id",
-          "guards": []
+          "guards": [],
+          "vouches": [
+            "problem_statement",
+            "why_1",
+            "why_2",
+            "why_3",
+            "why_4",
+            "why_5",
+            "root_cause"
+          ]
         }
       ]
     },
@@ -2467,7 +2485,11 @@
       "author_fields": [
         {
           "field": "updated_by_sync_id",
-          "guards": []
+          "guards": [],
+          "vouches": [
+            "planned_cost",
+            "failure_cost"
+          ]
         }
       ]
     },
@@ -2887,7 +2909,10 @@
       "author_fields": [
         {
           "field": "updated_by_sync_id",
-          "guards": []
+          "guards": [
+            "setting_key",
+            "value_json"
+          ]
         }
       ]
     },
@@ -3461,7 +3486,14 @@
       "author_fields": [
         {
           "field": "updated_by_sync_id",
-          "guards": []
+          "guards": [],
+          "vouches": [
+            "estimated_labor",
+            "estimated_parts",
+            "estimated_services",
+            "estimated_other",
+            "notes"
+          ]
         }
       ]
     },
