@@ -2793,6 +2793,35 @@ fn conflict_code(outcome: &crate::sync::materialize::ApplyOutcome) -> Option<&st
     }
 }
 
+/// The audit event of an approval as the approver's PC sends it with the decision
+/// (`decisions::APPROVED_EVENT`, by `actor_sync`, the seal in its details; none from an app version
+/// older than the seal). A decision new here waits for it (`decision_sync::inbound_approval_check`).
+/// `tag` keeps several events for one decision apart.
+async fn approval_event(f: &Fixture, decision_sync: &str, actor_sync: &str, seal: Option<&str>, tag: &str) {
+    let details = match seal {
+        Some(seal) => serde_json::json!({ "approval_seal": seal }),
+        None => serde_json::json!({}),
+    };
+    exec(
+        &f.db,
+        &format!(
+            "INSERT INTO audit_events (entity_sync_id, action_code, target_type, target_id, actor_id, auth_context,              result, retention_class, happened_at, details_json, chain_origin, chain_seq) VALUES              ('ae-{decision_sync}-{tag}', '{}', 'reliability_study_decisions', '{decision_sync}',              (SELECT id FROM user_accounts WHERE entity_sync_id = '{actor_sync}'), 'session', 'success', 'standard',              strftime('%Y-%m-%dT%H:%M:%SZ','now'), '{details}', 'test-copy-{decision_sync}-{tag}', 1)",
+            crate::reliability::study::decisions::APPROVED_EVENT
+        ),
+    )
+    .await;
+}
+
+/// The approval event of a received decision, by its decider, with its seal (`approval_event`).
+async fn record_approval(f: &Fixture, decision_sync: &str, p: &serde_json::Map<String, serde_json::Value>) {
+    let decider = p
+        .get("decided_by_sync_id")
+        .and_then(serde_json::Value::as_str)
+        .expect("decider");
+    let seal = p.get("approval_seal").and_then(serde_json::Value::as_str);
+    approval_event(f, decision_sync, decider, seal, "rec").await;
+}
+
 /// A second planning site (node 2) under the fixture's model.
 async fn second_site(f: &Fixture) {
     exec(
@@ -2964,12 +2993,14 @@ async fn a_received_decision_moved_to_the_copy_of_its_deleted_site_is_judged_on_
         async move {
             let mut wire = wire_of(f, "reliability_study_decisions", &sync_id).await;
             wire.insert("status".into(), "approved".into());
-            wire.insert("decided_by_sync_id".into(), admin_sync.into());
-            wire.insert("site_node_sync_id".into(), site.into());
+            wire.insert("decided_by_sync_id".into(), admin_sync.clone().into());
+            wire.insert("site_node_sync_id".into(), site.clone().into());
             wire.insert("site_recorded".into(), 1.into());
             // Sealed, as an app version that seals approvals sends it (AU-76b).
             wire.insert("decided_at".into(), "2026-10-02T08:00:00Z".into());
             let seal = crate::reliability::study::decision_sync::approval_seal(&wire);
+            // With its approval's audit event, as the approver's PC sends it.
+            approval_event(f, &sync_id, &admin_sync, Some(&seal), &site).await;
             wire.insert("approval_seal".into(), seal.into());
             apply_wire(f, "reliability_study_decisions", &sync_id, "upsert", &wire).await
         }

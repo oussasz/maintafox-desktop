@@ -17,7 +17,9 @@
 //! same seal. A sealed decision with a change not sent yet here is journaled on top of that change;
 //! any other is listed to be sent once more, sealed, after the first complete pull that follows the
 //! upgrade, by the PC whose version the server then holds (or that never sent it), so a PC that
-//! received it unsealed and waits for it gets it ([`arrange_resend`]). Nothing unsent is dropped. A row that
+//! received it unsealed and waits for it gets it ([`arrange_resend`]); a PC that did not already hold
+//! it approved still waits for the approval's audit event, which versions before the seal never wrote
+//! (`decision_sync::inbound_approval_check`, docs/KNOWN_LIMITS.md row 39). Nothing unsent is dropped. A row that
 //! cannot be read is left unsealed and logged. Proposed and rejected
 //! decisions keep NULL. No refusal is guessed. Already-present columns and seals are left alone (a
 //! re-run changes nothing).
