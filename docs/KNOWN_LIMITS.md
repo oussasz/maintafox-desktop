@@ -76,10 +76,12 @@ Last updated: 2026-11-14 (0.9.3 release action list with per-user signed sync: w
 6. **Review the "à revoir" values** listed in the rows below (units, symptoms, LOTO texts,
    personnel/document lists, permit hand-over roles) if not done at 0.9.2.
 7. **What per-user signed changes prove, and what stays open** (desktop migration 297, server
-   migration 022). Every change sent between PCs carries the signature of the person who made it,
-   checked by the sync server. A site's four-eyes opt-out, the three-person lock-removal setting of a
-   permit type and the approval of a reliability decision can no longer be changed in someone else's
-   name: the server refuses a change of these rules unless the person it names signed it. History
+   migration 022). A change that names who did, decided or approved something must be signed by that
+   person, and the sync server checks it. A site's four-eyes opt-out and the three-person
+   lock-removal setting of a permit type can no longer be changed in someone else's name: the server
+   refuses a change of these rules unless the person it names signed it. A reliability decision's
+   approval counts only with the approver's own signed approval record (the server refuses that
+   record unsigned; the decision's status itself is not signed, row on the approval seal). History
    records (audit events, rule change records) can no longer be rewritten, whether they name someone
    or nobody (refusal `history_rewrite_refused`). A permit type keeps its code once the server holds
    it (refusal `permit_type_code_locked`), and any change, archive or delete of a permit type must be
