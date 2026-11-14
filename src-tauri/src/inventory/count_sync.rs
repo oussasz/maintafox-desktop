@@ -733,7 +733,10 @@ async fn undo_kept_posting(
         let payload_hash = crate::sync::queries::hash_payload(&payload_json);
         conn.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "UPDATE sync_outbox SET payload_json = ?, payload_hash = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+            // The rewritten item is signed again (or waits for its maker): a signature covers
+            // one exact payload (review F7; the outbox trigger of migration 297 does the same).
+            "UPDATE sync_outbox SET payload_json = ?, payload_hash = ?, signatures_json = NULL,
+                    awaiting_signers_json = NULL, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
              WHERE entity_type = ? AND entity_sync_id = ? AND status = 'pending'",
             [
                 payload_json.into(),

@@ -2857,6 +2857,7 @@ pub(crate) async fn reset_to_first_run(state: &State<'_, AppState>, reason: &str
         let mut session_guard = state.session.write().await;
         session_guard.clear_session();
     }
+    crate::sync::signing::end_signing_session_logged(&state.db, "activation_reset").await;
     Ok(wiped_rows)
 }
 
@@ -2885,6 +2886,7 @@ pub async fn reset_local_tenant_runtime_data(state: State<'_, AppState>) -> AppR
         let mut session_guard = state.session.write().await;
         session_guard.clear_session();
     }
+    crate::sync::signing::end_signing_session_logged(&state.db, "tenant_runtime_reset").await;
     tracing::warn!(
         event = "desktop_tenant_runtime_reset",
         wiped_rows,

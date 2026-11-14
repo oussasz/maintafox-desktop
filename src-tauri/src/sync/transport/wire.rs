@@ -47,6 +47,17 @@ pub struct ExchangeOutboxItem<'a> {
     pub owner_user_sync_id: Option<&'a str>,
     pub payload_json: &'a str,
     pub payload_hash: &'a str,
+    /// Per-user signatures (design v9 §5): maker first, then co-signers.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub signatures: Vec<WireSignature>,
+}
+
+/// One per-user signature of a change.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WireSignature {
+    pub user_sync_id: String,
+    pub key_id: String,
+    pub signature: String,
 }
 
 impl<'a> From<&'a SyncOutboxItem> for ExchangeOutboxItem<'a> {
@@ -61,6 +72,11 @@ impl<'a> From<&'a SyncOutboxItem> for ExchangeOutboxItem<'a> {
             owner_user_sync_id: item.owner_user_sync_id.as_deref(),
             payload_json: &item.payload_json,
             payload_hash: &item.payload_hash,
+            signatures: item
+                .signatures_json
+                .as_deref()
+                .and_then(|s| serde_json::from_str(s).ok())
+                .unwrap_or_default(),
         }
     }
 }

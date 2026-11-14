@@ -2,9 +2,12 @@
 // Append the entity types this desktop stages (shared/sync/entity-registry.json, sync_status
 // "synced" or "staged_only") to the control-plane sync allowlist, then refresh the desktop copy.
 //
-// The allowlist is append-only (maintafox-vendor-console/deploy/SYNC_PROTOCOL_V2.md §2): existing
-// entries are never changed or removed. A new entry gets `append_only` from the type's conflict_policy;
-// a type already listed with another scope or append_only flag is an error and nothing is written
+// The allowlist is append-only (maintafox-vendor-console/deploy/SYNC_PROTOCOL_V2.md §2): an entry's
+// type, scope and append_only flag are never changed or removed. A new entry gets `append_only` from
+// the type's conflict_policy; a type already listed with another scope or append_only flag is an
+// error and nothing is written. The signing contract (`author_fields`, `authority`) is copied from
+// the desktop registry onto new and existing entries, and the desktop's server-only types (never
+// staged, e.g. `user_signing_keys`) are added with `server_only: true`
 // (rule in scripts/sync-allowlist-merge.mjs).
 //
 // Usage: node scripts/sync-allowlist-append.mjs [path/to/maintafox-vendor-console]
@@ -25,7 +28,7 @@ const readJson = (path) => JSON.parse(readFileSync(path, "utf8").replace(/^﻿/,
 
 const registry = readJson(registryPath);
 const server = readJson(serverPath);
-const { added, problems } = appendStagedTypes(registry, server);
+const { added, updated, problems } = appendStagedTypes(registry, server);
 if (problems.length) {
   console.error(problems.join("\n"));
   process.exit(1);
@@ -34,4 +37,6 @@ if (problems.length) {
 const text = `${JSON.stringify(server, null, 2)}\n`;
 writeFileSync(serverPath, text);
 writeFileSync(copyPath, text);
-console.log(added.length ? `added ${added.length}:\n${added.join("\n")}` : "nothing to add");
+if (added.length) console.log(`added ${added.length}:\n${added.join("\n")}`);
+if (updated.length) console.log(`updated ${updated.length}:\n${updated.join("\n")}`);
+if (!added.length && !updated.length) console.log("nothing to change");

@@ -204,6 +204,17 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
         window.show().ok();
         return Err(e);
     }
+    // Microsoft Store build: the Store installed this version, so the backup the in-app updater
+    // takes before an update was not made. Back up before migrating; without it, nothing changes.
+    if let Err(e) = crate::updater::store_pre_migration_backup(&app, &app_state.db).await {
+        let reason = format!(
+            "The database could not be checked and backed up before this version updates it, so it was not changed: {e}"
+        );
+        error!("{reason}");
+        emit_event(&app, StartupEvent::Failed { reason });
+        window.show().ok();
+        return Err(e);
+    }
     match crate::db::run_migrations(&app_state.db).await {
         Ok(()) => {
             info!(
@@ -359,11 +370,24 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
     // Phase 4a: change capture for every synchronised table. Without it local changes would not
     // reach the outbox, so a failure stops the startup.
     match crate::sync::capture::install_capture(&app_state.db).await {
-        Ok(report) => info!(
-            entity_types = report.entity_types,
-            baseline_rows = report.baseline_rows,
-            "startup: sync capture installed"
-        ),
+        Ok(report) => {
+            info!(
+                entity_types = report.entity_types,
+                baseline_rows = report.baseline_rows,
+                "startup: sync capture installed"
+            );
+            // Nobody is signed in at startup: a session that ended with the PC (crash, power cut)
+            // leaves no capture actor behind (per-user signing, design v9 §9).
+            // Fatal when it fails: the previous user would stay the maker of background writes
+            // until their session's expiry (review of 5feb40ade).
+            if let Err(e) = crate::sync::capture::set_capture_actor(&app_state.db, None).await {
+                let reason = format!("Sync capture actor could not be cleared: {e}");
+                error!("{reason}");
+                emit_event(&app, StartupEvent::Failed { reason });
+                window.show().ok();
+                return Err(e);
+            }
+        }
         Err(e) => {
             let reason = format!("Sync capture could not be installed: {e}");
             error!("{reason}");

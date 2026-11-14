@@ -67,6 +67,8 @@ pub const SYSTEM_TABLES: &[&str] = &[
     "audit_chain_stubs",
     "activity_events",
     // Sync metadata of this PC (what was received is checked by `ensure_no_received_sync_data`).
+    // `sync_capture_actor`: the one row naming the signed-in user (migration 297).
+    "sync_capture_actor",
     "sync_capture_baseline",
     "sync_capture_journal",
     "sync_capture_suppression",

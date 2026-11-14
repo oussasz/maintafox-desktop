@@ -270,6 +270,7 @@ mod m20261111_000292_pm_plan_coverage;
 mod m20261111_000293_contractors_returns;
 mod m20261111_000294_permit_workers;
 mod m20261113_000296_wo_warranty_claim;
+mod m20261113_000297_sync_user_signing;
 mod m20261201_000037_observability_permissions;
 mod m_test;
 
@@ -546,6 +547,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261111_000293_contractors_returns::Migration),
             Box::new(m20261111_000294_permit_workers::Migration),
             Box::new(m20261113_000296_wo_warranty_claim::Migration),
+            Box::new(m20261113_000297_sync_user_signing::Migration),
         ]
     }
 }

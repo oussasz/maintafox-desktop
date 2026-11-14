@@ -1356,6 +1356,8 @@ export type UpdateCheckStatus =
   | "up_to_date"
   /** This build has no updater public key: in-app updates are not set up yet. */
   | "not_configured"
+  /** Microsoft Store build: the Store installs updates; the app never downloads one. */
+  | "store_managed"
   /** The device is not activated yet: the server cannot tell which releases it may have. */
   | "not_activated"
   /** The update server could not be reached or answered wrongly (details in `message`). */

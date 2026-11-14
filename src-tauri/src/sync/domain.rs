@@ -15,6 +15,10 @@ pub struct TenantConfigSyncPayload {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncOutboxItem {
+    /// Per-user signatures collected for this exact change (JSON array, maker first); `None` when
+    /// unsigned. Never sent to the screens.
+    #[serde(default, skip_serializing)]
+    pub signatures_json: Option<String>,
     pub id: i64,
     pub idempotency_key: String,
     pub entity_type: String,

@@ -285,11 +285,18 @@ pub(crate) async fn record_signer_outcome(
     signer: Option<i32>,
     checked: Option<bool>,
     commitment_id: Option<i64>,
+    committed_break_in: Option<i64>,
 ) -> AppResult<()> {
     crate::auth::second_signer::record_outcome(
         db,
         signer,
         checked,
+        // Committed: the approver's key co-signs this break-in only (review F2).
+        committed_break_in.map(|row_id| crate::auth::second_signer::CosignedRecord {
+            entity_type: "schedule_break_ins",
+            row_id,
+            author_field: "approved_by_user_sync_id",
+        }),
         &crate::auth::second_signer::SignatureContext {
             actor_id,
             context: "planning_break_in",
