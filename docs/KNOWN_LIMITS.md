@@ -75,8 +75,9 @@ Last updated: 2026-11-14 (0.9.3 release action list with per-user signed sync; s
      nested PM plans, contractors and returns, permit workers, warranty claims.
 6. **Review the "à revoir" values** listed in the rows below (units, symptoms, LOTO texts,
    personnel/document lists, permit hand-over roles) if not done at 0.9.2.
-7. **Per-user signed changes are in 0.9.3** (desktop migration 297, server migration 022): the
-   server now checks who made every change to a record that names who did, decided or approved
+7. **Per-user signed changes are in 0.9.3, but the production gate is not met yet** (desktop
+   migration 297, server migration 022; the arrival checks are still to come): the server checks who
+   made every change to a record that names who did, decided or approved
    something, and to accounts, rights, organisation and settings. Its remaining limits are the
    "Per-user signed sync" rows under Administration. Rows below that still name "production gate:
    per-user signed changes" must be re-assessed against it before a production release.
