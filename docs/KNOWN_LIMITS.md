@@ -20,8 +20,13 @@ Last updated: 2026-11-13 (0.9.3 release action list: server first, rights to gra
 
 ### 0.9.3 release action list (in this order)
 
-1. **Sync server first.** Deploy the vendor-console change that adds the 7 new synced record types
-   (server registry 229 → 236; the desktop registry gained the same 7, 222 → 229:
+0. **Before the server deploy:** the owner confirms, for each plant, the plant-wide administrators
+   and the holders of `adm.users` / `adm.roles` as the server holds them (vendor console
+   `deploy/SYNC_OPERATIONS.md`, "Deploy checklist (022)"). Per-user signed sync trusts them as they
+   are from that point.
+1. **Sync server first.** Deploy the vendor-console release with per-user signed sync (server
+   migration 022, the server-only `user_signing_keys` type) and the 7 new synced record types
+   (server registry 229 → 237 with `user_signing_keys`; the desktop registry gained the same 7, 222 → 229:
    `asset_corrective_actions`, `asset_five_why_analyses`, `equipment_isolation_points`,
    `permit_gas_tests`, `permit_personal_locks`, `permit_workers`, `wo_history_records`), regenerated
    from the desktop registry. Do this before any PC installs 0.9.3. Otherwise the server refuses
@@ -29,7 +34,12 @@ Last updated: 2026-11-13 (0.9.3 release action list: server first, rights to gra
 2. **All PCs of a plant upgrade the same day**, after the server. A PC still on 0.9.2 cannot apply
    the new records (it refuses received history failure events as conflicts, for example), and a
    permit issued on a PC still on 0.9.2 is applied without being judged again (ruling 4 row below).
-   Do the first sync only once every PC is on 0.9.3.
+   Do the first sync only once every PC is on 0.9.3. From the server deploy on, a PC still on 0.9.2
+   has its changes to accounts, grants, roles, permit-type safety settings, site rules and
+   attachments refused ("mettre à jour ce PC"); its ordinary records keep syncing.
+   **Each user signs in once on each upgraded PC**: that enrols their signing key (desktop migration
+   297), and their changes made on that PC wait there until they sign in (rows "Per-user signed
+   sync" under Administration).
 3. **Grant the new rights after the upgrade** (Administration → Rôles):
    - `ptw.hse_approve` to the HSE approvers. Without it, permit issuers (`ptw.issue`) can no longer
      give the HSE approval.
@@ -64,9 +74,9 @@ Last updated: 2026-11-13 (0.9.3 release action list: server first, rights to gra
      nested PM plans, contractors and returns, permit workers, warranty claims.
 6. **Review the "à revoir" values** listed in the rows below (units, symptoms, LOTO texts,
    personnel/document lists, permit hand-over roles) if not done at 0.9.2.
-7. **Production gate (not for 0.9.3):** the sync server still cannot prove which user made a
-   change (rows on per-site self-approval, three-person setting, attachment deletes). 0.9.3 stays a
-   test version for internal PCs until per-user signed changes exist.
+7. **Per-user signed changes are in 0.9.3** (desktop migration 297, server migration 022): the
+   server now checks who made a change to accounts, rights, permit-type safety settings, site rules
+   and attachments. Its remaining limits are the "Per-user signed sync" rows under Administration.
 
 | Limit | Impact | Handled in |
 |---|---|---|
