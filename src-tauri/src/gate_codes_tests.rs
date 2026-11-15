@@ -43,6 +43,7 @@ const ALLOWLIST: &[(&str, &str)] = &[
     ("backup/scheduler.rs", "{key} must be a non-negative integer"),
     ("settings/catalog.rs", "{key}: not a decimal setting"),
     ("settings/catalog.rs", "{key}: the setting is missing"),
+    ("settings/catalog.rs", "{key}: not an integer setting"),
     (
         "settings/catalog.rs",
         "{key}: not an optional decimal setting of the catalog",
@@ -55,6 +56,9 @@ const ALLOWLIST: &[(&str, &str)] = &[
     // Demo / golden-data seeds: developer tools, never reachable from a normal screen.
     ("db/rams_presentation_seed.rs", ""),
     ("db/rams_sql_demo_seed.rs", ""),
+    // Demo-company generator (feature `demo-company`, not in the shipped app): its refusals are
+    // printed in the developer's terminal by the `demo-company` binary.
+    ("demo_company/", ""),
     // Internal: corrupt stored data / technical, not a rule the user can act on.
     ("data_integrity/repair.rs", "segment_id_"),
     ("sync/media.rs", "media bytes must not be empty"),

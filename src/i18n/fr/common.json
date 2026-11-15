@@ -1,6 +1,21 @@
 {
+  "fileInput": {
+    "choose": "Choisir un fichier",
+    "chooseMany": "Choisir des fichiers",
+    "none": "Aucun fichier choisi",
+    "many": "{{count}} fichiers choisis"
+  },
   "toast": {
     "dismiss": "Fermer le message"
+  },
+  "listExport": {
+    "button": "Exporter (Excel/CSV)",
+    "title": "Exporter la liste affichée",
+    "saved": "Liste exportée",
+    "failed": "L'export a échoué",
+    "empty": "Aucune ligne à exporter",
+    "truncatedUnknown": "Seules les {{shown}} lignes chargées sont exportées : il en reste d'autres. Chargez la suite avant d'exporter pour tout avoir.",
+    "truncated": "Seules les {{shown}} lignes chargées sur {{total}} sont exportées. Chargez la suite avant d'exporter pour tout avoir."
   },
   "decimalField": {
     "dotHint": "Le point sert de séparateur décimal (1.250 = 1,25)."
@@ -53,6 +68,12 @@
     "loading": "Chargement...",
     "loadingModule": "Chargement du module...",
     "error": "Une erreur est survenue"
+  },
+  "discardGuard": {
+    "title": "Quitter sans enregistrer ?",
+    "description": "Ce que vous avez saisi dans cette fenêtre sera perdu.",
+    "keep": "Continuer la saisie",
+    "leave": "Quitter sans enregistrer"
   },
   "action": {
     "save": "Enregistrer",
@@ -180,7 +201,7 @@
     "clearSearch": "Effacer la recherche",
     "removeFilter": "Retirer le filtre {{label}}",
     "searchChip": "Recherche : {{query}}",
-    "addFilter": "Ajouter…",
+    "addFilter": "Choisir…",
     "noMoreOptions": "Plus d’options"
   },
   "assetPicker": {
@@ -321,5 +342,15 @@
     "none": "Sans urgence",
     "targetsShort": "Prise en charge ≤ {{response}} h · réalisation ≤ {{completion}} h",
     "targetsTooltip": "Délais cibles : prise en charge ≤ {{response}} h, réalisation ≤ {{completion}} h"
+  },
+  "personnelLink": {
+    "message": {
+      "rounds": "Votre compte n'est lié à aucune fiche du personnel : vous ne pouvez pas enregistrer de relevés de ronde (les mesures sont attribuées à une personne). Reliez d'abord votre compte à une fiche.",
+      "myWork": "Votre compte n'est lié à aucune fiche du personnel : « Mon travail » ne peut pas retrouver vos OT, demandes et rondes, c'est pourquoi les chiffres restent à zéro."
+    },
+    "linkAccount": "Lier mon compte à une fiche (Administration > Utilisateurs)",
+    "openPersonnel": "Ouvrir le Personnel (créer la fiche)",
+    "askAdmin": "Demandez à un administrateur de lier votre compte à votre fiche du personnel.",
+    "howTo": "Si la fiche n'existe pas encore, créez-la dans Personnel, puis ouvrez votre compte dans Administration > Utilisateurs et choisissez-la."
   }
 }

@@ -41,7 +41,7 @@ const CONFLICT_COLS: &str =
 /// WO statuses that feed the planning backlog (Option B + legacy aliases).
 /// Option B: `planning` (Kanban Planification), `ready` (Kanban Prêt).
 /// Legacy: remapped by m20260814 but still referenced by older DBs / overlap checks.
-const WO_SCHEDULE_CANDIDATE_STATUS_SQL: &str =
+pub(crate) const WO_SCHEDULE_CANDIDATE_STATUS_SQL: &str =
     "'planning','ready','planned','ready_to_schedule','assigned','waiting_for_prerequisite','awaiting_approval'";
 
 /// OTs counted as concurrent assignee load during readiness evaluation: the shared "Open (work to
@@ -838,7 +838,7 @@ pub(crate) async fn evaluate_candidate(db: &impl ConnectionTrait, candidate_id: 
             .as_deref()
             .and_then(crate::wo::shifts::planned_instant)
             .map_or_else(
-                || chrono::Local::now().date_naive(),
+                || crate::clock::now_local().date_naive(),
                 |t| t.with_timezone(&chrono::Local).date_naive(),
             );
         let check = super::qualifications::check_assignee(
@@ -1334,7 +1334,7 @@ pub async fn get_schedule_backlog_snapshot(
     }
 
     Ok(ScheduleBacklogSnapshot {
-        as_of: chrono::Utc::now().to_rfc3339(),
+        as_of: crate::clock::now().to_rfc3339(),
         candidate_count: candidates.len() as i64,
         ready_count,
         blocked_count,

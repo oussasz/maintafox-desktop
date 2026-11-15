@@ -1,6 +1,5 @@
 //! Device-local executive dashboard layouts (separate from Home Overview).
 
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use serde_json::{json, Value};
 
@@ -144,7 +143,7 @@ pub async fn get_layout(db: &DatabaseConnection, user_id: i64) -> AppResult<Stri
 
 pub async fn save_layout(db: &DatabaseConnection, user_id: i64, layout_json: &str) -> AppResult<()> {
     validate_analytics_layout_json(layout_json)?;
-    let ts = Utc::now().to_rfc3339();
+    let ts = crate::clock::now().to_rfc3339();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO user_analytics_dashboard_layouts (user_id, layout_json, updated_at)

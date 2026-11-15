@@ -8,7 +8,7 @@ import { useWoStore } from "@/stores/wo-store";
 import type { WorkOrder } from "@shared/ipc-types";
 
 const i18nMock = vi.hoisted(() => ({
-  t: (key: string) => key,
+  t: (key: string, opts?: { fields?: string }) => (opts?.fields ? `${key}:${opts.fields}` : key),
   i18n: { language: "fr" },
 }));
 vi.mock("react-i18next", () => ({ useTranslation: () => i18nMock }));
@@ -126,6 +126,55 @@ describe("WoCreateForm planned dates", () => {
   });
 });
 
+describe("WoCreateForm planned end before the planned start", () => {
+  const dated = (start: string, end: string, hours: number | null) =>
+    ({
+      id: 6,
+      row_version: 1,
+      title: "Remplacer le palier",
+      description: null,
+      type_code: "",
+      subtype_code: "",
+      urgency_code: "",
+      equipment_id: null,
+      planned_start: start,
+      planned_end: end,
+      expected_duration_hours: hours,
+      notes: null,
+      requires_permit: false,
+    }) as unknown as WorkOrder;
+
+  it("shows a message under the end field and refuses to save", async () => {
+    const updateDraft = vi.fn(() => Promise.resolve());
+    useWoStore.setState({ updateDraft } as unknown as Partial<
+      ReturnType<typeof useWoStore.getState>
+    >);
+    const { getByText, queryByText } = render(
+      <WoCreateForm
+        initial={dated("2026-10-20T10:00:00Z", "2026-10-20T06:00:00Z", null)}
+        onSubmitted={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    expect(getByText("form.validation.plannedEndBeforeStart")).toBeInTheDocument();
+    fireEvent.click(getByText("form.update").closest("button") as HTMLButtonElement);
+    expect(updateDraft).not.toHaveBeenCalled();
+    expect(queryByText("form.duration.exceedsWindow")).toBeNull();
+  });
+
+  it("warns, without blocking, when the estimated duration is longer than the planned window", () => {
+    const { getByText, queryByText } = render(
+      <WoCreateForm
+        initial={dated("2026-10-20T06:00:00Z", "2026-10-20T14:00:00Z", 30)}
+        onSubmitted={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    expect(getByText("form.duration.exceedsWindow")).toBeInTheDocument();
+    expect(queryByText("form.validation.plannedEndBeforeStart")).toBeNull();
+  });
+});
+
 describe("WoCreateForm permit box in edit mode", () => {
   const draft = (overrides: Partial<WorkOrder>) =>
     ({
@@ -181,5 +230,18 @@ describe("WoCreateForm permit box in edit mode", () => {
       />,
     );
     expect(getByTestId("permit-box")).not.toBeDisabled();
+  });
+});
+
+describe("WoCreateForm greyed save button", () => {
+  it("says which fields are still missing, instead of staying silent", async () => {
+    const { findByTestId } = render(
+      <WoCreateForm initial={null} onSubmitted={vi.fn()} onCancel={vi.fn()} />,
+    );
+    const note = await findByTestId("wo-create-missing");
+    // The sentence names the fields still missing (equipment and title on an empty form).
+    expect(note).toHaveTextContent("form.missingFields");
+    expect(note).toHaveTextContent("form.equipment.label");
+    expect(note).toHaveTextContent("form.title.label");
   });
 });

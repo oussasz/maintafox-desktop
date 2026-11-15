@@ -57,6 +57,19 @@ describe("useAccessAt", () => {
     expect(result.current.can("anything")).toBe(false);
   });
 
+  it("says when the rights could not be read, so no screen reports a right as missing", async () => {
+    getMyAccessAt.mockRejectedValueOnce(new Error("ipc down")).mockResolvedValue([P.OT_VIEW]);
+    const { result, rerender } = renderHook(({ node }) => useAccessAt(node), {
+      initialProps: { node: 3 as number | null },
+    });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.failed).toBe(true);
+    expect(result.current.can(P.OT_VIEW)).toBe(false);
+    rerender({ node: 4 });
+    await waitFor(() => expect(result.current.can(P.OT_VIEW)).toBe(true));
+    expect(result.current.failed).toBe(false);
+  });
+
   it("never renders the previous node's rights, not even for one frame", async () => {
     getMyAccessAt.mockImplementation((node) =>
       node === 1 ? Promise.resolve([P.OT_VIEW]) : new Promise(() => undefined),

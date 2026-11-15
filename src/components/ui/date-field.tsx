@@ -46,6 +46,9 @@ export interface DateFieldProps {
   "aria-describedby"?: string | undefined;
   "aria-invalid"?: boolean | undefined;
   onBlur?: () => void;
+  /** Told when the typed text is, or stops being, an unfinished or impossible date (the value is
+   * then empty), so a form can refuse to save it instead of storing "no date". */
+  onInvalidChange?: ((invalid: boolean) => void) | undefined;
 }
 
 export function DateField({
@@ -66,6 +69,7 @@ export function DateField({
   "aria-describedby": ariaDescribedBy,
   "aria-invalid": ariaInvalid,
   onBlur,
+  onInvalidChange,
 }: DateFieldProps) {
   const { t, i18n } = useTranslation("common");
   const language = i18n.language;
@@ -96,6 +100,11 @@ export function DateField({
   const typedIso = parseDateInput(draft, language);
   const outOfRange = typedIso != null && !isDateWithin(typedIso, min, max);
   const invalid = draft.trim() !== "" && (typedIso == null || outOfRange);
+  const onInvalidChangeRef = useRef(onInvalidChange);
+  onInvalidChangeRef.current = onInvalidChange;
+  useEffect(() => {
+    onInvalidChangeRef.current?.(invalid);
+  }, [invalid]);
 
   function onText(next: string) {
     setDraft(next);

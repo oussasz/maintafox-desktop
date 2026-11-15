@@ -66,7 +66,7 @@ struct DeviceConfig {
 }
 
 /// The harness only ever talks to the API the script started on this machine.
-fn require_local(url: &str) {
+pub(super) fn require_local(url: &str) {
     let rest = url
         .strip_prefix("http://")
         .unwrap_or_else(|| panic!("harness URL must be plain http on this machine: {url}"));
@@ -571,6 +571,9 @@ async fn multi_device_harness() {
         mime_type: "application/pdf".to_string(),
         notes: None,
         uploaded_by_id: person,
+        document_number: None,
+        revision: None,
+        valid_until: None,
     };
     let pdf = b"%PDF-1.7 harness standard operating procedure".to_vec();
     let sop = crate::library_documents::save_library_document(&a.db, &a.media_root, document("sop.pdf", &pdf))

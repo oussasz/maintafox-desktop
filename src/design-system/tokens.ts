@@ -32,9 +32,9 @@ export const mfLayout = {
   /** Segmented view control (list / kanban / …) */
   viewToggleGroup:
     "flex items-center rounded-md border border-surface-border p-0.5 gap-0.5 bg-surface-1/80",
-  /** 40 px button inside a 2 px-padded group = 44 px target row */
+  /** 40 px high button inside a 2 px-padded group = 44 px target row; icon + visible name (L6-13) */
   viewToggleButton:
-    "inline-flex h-10 w-10 items-center justify-center rounded transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+    "inline-flex h-10 min-w-10 items-center justify-center gap-1.5 rounded px-2.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
   /** Icon-only toolbar button (filter toggle, refresh): 44 px target */
   toolbarIconButton: "h-11 w-11 p-0",
   /** Primary header action (create): 44 px high */
@@ -59,13 +59,20 @@ export const mfAuth = {
    * `justify-center`, so short content is centred and tall content starts at the top and scrolls.
    */
   shell:
-    "mf-auth mf-auth-backdrop flex h-[100dvh] w-full flex-col items-center overflow-y-auto px-4 py-8 sm:px-6 before:flex-1 before:content-[''] after:flex-1 after:content-['']",
+    "mf-auth mf-auth-backdrop flex h-[100dvh] w-full flex-col items-center overflow-y-auto px-4 py-8 sm:px-6 before:flex-1 before:content-[''] after:flex-1 after:content-[''] [&>*]:shrink-0",
+  /**
+   * Sign-in, activation, first administrator, password change: the Windows window IS the screen.
+   * One flat surface (no inner card, border, shadow or backdrop margin): brand band edge to edge
+   * under the title bar, then the form and the footer. Scrolls only when the window is too short.
+   */
+  windowShell:
+    "mf-auth flex h-[100dvh] w-full flex-col overflow-y-auto bg-surface-1 [&>*]:shrink-0",
   /** Lock screen — same canvas as auth, no card */
   lockShell:
-    "mf-auth mf-auth-backdrop flex h-[100dvh] w-full flex-col items-center overflow-y-auto px-4 py-8 sm:px-6 before:flex-1 before:content-[''] after:flex-1 after:content-['']",
+    "mf-auth mf-auth-backdrop flex h-[100dvh] w-full flex-col items-center overflow-y-auto px-4 py-8 sm:px-6 before:flex-1 before:content-[''] after:flex-1 after:content-[''] [&>*]:shrink-0",
   /** Full-screen recovery / startup screens (no card): same scroll + centring behaviour. */
   startupShell:
-    "flex h-[100dvh] w-full flex-col items-center gap-4 overflow-y-auto bg-surface-0 px-8 py-8 text-center before:flex-1 before:content-[''] after:flex-1 after:content-['']",
+    "flex h-[100dvh] w-full flex-col items-center gap-4 overflow-y-auto bg-surface-0 px-8 py-8 text-center before:flex-1 before:content-[''] after:flex-1 after:content-[''] [&>*]:shrink-0",
   /** Primary login card: compact, white, subtle border and restrained shadow. */
   card: "w-full max-w-[400px] rounded-xl border border-surface-border bg-surface-1 p-6 shadow-[var(--mfa-shadow-card)] motion-safe:animate-in motion-safe:fade-in motion-safe:duration-200 sm:p-8",
   cardCompact:

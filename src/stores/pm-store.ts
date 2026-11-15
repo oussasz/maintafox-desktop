@@ -13,15 +13,17 @@
 import { create } from "zustand";
 
 import {
+  type DuplicatePmPlanRowResult,
   type PmComplianceReport,
   type PmExecutionRow,
   type PmOccurrenceRow,
   type PmPlanRow,
   createPmPlan,
-  createPmRevisionFromFinding,
   createPmPlanVersion,
+  createPmRevisionFromFinding,
   deletePmPlan,
   deletePmPlanVersion,
+  duplicatePmPlan,
   executePmOccurrence,
   generatePmOccurrences,
   getPmCompliance,
@@ -45,6 +47,7 @@ import {
 import type {
   CreatePmPlanInput,
   CreatePmPlanVersionInput,
+  DuplicatePmPlanInput,
   ExecutePmOccurrenceInput,
   ExecutePmOccurrenceResult,
   GeneratePmOccurrencesInput,
@@ -64,6 +67,9 @@ import type {
   UpdatePmPlanInput,
   UpdatePmPlanVersionInput,
 } from "@shared/ipc-types";
+
+/** A created copy, and the failure of the refresh that followed it (`null`: refreshed). */
+export type DuplicatePlanOutcome = DuplicatePmPlanRowResult & { refreshError: unknown };
 
 /** Recurring findings look back over this many days (shown in the section title). */
 export const PM_RECURRING_FINDINGS_WINDOW_DAYS = 90;
@@ -130,6 +136,12 @@ interface PmStoreState {
   transitionOccurrence: (input: TransitionPmOccurrenceInput) => Promise<PmOccurrenceRow>;
   executeOccurrence: (input: ExecutePmOccurrenceInput) => Promise<ExecutePmOccurrenceResult>;
   createPlan: (input: CreatePmPlanInput) => Promise<PmPlanRow>;
+  /**
+   * "Dupliquer ce plan": draft copy (version 1) on the chosen asset; opens the new plan. Rejects
+   * only when the copy was not created; a failed refresh afterwards is returned in
+   * `refreshError` (the copy exists: asking again would only hit "code already used").
+   */
+  duplicatePlan: (input: DuplicatePmPlanInput) => Promise<DuplicatePlanOutcome>;
   updatePlan: (
     planId: number,
     expectedRowVersion: number,
@@ -412,6 +424,20 @@ export const usePmStore = create<PmStoreState>()((set, get) => ({
       await get().loadWorkspace();
       await get().openPlan(plan.id);
       return plan;
+    }),
+
+  duplicatePlan: (input) =>
+    withSaving(async () => {
+      const result = await duplicatePmPlan(input);
+      let refreshError: unknown = null;
+      try {
+        await get().loadWorkspace();
+        await get().openPlan(result.plan.id);
+        refreshError = get().error ?? get().detailError ?? null;
+      } catch (err) {
+        refreshError = err;
+      }
+      return { ...result, refreshError };
     }),
 
   updatePlan: (planId, expectedRowVersion, input) =>

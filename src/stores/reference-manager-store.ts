@@ -118,11 +118,16 @@ const SYNTHETIC_CATALOGS: readonly SyntheticCatalog[] = [
     TENANT_DICTIONARY,
     "stockCatalogs",
   ),
-  syntheticCatalog(URGENCY_SCALE_DOMAIN_ID, "WORK.URGENCY_SCALE", "Échelle d'urgence (DI / OT)", {
-    governance_level: "protected_analytical",
-    governance_category: "system_catalog",
-    is_extendable: false,
-  }),
+  syntheticCatalog(
+    URGENCY_SCALE_DOMAIN_ID,
+    "WORK.URGENCY_SCALE",
+    "Urgence / priorité des DI et OT",
+    {
+      governance_level: "protected_analytical",
+      governance_category: "system_catalog",
+      is_extendable: false,
+    },
+  ),
   syntheticCatalog(
     WORK_ORDER_STATUSES_DOMAIN_ID,
     "WO.WORK_ORDER_STATUSES",

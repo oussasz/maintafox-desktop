@@ -1,3 +1,4 @@
+pub mod baseline;
 pub mod demo_seeder;
 pub mod encryption;
 pub mod integrity;
@@ -18,6 +19,15 @@ use std::path::Path;
 use std::time::Duration;
 
 use crate::errors::{AppError, AppResult};
+
+/// The row id of the row the `INSERT` that gave `result` added, read from that statement's own
+/// result. A separate `SELECT last_insert_rowid()` on the pool is a second statement: another task
+/// can run its own insert on the connection in between, and the id read then names that other row
+/// (or none of this table). Inside a transaction both forms are safe; this one is safe everywhere.
+pub fn inserted_id(result: &sea_orm::ExecResult) -> AppResult<i64> {
+    i64::try_from(result.last_insert_id())
+        .map_err(|_| AppError::Internal(anyhow::anyhow!("inserted row id out of range")))
+}
 
 /// Opens a single-connection pool on `path` through SQLCipher.
 ///
@@ -51,6 +61,55 @@ pub(crate) async fn connect_sqlcipher(
         .await
         .map_err(|e| AppError::Internal(anyhow::anyhow!("cannot open database {}: {e}", path.display())))?;
     Ok(sea_orm::SqlxSqliteConnector::from_sqlx_sqlite_pool(pool))
+}
+
+/// Opens an EXISTING database for the developer-only demo-company generator, through the SQLite
+/// VFS `vfs` (the generator's simulated clock) and with the key this PC stores for its database.
+/// Never creates a file: the generator only fills a database the app itself created.
+#[cfg(feature = "demo-company")]
+pub async fn open_existing_with_vfs(path: &Path, vfs: &str) -> AppResult<DatabaseConnection> {
+    use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+    use sqlx::ConnectOptions;
+
+    if !path.is_file() {
+        return Err(AppError::NotFound {
+            entity: "database".into(),
+            id: path.display().to_string(),
+        });
+    }
+    let key = match encryption::detect_file_state(path)? {
+        encryption::DatabaseFileState::Encrypted => Some(
+            encryption::load_stored_key()?
+                .ok_or_else(|| AppError::DatabaseKeyUnavailable("this PC has no stored key for the database".into()))?,
+        ),
+        encryption::DatabaseFileState::Plaintext => None,
+        encryption::DatabaseFileState::Missing => {
+            return Err(AppError::NotFound {
+                entity: "database".into(),
+                id: path.display().to_string(),
+            })
+        }
+    };
+    let mut opts = SqliteConnectOptions::new()
+        .filename(path)
+        .create_if_missing(false)
+        .vfs(vfs.to_string())
+        .disable_statement_logging();
+    if let Some(key) = &key {
+        opts = opts.pragma("key", key.pragma_value());
+    }
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .min_connections(1)
+        .acquire_timeout(Duration::from_secs(10))
+        .connect_with(opts)
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("cannot open database {}: {e}", path.display())))?;
+    let db = sea_orm::SqlxSqliteConnector::from_sqlx_sqlite_pool(pool);
+    assert_sqlcipher_linked(&db).await?;
+    db.execute_unprepared("PRAGMA foreign_keys=ON;").await?;
+    db.execute_unprepared("PRAGMA busy_timeout=5000;").await?;
+    Ok(db)
 }
 
 /// Fails unless the linked SQLite is SQLCipher: without it `PRAGMA key` is silently ignored and the

@@ -22,6 +22,7 @@ import { AssetStatusBadge } from "@/components/assets/AssetStatusBadge";
 import { CriticalityBadge } from "@/components/assets/CriticalityBadge";
 import { CriticalityReviewMark } from "@/components/assets/CriticalityReviewMark";
 import { EquipmentRegistryMetricCards } from "@/components/assets/EquipmentRegistryMetricCards";
+import { criticalityLabelKey, findStatus, statusLabelKey } from "@/components/assets/asset-tones";
 import { DataTable } from "@/components/data/DataTable";
 import { DiFormDialog } from "@/components/di/DiFormDialog";
 import {
@@ -31,14 +32,18 @@ import {
   ViewToggle,
 } from "@/components/layout/ModuleHeaderControls";
 import { ModulePageShell } from "@/components/layout/ModulePageShell";
+import { ExportCsvButton } from "@/components/ui/ExportCsvButton";
+import { hasScreenToReturnTo } from "@/components/ui/back-to-origin-button";
 import { Button } from "@/components/ui/button";
 import { ErrorState, TruncationNotice } from "@/components/ui/data-state";
 import { WoFormDialog } from "@/components/wo/WoFormDialog";
 import { mfLayout } from "@/design-system/tokens";
+import { assetExportRows } from "@/export/list-exports";
 import { useFormatters } from "@/hooks/use-formatters";
 import { LIST_PARAM, textParam, withoutParams } from "@/lib/list-links";
 import { useAssetSearchStore } from "@/stores/asset-search-store";
 import { useAssetStore } from "@/stores/asset-store";
+import { useEquipmentTaxonomy } from "@/stores/equipment-taxonomy-store";
 import type { AssetSearchResult } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
@@ -83,12 +88,18 @@ export function AssetRegistryPage() {
   const runSearch = useAssetSearchStore((s) => s.runSearch);
   const loadMore = useAssetSearchStore((s) => s.loadMore);
   const selectAsset = useAssetSearchStore((s) => s.selectAsset);
+  const selectedAssetId = useAssetSearchStore((s) => s.selectedResultId);
   const openCreateForm = useAssetStore((s) => s.openCreateForm);
   const showCreateForm = useAssetStore((s) => s.showCreateForm);
 
   const [view, setView] = useState<RegistryView>(readView);
   const [showFilters, setShowFilters] = useState(readShowFilters);
   const [searchParams, setSearchParams] = useSearchParams();
+  const [openedFromLink, setOpenedFromLink] = useState(false);
+  // "Retour" only belongs to the asset opened from a link: forget it once the sheet is closed.
+  useEffect(() => {
+    if (selectedAssetId == null) setOpenedFromLink(false);
+  }, [selectedAssetId]);
 
   useEffect(() => {
     void runSearch();
@@ -106,7 +117,10 @@ export function AssetRegistryPage() {
     const raw = searchParams.get("assetId");
     if (!raw) return;
     const id = Number(raw);
-    if (Number.isInteger(id) && id > 0) selectAsset(id);
+    if (Number.isInteger(id) && id > 0) {
+      setOpenedFromLink(hasScreenToReturnTo());
+      selectAsset(id);
+    }
     setSearchParams(
       (prev) => {
         const next = new URLSearchParams(prev);
@@ -252,6 +266,40 @@ export function AssetRegistryPage() {
     [t, formatDecimal, selectAsset],
   );
 
+  // Export: the rows the list holds now, with the labels the screen shows.
+  const { catalog } = useEquipmentTaxonomy();
+  const exportHeader = useMemo(
+    () => [
+      t("list.columns.code"),
+      t("list.columns.name"),
+      t("list.columns.class"),
+      t("list.columns.criticality"),
+      t("list.columns.status"),
+      t("list.columns.site"),
+      t("list.columns.parentName"),
+      t("list.columns.primaryMeter"),
+    ],
+    [t],
+  );
+  const getExportRows = useCallback(
+    () =>
+      assetExportRows(results, {
+        statusLabel: (code) => {
+          const key = statusLabelKey(code);
+          return key ? t(key as never) : (findStatus(catalog, code)?.label ?? code);
+        },
+        criticalityLabel: (code) => {
+          const key = criticalityLabelKey(code);
+          const option = catalog?.criticalities.find(
+            (c) => c.code.toUpperCase() === code.toUpperCase(),
+          );
+          return `${code} — ${key ? t(key as never) : (option?.label ?? code)}`;
+        },
+        formatReading: (value, unit) => `${formatDecimal(value, 1)} ${unit ?? ""}`.trim(),
+      }),
+    [results, t, catalog, formatDecimal],
+  );
+
   const showError = error != null && results.length === 0;
 
   return (
@@ -278,6 +326,13 @@ export function AssetRegistryPage() {
               {t("registry.import")}
             </Button>
           </PermissionGate>
+          <ExportCsvButton
+            permission={P.EQ_VIEW}
+            fileName="equipements.csv"
+            header={exportHeader}
+            getRows={getExportRows}
+            total={total}
+          />
           <ViewToggle value={view} options={viewOptions} onChange={switchView} />
           <FilterToggleButton
             open={showFilters}
@@ -340,7 +395,17 @@ export function AssetRegistryPage() {
         </>
       )}
 
-      <AssetDetailDialog />
+      <AssetDetailDialog
+        {...(openedFromLink
+          ? {
+              onBackToOrigin: () => {
+                setOpenedFromLink(false);
+                selectAsset(null);
+                void navigate(-1);
+              },
+            }
+          : {})}
+      />
       <AssetCreateForm />
       <AssetEditForm />
       <WoFormDialog />

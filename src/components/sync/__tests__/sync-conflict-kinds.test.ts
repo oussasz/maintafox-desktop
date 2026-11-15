@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import en from "@/i18n/en/shell.json";
 import fr from "@/i18n/fr/shell.json";
+import type { SyncConflictRecord } from "@shared/ipc-types";
 
 import {
   COUNT_HISTORY_ENTITY_TYPES,
@@ -16,6 +17,7 @@ import {
   RELIABILITY_DECISION_CONFLICT_KINDS,
   REVIEW_ONLY_CONFLICT_KINDS,
   SETTLED_AT_ORIGIN_CONFLICT_KINDS,
+  clashingNumber,
   conflictActions,
 } from "../sync-conflict-display";
 
@@ -59,7 +61,10 @@ describe("sync conflict kinds", () => {
       "QUALIFICATION_OVERRIDE_UNAUTHORISED",
       "SYNC_STATE_TIME_MISSING",
       "WO_PART_LINE_HAS_USE",
+      "RCM_RUN_TO_FAILURE_CRITICAL",
       "WO_PERMIT_SAFETY_ORIGIN_CHANGED",
+      "WO_DEPANNAGE_FACTS_INVALID",
+      "WO_DEPANNAGE_VALIDATION_INVALID",
       "GRANT_BY_UNAUTHORISED_ADMIN",
       "INSP_ANOMALY_PERMIT_REVIEW_CLEARED",
       "INSP_ANOMALY_LINK_CHANGED",
@@ -75,6 +80,8 @@ describe("sync conflict kinds", () => {
       "WO_VERIFIER_RECORDED_LABOUR",
       "WO_MANDATORY_TASK_REMOVED",
       "WO_CANCEL_PERMIT_GATE",
+      "WO_EXECUTION_UNAUTHORISED",
+      "WO_EXECUTION_AUTHOR_UNKNOWN",
       "PERMIT_ENDED_BEFORE_START",
       "PERMIT_ENDED_DURING_WORK",
     ]) {
@@ -214,5 +221,23 @@ describe("sync conflict kinds", () => {
         "dismiss",
       ]);
     }
+  });
+});
+
+describe("number clash", () => {
+  const clash = (payload: Record<string, unknown>) =>
+    ({
+      conflict_type: "CODE_CLASH",
+      inbound_payload_json: JSON.stringify(payload),
+    }) as SyncConflictRecord;
+
+  it("names the number of every numbered record type (L3-12: purchase documents)", () => {
+    expect(clashingNumber(clash({ code: "OT-8AR2-0576" }))).toBe("OT-8AR2-0576");
+    expect(clashingNumber(clash({ employee_code: "PER-8AR2-0003" }))).toBe("PER-8AR2-0003");
+    expect(clashingNumber(clash({ req_number: "DA-8AR2-0001" }))).toBe("DA-8AR2-0001");
+    expect(clashingNumber(clash({ po_number: "BC-8AR2-0002" }))).toBe("BC-8AR2-0002");
+    expect(clashingNumber(clash({ gr_number: "BR-8AR2-0003" }))).toBe("BR-8AR2-0003");
+    expect(clashingNumber(clash({ order_code: "REP-8AR2-0004" }))).toBe("REP-8AR2-0004");
+    expect(clashingNumber(clash({ title: "no number" }))).toBeNull();
   });
 });

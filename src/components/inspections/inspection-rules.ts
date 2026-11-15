@@ -475,3 +475,11 @@ export function isoToLocalInput(iso: string | null): string {
   const p = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
 }
+
+/**
+ * L1-32: the team as shown after "Équipe" / "Team": a team already named "Équipe mécanique" is
+ * shown as is, not "Équipe Équipe mécanique".
+ */
+export function teamText(name: string, withPrefix: (name: string) => string): string {
+  return /^(équipe|equipe|team)/i.test(name.trim()) ? name : withPrefix(name);
+}

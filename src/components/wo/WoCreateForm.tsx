@@ -26,7 +26,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
+import { StickyActionBar } from "@/components/ui/sticky-action-bar";
 import { Textarea } from "@/components/ui/textarea";
+import { useUnsavedFormGuard } from "@/components/ui/unsaved-changes-guard";
+import { useFormatters } from "@/hooks/use-formatters";
 import { useSession } from "@/hooks/use-session";
 import { describeAppError } from "@/lib/app-error";
 import { assetToSearchResult } from "@/lib/asset-to-search-result";
@@ -70,6 +73,16 @@ interface FormErrors {
   typeCode?: string;
   urgencyId?: string;
   equipment?: string;
+  plannedEnd?: string;
+}
+
+/** Hours between two `datetime-local` values; null when one is empty or unreadable. */
+function hoursBetween(start: string, end: string): number | null {
+  if (!start || !end) return null;
+  const from = new Date(start).getTime();
+  const to = new Date(end).getTime();
+  if (Number.isNaN(from) || Number.isNaN(to)) return null;
+  return (to - from) / 3_600_000;
 }
 
 function validate(
@@ -79,6 +92,8 @@ function validate(
     urgencyId: string;
     urgencyIdValid: boolean;
     equipmentId: number | null;
+    plannedStart: string;
+    plannedEnd: string;
   },
   opts: { requireType: boolean; requireUrgency: boolean; requireEquipment: boolean },
   t: (key: string) => string,
@@ -95,6 +110,10 @@ function validate(
   if (opts.requireEquipment && fields.equipmentId == null) {
     errors.equipment = t("form.validation.equipmentRequired");
   }
+  const plannedHours = hoursBetween(fields.plannedStart, fields.plannedEnd);
+  if (plannedHours != null && plannedHours < 0) {
+    errors.plannedEnd = t("form.validation.plannedEndBeforeStart");
+  }
   return errors;
 }
 
@@ -108,6 +127,7 @@ export function WoCreateForm({
   onCancel,
 }: WoCreateFormProps) {
   const { t, i18n } = useTranslation("ot");
+  const { formatNumber } = useFormatters();
   const { info } = useSession();
   const saving = useWoStore((s) => s.saving);
   const storeError = useWoStore((s) => s.error);
@@ -136,6 +156,7 @@ export function WoCreateForm({
   const [typeCode, setTypeCode] = useState<string>(initial?.type_code ?? "");
   // The plant's sub-types (COMPANY list), each under one maintenance nature.
   const [subtypes, setSubtypes] = useState<WorkOrderSubtypeOption[]>([]);
+  const [subtypesLoaded, setSubtypesLoaded] = useState(false);
   const [subtypeCode, setSubtypeCode] = useState<string>(initial?.subtype_code ?? "");
   const [urgencyId, setUrgencyId] = useState<string>(initial?.urgency_code ?? "");
   // The inputs hold local date and time (`datetime-local`); the work order stores UTC instants.
@@ -178,7 +199,10 @@ export function WoCreateForm({
     let cancelled = false;
     listWorkOrderSubtypes()
       .then((rows) => {
-        if (!cancelled) setSubtypes(rows.filter((r) => r.is_active));
+        if (!cancelled) {
+          setSubtypes(rows.filter((r) => r.is_active));
+          setSubtypesLoaded(true);
+        }
       })
       .catch((err: unknown) => {
         if (!cancelled) setSubmitError(describeAppError(err).title);
@@ -195,8 +219,11 @@ export function WoCreateForm({
     [subtypes, selectedNature],
   );
   useEffect(() => {
+    // The stored sub-type is judged only once the types and the sub-type list are both loaded:
+    // before that the list is empty and would wipe a valid choice on opening.
+    if (!subtypesLoaded || typesLoading || woTypesCatalog.length === 0) return;
     if (subtypeCode && !subtypeOptions.some((st) => st.code === subtypeCode)) setSubtypeCode("");
-  }, [subtypeCode, subtypeOptions]);
+  }, [subtypeCode, subtypeOptions, subtypesLoaded, typesLoading, woTypesCatalog.length]);
 
   useEffect(() => {
     if (isEdit) return;
@@ -213,10 +240,13 @@ export function WoCreateForm({
     if (!initial?.equipment_id) return;
     const key = `${initial.id}-${initial.equipment_id}`;
     if (editEquipmentHydrateKeyRef.current === key) return;
-    editEquipmentHydrateKeyRef.current = key;
     let cancelled = false;
     void getAssetByIdSilent(initial.equipment_id).then((asset) => {
-      if (!cancelled && asset) setSelectedAsset(assetToSearchResult(asset));
+      if (cancelled || !asset) return;
+      // L1-24: marked done only once the field is filled. Marked before the load, a cancelled
+      // first run (React's mount / unmount / mount in development) left the field empty for good.
+      editEquipmentHydrateKeyRef.current = key;
+      setSelectedAsset(assetToSearchResult(asset));
     });
     return () => {
       cancelled = true;
@@ -264,11 +294,21 @@ export function WoCreateForm({
   const currentErrors = useMemo(
     () =>
       validate(
-        { title, typeCode, urgencyId, urgencyIdValid, equipmentId: selectedEquipmentId },
+        {
+          title,
+          typeCode,
+          urgencyId,
+          urgencyIdValid,
+          equipmentId: selectedEquipmentId,
+          plannedStart,
+          plannedEnd,
+        },
         { requireType, requireUrgency, requireEquipment },
         t,
       ),
     [
+      plannedStart,
+      plannedEnd,
       title,
       typeCode,
       urgencyId,
@@ -280,8 +320,30 @@ export function WoCreateForm({
       t,
     ],
   );
+  // Not blocking: an estimate longer than the time between the planned start and end.
+  const plannedWindowHours = hoursBetween(plannedStart, plannedEnd);
+  const durationExceedsWindow =
+    plannedWindowHours != null &&
+    plannedWindowHours >= 0 &&
+    expectedDuration != null &&
+    expectedDuration > plannedWindowHours
+      ? plannedWindowHours
+      : null;
+  const formatHours = (hours: number) => formatNumber(hours, { maximumFractionDigits: 1 });
   const isValid = Object.keys(currentErrors).length === 0;
   const catalogsReady = !typesLoading && !prioritiesLoading;
+  // Why the save button is grey: the fields still missing, in the order of the form.
+  const missingLabels: string[] = [];
+  if (currentErrors.equipment) missingLabels.push(t("form.equipment.label"));
+  if (currentErrors.typeCode) missingLabels.push(t("form.type.label"));
+  if (currentErrors.urgencyId) missingLabels.push(t("form.urgency.label"));
+  if (currentErrors.title) missingLabels.push(t("form.title.label"));
+  const reasons: string[] = [];
+  if (missingLabels.length > 0) {
+    reasons.push(t("form.missingFields", { fields: missingLabels.join(", ") }));
+  }
+  if (currentErrors.plannedEnd) reasons.push(currentErrors.plannedEnd);
+  const disabledReason = reasons.join(" ");
 
   const markTouched = useCallback((field: string) => {
     setTouched((prev) => new Set(prev).add(field));
@@ -292,10 +354,30 @@ export function WoCreateForm({
     [touched, currentErrors],
   );
 
+  // ── Unsaved input ─────────────────────────────────────────────────────
+  // Dirty = a field differs from what the form opened with. The type picked by default on a new
+  // work order and an equipment passed in by the caller are not the user's input.
+  const dirty =
+    title !== (initial?.title ?? "") ||
+    description !== (initial?.description ?? "") ||
+    notes !== (initial?.notes ?? "") ||
+    plannedStart !== (initial?.planned_start ? toDateTimeLocal(initial.planned_start) : "") ||
+    plannedEnd !== (initial?.planned_end ? toDateTimeLocal(initial.planned_end) : "") ||
+    expectedDuration !== (initial?.expected_duration_hours ?? null) ||
+    requiresPermit !== (initial?.requires_permit ?? false) ||
+    urgencyId !== (initial?.urgency_code ?? "") ||
+    subtypeCode !== (initial?.subtype_code ?? "") ||
+    (isEdit && typeCode !== (initial?.type_code ?? "")) ||
+    (selectedAsset != null &&
+      (isEdit
+        ? selectedAsset.id !== initial?.equipment_id
+        : prefillAsset == null && (prefillEquipmentId == null || prefillEquipmentId <= 0)));
+  const { requestCancel, markSaved, guard } = useUnsavedFormGuard({ dirty, onCancel });
+
   // ── Submit ────────────────────────────────────────────────────────────
 
   const handleSubmit = useCallback(async () => {
-    setTouched(new Set(["title", "typeCode", "urgencyId", "equipment"]));
+    setTouched(new Set(["title", "typeCode", "urgencyId", "equipment", "plannedEnd"]));
     setSubmitError(null);
     if (!isValid || !catalogsReady || !info?.user_id) return;
 
@@ -319,6 +401,7 @@ export function WoCreateForm({
           requires_permit: requiresPermit,
         };
         await updateDraft(draftPayload);
+        markSaved();
         onSubmitted({ ...initial, title, description, requires_permit: requiresPermit });
       } else {
         const input: WoCreateInput = {
@@ -336,6 +419,7 @@ export function WoCreateForm({
           requires_permit: requiresPermit,
         };
         const wo = await submitNewWo(input);
+        markSaved();
         onSubmitted(wo);
       }
     } catch (err) {
@@ -363,6 +447,7 @@ export function WoCreateForm({
     requiresPermit,
     submitNewWo,
     updateDraft,
+    markSaved,
     onSubmitted,
   ]);
 
@@ -467,7 +552,7 @@ export function WoCreateForm({
               setUrgencyId(code);
               markTouched("urgencyId");
             }}
-            placeholder={t("form.urgency.label")}
+            placeholder={t("form.urgency.placeholder")}
             className="w-full"
             aria-invalid={Boolean(fieldError("urgencyId"))}
           />
@@ -527,7 +612,11 @@ export function WoCreateForm({
           </FormField>
 
           {/* Planned End */}
-          <FormField name="plannedEnd" label={t("form.plannedEnd.label")}>
+          <FormField
+            name="plannedEnd"
+            label={t("form.plannedEnd.label")}
+            error={currentErrors.plannedEnd}
+          >
             <DateTimeField
               id="wo-planned-end"
               value={plannedEnd}
@@ -545,6 +634,14 @@ export function WoCreateForm({
             value={expectedDuration}
             onValueChange={setExpectedDuration}
           />
+          {durationExceedsWindow != null ? (
+            <p className="mt-1 text-xs text-status-warning">
+              {t("form.duration.exceedsWindow", {
+                hours: formatHours(expectedDuration ?? 0),
+                window: formatHours(durationExceedsWindow),
+              })}
+            </p>
+          ) : null}
         </FormField>
 
         {/* Notes */}
@@ -558,8 +655,6 @@ export function WoCreateForm({
         </FormField>
       </section>
 
-      <Separator />
-
       {/* ── Error banner ────────────────────────────────────────────── */}
       {(submitError || storeError || catalogError || prioritiesError) && (
         <div className="rounded-md border border-tone-danger-border bg-tone-danger-bg px-3 py-2 text-sm text-tone-danger-fg">
@@ -569,9 +664,25 @@ export function WoCreateForm({
         </div>
       )}
 
+      {!isValid && catalogsReady && disabledReason ? (
+        <p
+          className="text-right text-xs text-text-muted"
+          role="status"
+          data-testid="wo-create-missing"
+        >
+          {disabledReason}
+        </p>
+      ) : null}
+
       {/* ── Actions ──────────────────────────────────────────────────── */}
-      <div className="flex justify-end gap-2">
-        <Button variant="outline" size="sm" onClick={onCancel} disabled={saving}>
+      <StickyActionBar
+        hint={
+          !isValid
+            ? t("form.missingHint", { items: Object.values(currentErrors).join(" · ") })
+            : undefined
+        }
+      >
+        <Button variant="outline" size="sm" onClick={requestCancel} disabled={saving}>
           {t("form.cancel")}
         </Button>
         <Button
@@ -582,7 +693,8 @@ export function WoCreateForm({
           {saving && <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />}
           {isEdit ? t("form.update") : t("form.submit")}
         </Button>
-      </div>
+      </StickyActionBar>
+      {guard}
     </div>
   );
 }

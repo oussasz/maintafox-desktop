@@ -369,6 +369,39 @@ pub async fn update_inventory_article(
     queries::update_article(&state.db, article_id, expected_row_version, input).await
 }
 
+/// Hors-stock articles (L3-04), those "à revoir" first — inv.view.
+#[tauri::command]
+pub async fn list_non_stock_articles(
+    to_review_only: Option<bool>,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::inventory::non_stock::NonStockArticle>> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INV_VIEW,
+        PermissionScope::Global
+    );
+    crate::inventory::non_stock::list_non_stock_articles(&state.db, to_review_only.unwrap_or(false)).await
+}
+
+/// Catalogue review of a hors-stock article: keep, promote to stocked, or mark a duplicate —
+/// inv.manage, the article edit right. Nothing is deleted.
+#[tauri::command]
+pub async fn review_non_stock_article(
+    input: crate::inventory::non_stock::ReviewNonStockArticleInput,
+    state: State<'_, AppState>,
+) -> AppResult<crate::inventory::non_stock::NonStockArticle> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INV_MANAGE,
+        PermissionScope::Global
+    );
+    crate::inventory::non_stock::review_non_stock_article(&state.db, input, user.user_id.into()).await
+}
+
 #[tauri::command]
 pub async fn list_inventory_stock_balances(
     filter: InventoryStockFilter,
@@ -413,6 +446,7 @@ pub async fn adjust_inventory_stock(
             new_lot,
             posting_date,
             actor_id: Some(i64::from(user.user_id)),
+            ..Default::default()
         },
     )
     .await
@@ -593,6 +627,9 @@ pub async fn transition_inventory_procurement_requisition(
         crate::rbac::permissions::INV_PROCURE,
         PermissionScope::Global
     );
+    if let Some(right) = transition_extra_right(&input.next_status) {
+        require_permission!(state, &user, right, PermissionScope::Global);
+    }
     // Who did it comes from the session, never from the UI payload.
     input.actor_id = Some(i64::from(user.user_id));
     procurement::transition_procurement_requisition(&state.db, input).await
@@ -656,9 +693,42 @@ pub async fn transition_inventory_purchase_order(
         crate::rbac::permissions::INV_PROCURE,
         PermissionScope::Global
     );
+    if let Some(right) = transition_extra_right(&input.next_status) {
+        require_permission!(state, &user, right, PermissionScope::Global);
+    }
     // Who did it comes from the session, never from the UI payload.
     input.actor_id = Some(i64::from(user.user_id));
     procurement::transition_purchase_order(&state.db, input).await
+}
+
+/// The right a requisition / purchase order transition needs on top of `inv.procure` (which
+/// creates and manages the documents): approving and rejecting need `inv.approve`; marking an
+/// order (partially) received needs `inv.receive`, like recording the goods receipt itself
+/// (which advances the status on its own, without this transition).
+pub(crate) fn transition_extra_right(next_status: &str) -> Option<&'static str> {
+    match next_status.trim() {
+        "APPROVED" | "REJECTED" => Some(crate::rbac::permissions::INV_APPROVE),
+        "PARTIALLY_RECEIVED" | "RECEIVED_CLOSED" => Some(crate::rbac::permissions::INV_RECEIVE),
+        _ => None,
+    }
+}
+
+/// Roles that may approve this requisition or purchase order (approval right and a limit
+/// covering its amount), shown after it is submitted.
+#[tauri::command]
+pub async fn list_inventory_procurement_approver_roles(
+    document_type: String,
+    document_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<crate::inventory::domain::ProcurementApproverRoles> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INV_VIEW,
+        PermissionScope::Global
+    );
+    crate::inventory::approvals::approver_roles(&state.db, &document_type, document_id).await
 }
 
 #[tauri::command]
@@ -730,7 +800,7 @@ pub async fn receive_inventory_purchase_order_goods(
     require_permission!(
         state,
         &user,
-        crate::rbac::permissions::INV_PROCURE,
+        crate::rbac::permissions::INV_RECEIVE,
         PermissionScope::Global
     );
     // Who did it comes from the session, never from the UI payload.
@@ -744,6 +814,25 @@ pub async fn receive_inventory_purchase_order_goods(
         Err(e) => tracing::warn!(target: "maintafox", "late cost lookup for receipt {}: {e}", receipt.id),
     }
     Ok(receipt)
+}
+
+/// Part sent back to its supplier after reception: leaves the stock and is recorded on the
+/// receipt line (the receiving right, like the reception it reverses).
+#[tauri::command]
+pub async fn return_inventory_goods_to_supplier(
+    mut input: crate::inventory::domain::ReturnGoodsToSupplierInput,
+    state: State<'_, AppState>,
+) -> AppResult<crate::inventory::domain::GoodsReceiptLine> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INV_RECEIVE,
+        PermissionScope::Global
+    );
+    // Who did it comes from the session, never from the UI payload.
+    input.actor_id = Some(i64::from(user.user_id));
+    procurement::return_goods_to_supplier(&state.db, input).await
 }
 
 #[tauri::command]
@@ -1312,6 +1401,40 @@ pub async fn list_inventory_article_equivalents(
     queries::list_article_equivalents(&state.db, article_id).await
 }
 
+/// Where-used list of an article: the equipment whose parts list contains it. Read with the
+/// inventory view right (the storekeeper needs it without the equipment right).
+#[tauri::command]
+pub async fn list_inventory_article_usage(
+    article_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::assets::spare_parts::ArticleAssetUsage>> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INV_VIEW,
+        PermissionScope::Global
+    );
+    crate::assets::spare_parts::list_article_asset_usage(&state.db, article_id).await
+}
+
+/// Dormant stock (UX L3-15): articles on hand with no issue for `months` months, most valuable
+/// first. Read with the inventory view right.
+#[tauri::command]
+pub async fn list_inventory_dormant_stock(
+    months: i64,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::inventory::dormant::DormantStockRow>> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INV_VIEW,
+        PermissionScope::Global
+    );
+    crate::inventory::dormant::list_dormant_stock(&state.db, months).await
+}
+
 #[tauri::command]
 pub async fn upsert_inventory_article_equivalent(
     input: ArticleEquivalentInput,
@@ -1557,6 +1680,73 @@ mod document_link_rights_tests {
             !allowed(&db, buyer, "EQUIPMENT").await,
             "an unknown type needs inv.manage"
         );
+    }
+}
+
+#[cfg(test)]
+mod procurement_rights_tests {
+    use super::{transition_extra_right, EXCHANGE_RATE_RIGHT};
+    use crate::auth::scope_tests::{assign, role, user};
+    use crate::commands::qualification::first_held_permission;
+    use crate::rbac::permissions::{ADM_ROLES, INV_APPROVE, INV_PROCURE, INV_RECEIVE, INV_VIEW};
+
+    async fn holds(db: &sea_orm::DatabaseConnection, user_id: i32, right: &str) -> bool {
+        let cache = tokio::sync::RwLock::new(crate::rbac::cache::PermissionCache::default());
+        first_held_permission(db, &cache, user_id, &[right])
+            .await
+            .expect("rbac")
+            .is_some()
+    }
+
+    async fn holder(db: &sea_orm::DatabaseConnection, name: &str, perms: &[&str]) -> i32 {
+        let id = user(db, name).await;
+        let r = role(db, &format!("procurement {name}"), perms).await;
+        assign(db, id, r, "tenant", None).await;
+        id
+    }
+
+    /// May `user_id` move a document to `next` (the commands' check: `inv.procure`, then the
+    /// transition's extra right)?
+    async fn may_transition(db: &sea_orm::DatabaseConnection, user_id: i32, next: &str) -> bool {
+        holds(db, user_id, INV_PROCURE).await
+            && match transition_extra_right(next) {
+                Some(right) => holds(db, user_id, right).await,
+                None => true,
+            }
+    }
+
+    #[tokio::test]
+    async fn a_buyer_neither_approves_nor_marks_received_nor_maintains_rates() {
+        let db = crate::db::test_db::seeded().await;
+        let buyer = holder(&db, "buyer", &[INV_VIEW, INV_PROCURE]).await;
+        let approver = holder(&db, "approver", &[INV_VIEW, INV_PROCURE, INV_APPROVE]).await;
+        let receiver = holder(&db, "receiver", &[INV_VIEW, INV_PROCURE, INV_RECEIVE]).await;
+        let admin = holder(&db, "limits.admin", &[ADM_ROLES]).await;
+
+        for next in ["SUBMITTED", "CANCELLED", "CLOSED"] {
+            assert!(may_transition(&db, buyer, next).await, "a buyer manages: {next}");
+        }
+        for next in ["APPROVED", "REJECTED", "PARTIALLY_RECEIVED", "RECEIVED_CLOSED"] {
+            assert!(!may_transition(&db, buyer, next).await, "a buyer alone may not: {next}");
+        }
+        assert!(may_transition(&db, approver, "APPROVED").await);
+        assert!(may_transition(&db, approver, "REJECTED").await);
+        assert!(!may_transition(&db, approver, "RECEIVED_CLOSED").await);
+        assert!(may_transition(&db, receiver, "PARTIALLY_RECEIVED").await);
+        assert!(may_transition(&db, receiver, "RECEIVED_CLOSED").await);
+        assert!(!may_transition(&db, receiver, "APPROVED").await);
+
+        // Stored exchange rates feed the approval amount of foreign-currency orders.
+        assert_eq!(EXCHANGE_RATE_RIGHT, ADM_ROLES);
+        assert!(
+            !holds(&db, buyer, EXCHANGE_RATE_RIGHT).await,
+            "inv.procure alone is refused"
+        );
+        assert!(
+            !holds(&db, approver, EXCHANGE_RATE_RIGHT).await,
+            "an approver cannot shrink an order under their own limit"
+        );
+        assert!(holds(&db, admin, EXCHANGE_RATE_RIGHT).await);
     }
 }
 
@@ -1820,26 +2010,22 @@ pub async fn create_currency_exchange_rate(
     state: State<'_, AppState>,
 ) -> AppResult<crate::inventory::domain::CurrencyExchangeRate> {
     let user = require_session!(state);
-    require_permission!(
-        state,
-        &user,
-        crate::rbac::permissions::INV_PROCURE,
-        PermissionScope::Global
-    );
+    require_permission!(state, &user, EXCHANGE_RATE_RIGHT, PermissionScope::Global);
     crate::inventory::fx::create_rate(&state.db, input, Some(i64::from(user.user_id))).await
 }
 
 #[tauri::command]
 pub async fn deactivate_currency_exchange_rate(rate_id: i64, state: State<'_, AppState>) -> AppResult<()> {
     let user = require_session!(state);
-    require_permission!(
-        state,
-        &user,
-        crate::rbac::permissions::INV_PROCURE,
-        PermissionScope::Global
-    );
+    require_permission!(state, &user, EXCHANGE_RATE_RIGHT, PermissionScope::Global);
     crate::inventory::fx::deactivate_rate(&state.db, rate_id).await
 }
+
+/// Stored exchange rates convert foreign-currency purchase orders into the tenant currency that
+/// approval limits are measured in, so whoever maintains them could shrink an order under a
+/// limit. They are maintained with the right that sets the approval limits (`adm.roles`), which
+/// neither buyers (`inv.procure`) nor purchase approvers (`inv.approve`) hold by default.
+pub(crate) const EXCHANGE_RATE_RIGHT: &str = crate::rbac::permissions::ADM_ROLES;
 
 #[tauri::command]
 pub async fn resolve_currency_exchange_rate(

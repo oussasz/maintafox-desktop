@@ -9,21 +9,14 @@ import {
   wrapDocumentHeaderBlock,
 } from "@/export/templates/document-header";
 import { formatAssetLabel, formatEntityCode, formatOrDash } from "@/lib/display";
+import { formatDate as formatLocalDate } from "@/utils/formatters";
 import type { PurchaseOrderDetail } from "@shared/ipc-types";
 
 type TFn = (key: string, options?: Record<string, unknown>) => string;
 
 function fmtDate(iso: string | null | undefined, locale: string): string {
   if (!iso) return "—";
-  try {
-    return new Date(iso).toLocaleDateString(locale, {
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-    });
-  } catch {
-    return iso;
-  }
+  return formatLocalDate(iso, locale);
 }
 
 /** Money in the tenant currency, in the sheet's language. */
@@ -54,7 +47,7 @@ function buildHtml(
 ): string {
   const letterhead = wrapDocumentHeaderBlock(letterheadHtml);
   const { order, lines, grand_total, grand_total_partial } = detail;
-  const now = new Date().toLocaleDateString(locale);
+  const now = formatLocalDate(new Date(), locale);
   const supplier =
     order.supplier_name?.trim() ||
     order.supplier_company_name?.trim() ||
@@ -183,8 +176,11 @@ export async function printPoFiche(
   currency: string,
 ): Promise<void> {
   const letterheadHtml = await loadDocumentHeaderHtml();
-  const html = buildHtml(detail, t, locale, letterheadHtml, currency);
+  printHtmlDocument(buildHtml(detail, t, locale, letterheadHtml, currency));
+}
 
+/** Prints a complete HTML document through a hidden iframe (shared by the stock print sheets). */
+export function printHtmlDocument(html: string): void {
   const iframe = document.createElement("iframe");
   iframe.style.position = "fixed";
   iframe.style.right = "0";

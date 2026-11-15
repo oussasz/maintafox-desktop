@@ -75,7 +75,8 @@ async fn load_sections(db: &impl ConnectionTrait, equipment_id: i64) -> AppResul
         kpi_rows.push(vec!["A_o".into(), opt(f("availability_operational")?)]);
         kpi_rows.push(vec!["λ (failures / h)".into(), opt(f("failure_rate")?)]);
         kpi_rows.push(vec!["Eligible failures".into(), events.to_string()]);
-        kpi_rows.push(vec!["Data quality".into(), opt(f("data_quality_score")?)]);
+        // The snapshot score measures the sample size, not data quality (L2-10).
+        kpi_rows.push(vec!["Sample size".into(), opt(f("data_quality_score")?)]);
         kpi_rows.push(vec![
             "Algorithm".into(),
             s("algorithm_version")?.unwrap_or_else(|| "—".into()),

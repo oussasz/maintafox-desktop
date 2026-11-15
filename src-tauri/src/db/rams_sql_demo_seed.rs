@@ -352,35 +352,36 @@ async fn sql_ensure_anchor_work_order(db: &DatabaseConnection, equipment_id: i64
         id
     } else {
         let code = crate::wo::domain::generate_wo_code(db).await?;
-        db.execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            r"INSERT INTO work_orders (
+        let inserted = db
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                r"INSERT INTO work_orders (
                 entity_sync_id, code, type_id, status_id, equipment_id, entity_id,
                 requester_id, planner_id, urgency_id, title, description,
                 actual_start, actual_end, closed_at,
                 row_version, created_at, updated_at, closeout_validation_passed
               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, 1)",
-            [
-                crate::sync::identity::new_entity_sync_id().into(),
-                code.into(),
-                corrective_type_id.into(),
-                closed_status_id.into(),
-                equipment_id.into(),
-                node_id.into(),
-                actor_id.into(),
-                actor_id.into(),
-                urgency_id.into(),
-                title.into(),
-                "SQL demo seed — governed exposure anchor.".into(),
-                anchor_closed_at.clone().into(),
-                anchor_closed_at.clone().into(),
-                anchor_closed_at.into(),
-                now.clone().into(),
-                now.into(),
-            ],
-        ))
-        .await?;
-        last_insert_id(db).await?
+                [
+                    crate::sync::identity::new_entity_sync_id().into(),
+                    code.into(),
+                    corrective_type_id.into(),
+                    closed_status_id.into(),
+                    equipment_id.into(),
+                    node_id.into(),
+                    actor_id.into(),
+                    actor_id.into(),
+                    urgency_id.into(),
+                    title.into(),
+                    "SQL demo seed — governed exposure anchor.".into(),
+                    anchor_closed_at.clone().into(),
+                    anchor_closed_at.clone().into(),
+                    anchor_closed_at.into(),
+                    now.clone().into(),
+                    now.into(),
+                ],
+            ))
+            .await?;
+        crate::db::inserted_id(&inserted)?
     };
 
     let _ = actor_id;
@@ -396,11 +397,16 @@ async fn count_kpi_eligible_failure_events(
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT COUNT(*) AS c FROM failure_events
-             WHERE equipment_id = ?
-               AND CAST(json_extract(eligible_flags_json, '$.eligible_unplanned_mtbf') AS INTEGER) = 1
-               AND COALESCE(failed_at, detected_at, created_at) >= ?
-               AND COALESCE(failed_at, detected_at, created_at) <= ?",
+            // Failures counted in the MTBF: every unplanned one (`compute::counts_in_mtbf`, live),
+            // not the stored flag.
+            format!(
+                "SELECT COUNT(*) AS c FROM failure_events
+                 WHERE equipment_id = ?
+                   AND {}
+                   AND COALESCE(failed_at, detected_at, created_at) >= ?
+                   AND COALESCE(failed_at, detected_at, created_at) <= ?",
+                crate::reliability::compute::COUNTS_IN_MTBF_SQL
+            ),
             [equipment_id.into(), period_start.into(), period_end.into()],
         ))
         .await?
@@ -408,6 +414,8 @@ async fn count_kpi_eligible_failure_events(
     row.try_get("", "c").map_err(decode)
 }
 
+/// Marks the demo work-order failures verified. It only rewrites the stored flag (provenance); no
+/// figure reads that flag any more (the MTBF counts every unplanned failure, decided live).
 async fn sql_promote_failure_event_eligibility(db: &DatabaseConnection, equipment_id: i64) -> AppResult<()> {
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -548,17 +556,6 @@ async fn resolve_wo_status_id(db: &DatabaseConnection, code: &str) -> AppResult<
 
 async fn resolve_wo_type_id(db: &DatabaseConnection, code: &str) -> AppResult<i64> {
     crate::wo::types::resolve_work_order_type_id_by_code(db, code).await
-}
-
-async fn last_insert_id(db: &DatabaseConnection) -> AppResult<i64> {
-    let row = db
-        .query_one(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT last_insert_rowid() AS id".to_string(),
-        ))
-        .await?
-        .ok_or_else(|| AppError::SyncError("last_insert_rowid missing".into()))?;
-    row.try_get("", "id").map_err(decode)
 }
 
 fn decode(err: sea_orm::DbErr) -> AppError {

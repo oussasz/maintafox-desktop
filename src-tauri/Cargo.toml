@@ -1,6 +1,6 @@
 [package]
 name = "maintafox"
-version = "0.9.2"
+version = "0.9.3"
 edition = "2021"
 # Code uses APIs stabilised in 1.80 (LazyLock) and 1.82; declare the real minimum.
 rust-version = "1.82"
@@ -72,9 +72,25 @@ rustls = { version = "0.23", default-features = false, features = ["ring"] }
 pdf-writer = "0.12"
 ttf-parser = "0.25"
 
+# Android: HTTPS checks servers against the bundled Mozilla root certificates
+# (sync::transport::client::tls_config); reqwest's platform verifier needs a Java component that
+# the Android build does not ship.
+[target.'cfg(target_os = "android")'.dependencies]
+webpki-roots = "1"
+
 [[bin]]
 name = "rams-readiness-eval"
 path = "src/bin/rams_readiness_eval.rs"
+
+[[bin]]
+name = "demo-company"
+path = "src/bin/demo_company.rs"
+required-features = ["demo-company"]
+
+[features]
+# Developer-only: the demo-company generator (src/bin/demo_company.rs) and the simulated clock it
+# drives (src/clock.rs). The shipped app is never built with it.
+demo-company = []
 
 [dev-dependencies]
 chrono = { version = "0.4", features = ["serde"] }

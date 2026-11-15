@@ -1,0 +1,152 @@
+{
+  "page": {
+    "title": "Aide",
+    "subtitle": "Guides courts pour bien démarrer, module par module.",
+    "searchLabel": "Rechercher dans l'aide",
+    "searchPlaceholder": "Rechercher un module ou une étape…",
+    "noResults": "Aucun guide ne correspond à votre recherche.",
+    "purposeLabel": "À quoi ça sert :",
+    "stepsLabel": "Premiers pas",
+    "open": "Ouvrir le module",
+    "modulesTitle": "Guides par module",
+    "modulesHint": "Seuls les modules auxquels votre rôle donne accès sont listés."
+  },
+  "intro": {
+    "title": "Pour commencer",
+    "body": "Maintafox suit le cycle de la maintenance : on signale un besoin, on le transforme en intervention, on la réalise, puis on analyse les résultats. Le menu de gauche regroupe les modules par thème ; chaque guide ci-dessous explique à quoi sert un module et par où commencer.",
+    "step1": "Repérez dans le menu de gauche les modules disponibles pour votre rôle.",
+    "step2": "Une demande d'intervention signale un problème ; un ordre de travail organise et suit le travail à faire.",
+    "step3": "Les listes proposées dans les formulaires (types, statuts, causes…) viennent des Données de référence.",
+    "step4": "Besoin d'un réglage personnel (langue, mot de passe, notifications) ? Ouvrez Paramètres."
+  },
+  "good": {
+    "title": "Bon à savoir",
+    "rolesTitle": "Rôles et droits",
+    "roles": "Ce que vous voyez dépend de votre rôle. Un module absent du menu n'est pas accessible avec votre rôle : demandez à un administrateur de l'ajouter si vous en avez besoin.",
+    "syncTitle": "Synchronisation",
+    "sync": "Maintafox fonctionne aussi sans connexion : vos saisies sont enregistrées sur l'appareil, puis envoyées dès que la connexion revient. L'indicateur de synchronisation de la barre du haut est visible par tous ; le détail se trouve dans Paramètres › Système & Sync, réservé aux administrateurs.",
+    "docsTitle": "Où se trouvent les documents",
+    "docs": "Les plans, procédures et manuels de l'usine sont dans la Bibliothèque documentaire, classés par catégorie. Un document peut aussi être lié à un équipement et apparaître sur sa fiche."
+  },
+  "modules": {
+    "dashboard": {
+      "title": "Vue d'ensemble",
+      "purpose": "Le point de départ : un coup d'œil sur l'activité de maintenance de votre usine.",
+      "step1": "Consultez les indicateurs affichés à l'ouverture de l'application.",
+      "step2": "Repérez les éléments en retard ou à traiter.",
+      "step3": "Ouvrez le module concerné depuis le menu pour agir."
+    },
+    "requests": {
+      "title": "Demandes d'intervention",
+      "purpose": "Signaler un problème ou un besoin de maintenance et suivre son traitement.",
+      "step1": "Cliquez sur « Nouvelle DI ».",
+      "step2": "Choisissez l'équipement concerné et décrivez le problème.",
+      "step3": "Indiquez l'urgence puis enregistrez la demande.",
+      "step4": "Suivez son avancement ; une fois approuvée, elle peut donner lieu à un ordre de travail."
+    },
+    "workOrders": {
+      "title": "Ordres de travail",
+      "purpose": "Planifier, réaliser et clôturer les interventions de maintenance.",
+      "step1": "Cliquez sur « Nouvel OT » ou partez d'une demande approuvée.",
+      "step2": "Renseignez l'équipement, le type de travail et l'urgence.",
+      "step3": "Affectez le travail et démarrez-le au moment de l'intervention.",
+      "step4": "Saisissez ce qui a été fait puis clôturez l'ordre."
+    },
+    "planning": {
+      "title": "Planification",
+      "purpose": "Organiser dans le temps les interventions et la charge des équipes.",
+      "step1": "Ouvrez le module pour voir le planning de la période.",
+      "step2": "Repérez les interventions à placer ou à déplacer.",
+      "step3": "Ajustez les dates pour équilibrer la charge."
+    },
+    "pm": {
+      "title": "Maintenance préventive",
+      "purpose": "Définir les plans d'entretien récurrents pour éviter les pannes.",
+      "step1": "Ouvrez la liste des plans de maintenance préventive.",
+      "step2": "Créez un plan en choisissant l'équipement et la fréquence.",
+      "step3": "Vérifiez les échéances à venir.",
+      "step4": "Les interventions prévues se retrouvent ensuite dans les ordres de travail."
+    },
+    "equipment": {
+      "title": "Équipements",
+      "purpose": "Le registre des équipements de l'usine et leur historique.",
+      "step1": "Cherchez un équipement dans la liste ou par l'arborescence.",
+      "step2": "Ouvrez sa fiche pour voir ses informations, ses documents et son historique.",
+      "step3": "Utilisez « Créer un actif » pour en ajouter un nouveau.",
+      "step4": "Depuis la fiche, créez une demande d'intervention ou un ordre de travail."
+    },
+    "inventory": {
+      "title": "Magasin & achats",
+      "purpose": "Gérer les pièces de rechange, les stocks et les achats associés.",
+      "step1": "Cherchez une pièce dans la liste des articles.",
+      "step2": "Vérifiez le niveau de stock disponible.",
+      "step3": "Enregistrez les entrées et sorties de stock.",
+      "step4": "Suivez les achats pour réapprovisionner."
+    },
+    "permits": {
+      "title": "Permis de travail",
+      "purpose": "Encadrer les travaux à risque par un permis validé avant l'intervention.",
+      "step1": "Ouvrez la liste des permis en cours.",
+      "step2": "Créez un permis en indiquant le travail et le lieu.",
+      "step3": "Suivez ses étapes de validation jusqu'à la clôture."
+    },
+    "inspections": {
+      "title": "Rondes et checklists",
+      "purpose": "Réaliser des rondes d'inspection avec des points de contrôle définis.",
+      "step1": "Ouvrez la liste des rondes.",
+      "step2": "Démarrez une ronde et parcourez les points de contrôle.",
+      "step3": "Notez les anomalies constatées.",
+      "step4": "Terminez la ronde pour enregistrer ses résultats."
+    },
+    "personnel": {
+      "title": "Personnel",
+      "purpose": "Le registre des personnes, équipes et compétences de la maintenance.",
+      "step1": "Cherchez une personne dans la liste.",
+      "step2": "Ouvrez sa fiche pour voir ses informations et ses compétences.",
+      "step3": "Ajoutez ou mettez à jour les personnes si votre rôle le permet."
+    },
+    "reliability": {
+      "title": "Fiabilité (RAMS)",
+      "purpose": "Analyser la fiabilité des équipements : durée de vie, défaillances, causes.",
+      "step1": "Ouvrez la page d'accueil du module.",
+      "step2": "Choisissez une méthode d'analyse (Weibull, AMDEC, RCM, Ishikawa).",
+      "step3": "Vérifiez d'abord la qualité des données avant d'interpréter les résultats."
+    },
+    "analytics": {
+      "title": "Analytique",
+      "purpose": "Produire des tableaux de bord et des rapports à partir des données de maintenance.",
+      "step1": "Ouvrez les tableaux de bord disponibles.",
+      "step2": "Partez d'un modèle de rapport pour en générer un.",
+      "step3": "Consultez l'historique des rapports déjà produits."
+    },
+    "admin": {
+      "title": "Administration",
+      "purpose": "Gérer les utilisateurs, leurs rôles et leurs droits d'accès.",
+      "step1": "Ouvrez la liste des utilisateurs.",
+      "step2": "Créez un utilisateur et attribuez-lui un rôle.",
+      "step3": "Ajustez les rôles et leurs droits si nécessaire."
+    },
+    "lookups": {
+      "title": "Données de référence",
+      "purpose": "Les listes utilisées dans toute l'application (types, statuts, catégories…), définies une seule fois.",
+      "step1": "Ouvrez la liste que vous voulez consulter.",
+      "step2": "Ajoutez ou modifiez une valeur si votre rôle le permet.",
+      "step3": "Les modules utilisent ensuite ces valeurs dans leurs formulaires."
+    },
+    "sync": {
+      "title": "Synchronisation",
+      "purpose": "Garder les données de cet appareil à jour avec le serveur de votre entreprise.",
+      "step1": "Ouvrez Paramètres › Système & Sync.",
+      "step2": "Consultez l'état de la dernière synchronisation.",
+      "step3": "En cas de problème, utilisez les diagnostics affichés sur cet écran."
+    },
+    "documentation": {
+      "title": "Bibliothèque documentaire",
+      "purpose": "Retrouver et ajouter les documents de l'usine : plans, procédures, manuels.",
+      "step1": "Choisissez une catégorie dans la liste de gauche.",
+      "step2": "Ouvrez un document existant.",
+      "step3": "Utilisez « Ajouter un document » pour en téléverser un nouveau.",
+      "step4": "Liez-le à un équipement pour le retrouver aussi sur la fiche de l'équipement."
+    }
+  }
+}

@@ -67,7 +67,7 @@ export function ConfirmDialog({
 
   return (
     <Dialog open={open} onOpenChange={(next) => !pending && onOpenChange(next)}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-w-md" confirmDiscard={false}>
         <DialogHeader>
           <DialogTitle>{title ?? t("ds.confirm.title")}</DialogTitle>
           <DialogDescription className="text-sm text-text-secondary">

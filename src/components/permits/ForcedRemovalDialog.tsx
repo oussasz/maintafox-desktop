@@ -7,10 +7,14 @@
  * attempts made to reach them (when, how — the plant's contact methods, Données de référence —
  * and what came of it). The save asks for a step-up re-authentication; every refusal is shown with
  * the server's coded, translated reason.
+ *
+ * The same process removes an absent worker's personal padlock from a permit's group lock box
+ * (L4-18, `force_remove_permit_lock`): [`ForcedLockRemovalDialog`] is the form for any lock, given
+ * how to list the people who may take it off and how to save.
  */
 
 import { Plus, Trash2 } from "lucide-react";
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
@@ -72,11 +76,75 @@ interface ForcedRemovalDialogProps {
   onRecorded: (isolation: PermitIsolationRecord) => void;
 }
 
+/** What a forced removal records, whatever the lock (the server adds the authoriser: the session). */
+export interface ForcedRemovalPayload {
+  removed_by_id: number;
+  reason: string;
+  worker_absent_attested: boolean;
+  contact_attempts: { at: string; method: string; result: string }[];
+}
+
+/** The lock being removed by force: an isolation lock, or a personal padlock. */
+export interface ForcedRemovalTarget {
+  /** Stable key of the lock (the form resets when it changes). */
+  key: string;
+  /** How the description names the lock. */
+  point: string;
+  /** The absent worker. */
+  worker: string;
+}
+
 export function ForcedRemovalDialog({
   isolation,
   onOpenChange,
   onRecorded,
 }: ForcedRemovalDialogProps) {
+  const { t } = useTranslation("permits");
+  const target: ForcedRemovalTarget | null =
+    isolation == null
+      ? null
+      : {
+          key: `isolation-${isolation.id}`,
+          point: isolation.isolation_point,
+          worker: isolation.applied_by_name ?? t("isolation.personUnknown"),
+        };
+  return (
+    <ForcedLockRemovalDialog
+      target={target}
+      onOpenChange={onOpenChange}
+      listRemovers={(search) =>
+        isolation == null
+          ? Promise.reject(new Error("no isolation"))
+          : listPermitLockRemovers(isolation.id, search)
+      }
+      submit={async (payload) => {
+        if (isolation == null) return;
+        const saved = await forcePermitIsolationRemoval({
+          isolation_id: isolation.id,
+          expected_row_version: isolation.row_version,
+          ...payload,
+        });
+        onRecorded(saved);
+      }}
+    />
+  );
+}
+
+interface ForcedLockRemovalDialogProps {
+  target: ForcedRemovalTarget | null;
+  onOpenChange: (open: boolean) => void;
+  /** The people who may be named to take the lock off (server rule). */
+  listRemovers: (search: string | null) => Promise<PermitHandoverReceiverPage>;
+  /** Saves the forced removal (wrapped in the step-up here). */
+  submit: (payload: ForcedRemovalPayload) => Promise<void>;
+}
+
+export function ForcedLockRemovalDialog({
+  target,
+  onOpenChange,
+  listRemovers,
+  submit,
+}: ForcedLockRemovalDialogProps) {
   const { t } = useTranslation("permits");
   const { withStepUp, StepUpDialogElement } = useStepUp();
   const [methods, setMethods] = useState<PermitHandoverRoleOption[] | null>(null);
@@ -92,7 +160,12 @@ export function ForcedRemovalDialog({
   const [submitted, setSubmitted] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const isolationId = isolation?.id ?? null;
+  const isolationId = target?.key ?? null;
+  // The latest callbacks, without re-running the loads when the parent re-renders.
+  const listRemoversRef = useRef(listRemovers);
+  useEffect(() => {
+    listRemoversRef.current = listRemovers;
+  });
 
   useEffect(() => {
     if (isolationId == null) return;
@@ -120,7 +193,8 @@ export function ForcedRemovalDialog({
     if (isolationId == null) return;
     let cancelled = false;
     setRemoversError(null);
-    listPermitLockRemovers(isolationId, search || null)
+    listRemoversRef
+      .current(search || null)
       .then((page) => {
         if (!cancelled) setRemovers(page);
       })
@@ -147,13 +221,11 @@ export function ForcedRemovalDialog({
     e.preventDefault();
     setSubmitted(true);
     setError(null);
-    if (!isolation || !valid) return;
+    if (!target || !valid) return;
     setBusy(true);
     try {
-      const saved = await withStepUp(() =>
-        forcePermitIsolationRemoval({
-          isolation_id: isolation.id,
-          expected_row_version: isolation.row_version,
+      await withStepUp(() =>
+        submit({
           removed_by_id: Number(remover),
           reason: serverTrim(reason),
           worker_absent_attested: attested,
@@ -164,7 +236,6 @@ export function ForcedRemovalDialog({
           })),
         }),
       );
-      onRecorded(saved);
       onOpenChange(false);
     } catch (err) {
       if (!isStepUpCancelled(err)) setError(appErrorReason(err));
@@ -173,16 +244,16 @@ export function ForcedRemovalDialog({
     }
   };
 
-  const worker = isolation?.applied_by_name ?? t("isolation.personUnknown");
+  const worker = target?.worker ?? t("isolation.personUnknown");
   return (
     <>
-      <Dialog open={isolation != null} onOpenChange={onOpenChange}>
+      <Dialog open={target != null} onOpenChange={onOpenChange}>
         <DialogContent className="max-w-2xl">
           <form onSubmit={(e) => void handleSubmit(e)} className="space-y-3" noValidate>
             <DialogHeader>
               <DialogTitle>{t("forced.title")}</DialogTitle>
               <DialogDescription>
-                {t("forced.description", { point: isolation?.isolation_point ?? "", worker })}
+                {t("forced.description", { point: target?.point ?? "", worker })}
               </DialogDescription>
             </DialogHeader>
 

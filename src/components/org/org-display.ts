@@ -29,6 +29,14 @@ export function orgNodeStatusLabel(t: TFunction<"org">, status: string): string 
   }
 }
 
+/**
+ * True for the top unit's code generated at activation (`TENANT-ROOT-…`, see
+ * `tenant_bootstrap.rs`): an internal identifier the user never chose, so screens hide it.
+ */
+export function isTechnicalRootCode(node: Pick<OrgDesignerNodeRow, "parent_id" | "code">): boolean {
+  return node.parent_id == null && node.code.startsWith("TENANT-ROOT-");
+}
+
 /** Units from the top of the structure down to `nodeId` (inclusive). */
 export function orgNodePath(
   snapshot: OrgDesignerSnapshot | null,

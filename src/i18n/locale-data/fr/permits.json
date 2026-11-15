@@ -20,13 +20,15 @@
       "outsideScope_other": "{{count}} permis ne sont pas affichés : hors de vos sites.",
       "withoutSite_one": "{{count}} permis n’est pas affiché : il n’a pas de site.",
       "withoutSite_other": "{{count}} permis ne sont pas affichés : ils n’ont pas de site.",
-      "allPermits": "Ces nombres portent sur tous les permis, quels que soient les filtres ou la recherche.",
+      "allPermits": "Total calculé sur tous les permis, sans tenir compte des filtres.",
       "askPlantWide": "Demandez à un utilisateur ayant un rôle valable pour toute l’usine pour les voir."
     },
     "noSite": {
       "badge": "À revoir : sans site",
       "hint": "Permis enregistré sans site. Seuls les utilisateurs ayant un rôle valable pour toute l’usine le voient et peuvent agir dessus."
     },
+    "overdueHidden_one": "{{count}} autre permis expiré est hors de vos sites ou sans site : non compté",
+    "overdueHidden_other": "{{count}} autres permis expirés sont hors de vos sites ou sans site : non comptés",
     "openHidden_one": "{{count}} autre permis ouvert est hors de vos sites ou sans site : non compté",
     "openHidden_other": "{{count}} autres permis ouverts sont hors de vos sites ou sans site : non comptés",
     "noIssueRightAtSite": "Vous n’avez pas le droit de délivrer des permis sur le site de cet équipement."
@@ -40,8 +42,15 @@
     "openHint": "Ni clôturés, ni levés, ni annulés, ni expirés",
     "activated": "Permis activés",
     "period30d": "30 derniers jours",
-    "onTimeRate": "Mainlevées à temps",
-    "onTimeHint": "{{onTime}} sur {{activated}} permis activés, 30 derniers jours"
+    "onTimeRate": "Mainlevées avant expiration",
+    "overdue": "Permis expirés, isolement en place",
+    "overdueHint": "Permis ouverts dont l’heure d’expiration est passée : arrêtez les travaux, retirez les cadenas, clôturez et faites la mainlevée.",
+    "onTimeHint": "{{onTime}} des {{activated}} permis activés ces 30 derniers jours ont eu leur mainlevée avant leur heure d’expiration"
+  },
+  "overdue": {
+    "chip": "Expiré",
+    "title": "Permis expiré — isolement toujours en place",
+    "body": "L’heure d’expiration ({{date}}) est passée : ce permis ne couvre plus les travaux. Arrêtez-les, faites retirer et vérifier chaque cadenas, puis clôturez le permis et faites la mainlevée."
   },
   "open": {
     "title": "Permis ouverts (non expirés)",
@@ -97,6 +106,10 @@
     "unknownPerson": "Utilisateur inconnu",
     "approverNotRecorded": "approbateur non enregistré",
     "approverNotRecordedHint": "Approuvé avant que l’application n’enregistre qui approuve les permis.",
+    "cancelledBy": "Annulé par",
+    "cancelNotRecorded": "Annulé (personne non enregistrée)",
+    "cancelReason": "Motif : {{reason}}",
+    "cancelReasonNotRecorded": "Motif non enregistré (annulé avant que l’application ne le demande)",
     "selfApproved": "auto-approbation (site sans 4 yeux)",
     "selfApprovedHint": "Approuvé sans deuxième personne : le site de ce permis a levé les quatre yeux (Paramètres › Règles par site).",
     "none": "—",
@@ -104,17 +117,26 @@
     "linkError": "Ce permis n’a pas pu être ouvert"
   },
   "transition": {
-    "submitReview": "Soumettre en revue",
-    "approve": "Approuver",
-    "issue": "Délivrer",
-    "activate": "Activer",
+    "submitReview": "Soumettre pour approbation",
+    "approve": "Approuver (seconde personne)",
+    "issue": "Délivrer le permis à l’équipe",
+    "activate": "Autoriser le début des travaux",
     "revalidate": "Demander la revalidation",
     "reinstate": "Réactiver",
     "close": "Clôturer le permis",
     "handBack": "Faire la mainlevée",
     "cancel": "Annuler le permis",
     "suspend": "Suspendre",
-    "confirmCancel": "Annuler ce permis ? Cette action est irréversible."
+    "confirmCancel": "Annuler ce permis ? Cette action est irréversible.",
+    "cancelReason": "Motif de l’annulation",
+    "keep": "Garder le permis",
+    "next": {
+      "pending_review": "Étape suivante : le rédacteur soumet le permis, une autre personne le relira.",
+      "approved": "Étape suivante : une seconde personne, qui n’a ni rédigé ni soumis le permis, le vérifie et l’approuve.",
+      "issued": "Étape suivante : le permis approuvé est délivré à l’équipe qui va intervenir.",
+      "active": "Étape suivante : une fois les isolations posées et vérifiées, le début des travaux est autorisé.",
+      "approvalChecking": "Vérification de la règle des quatre yeux…"
+    }
   },
   "gate": {
     "noIsolation": "Ce type de permis exige au moins une isolation d’énergie avant activation.",
@@ -136,11 +158,19 @@
     "apply": "Marquer posée",
     "verify": "Vérifier",
     "verifyRemoval": "Vérifier le retrait",
-    "appliedBy": "Posée par {{name}}",
-    "verifiedBy": "Vérifiée par {{name}}",
-    "removalVerifiedBy": "Retrait vérifié par {{name}}",
+    "appliedBy": "Posée par {{name}} le {{date}}",
+    "verifiedBy": "Vérifiée par {{name}} le {{date}}",
+    "removalVerifiedBy": "Retrait vérifié par {{name}} le {{date}}",
     "twoPersonHint": "Règle des deux personnes : la personne qui a posé une isolation ne peut ni la vérifier ni vérifier son retrait.",
     "selfBlocked": "Vous avez posé cette isolation — une autre personne doit vérifier.",
+    "verifyTitle": "Vérifier l'isolation — test d'énergie zéro",
+    "verifyDescription": "{{point}} : faites le test d'énergie zéro avant de vérifier l'isolation.",
+    "zeroEnergyConfirm": "Test d'énergie zéro effectué (tentative de démarrage / mesure d'absence de tension)",
+    "zeroEnergyNote": "Mesure ou constat",
+    "zeroEnergyNotePlaceholder": "Ex. : essai de démarrage local refusé, VAT 0 V entre phases",
+    "verifyCancel": "Annuler",
+    "zeroEnergyShown": "Test d'énergie zéro : {{note}}",
+    "zeroEnergyNotRecorded": "Test d'énergie zéro : test non enregistré",
     "state": {
       "pending": "Non posée",
       "applied": "Posée",
@@ -189,10 +219,12 @@
     "point": "Point",
     "lock": "Cadenas",
     "verifier": "Vérificateur",
+    "zeroEnergy": "Test d'énergie zéro",
     "expiry": "Expiration",
     "show": "Afficher la fiche",
     "recordPrint": "Enregistrer l'impression",
     "print": "Imprimer la fiche LOTO",
+    "printSheet": "Imprimer la fiche LOTO du permis",
     "doNotOperate": "DANGER — NE PAS MANŒUVRER. Équipement consigné.",
     "signature": "Signature de l'intervenant",
     "forcedRemoval": "Retrait forcé",
@@ -215,8 +247,8 @@
   "handover": {
     "handedTo": "remis à",
     "rolesHint": "Choisissez la fonction de la personne qui remet et de celle qui reçoit parmi les rôles de passation de l’usine.",
-    "onlyWhenClosed": "La remise se consigne une fois le permis clôturé.",
-    "title": "Mainlevées / passations",
+    "onlyWhenClosed": "Quand le permis est clôturé, consignez ici la remise de l’installation : qui la rend et qui la reprend.",
+    "title": "Remise de l’installation (après clôture)",
     "empty": "Aucune passation enregistrée.",
     "add": "Enregistrer une passation",
     "from": "Remis par (rôle)",
@@ -253,7 +285,13 @@
     "expiresAt": "Expire le",
     "expiresHint": "Par défaut : durée maximale du type de permis.",
     "submit": "Créer le permis",
-    "assetSearchError": "La recherche d’équipement a échoué : {{message}}"
+    "assetSearchError": "La recherche d’équipement a échoué : {{message}}",
+    "workOrderPick": "Ordre de travail couvert par ce permis",
+    "workOrderNone": "Aucun (permis sans OT)",
+    "workOrderHint": "Les OT encore ouverts de l’équipement choisi.",
+    "workOrderChooseAsset": "Choisissez d’abord l’équipement.",
+    "workOrderEmpty": "Aucun OT ouvert sur cet équipement.",
+    "workOrderLoadError": "Les OT de l’équipement n’ont pas pu être lus : {{message}}"
   },
   "edit": {
     "title": "Modifier le permis",
@@ -268,7 +306,8 @@
       "hot_work": "Travail par point chaud",
       "confined_space": "Espace confiné",
       "cold_work": "Travail à froid",
-      "electrical_lv": "Électricité basse tension"
+      "electrical_lv": "Électricité basse tension",
+      "work_at_height": "Travail en hauteur"
     },
     "new": "Nouveau type",
     "code": "Code",
@@ -379,5 +418,122 @@
     "hint": "Cadenas retirés en l'absence de leur travailleur : le travailleur doit en être informé (à sa prochaine connexion, ou enregistrez-le ici).",
     "item": "{{point}} — {{worker}}, retiré le {{date}}, autorisé par {{authoriser}}",
     "loadError": "Les retraits forcés à suivre n'ont pas pu être chargés"
+  },
+  "safety": {
+    "title": "Contenu du permis et sécurité",
+    "loading": "Chargement du contenu du permis…",
+    "loadError": "Le contenu du permis n'a pas pu être lu.",
+    "issueBlockersTitle": "Avant la délivrance :",
+    "issueBlocked": "La délivrance attend le contenu du permis, son approbation HSE ou son test atmosphérique (voir ci-dessous).",
+    "field": {
+      "work_description": "Travail à réaliser",
+      "risk_assessment": "Analyse des risques",
+      "preventive_measures": "Mesures de prévention",
+      "ppe_required": "EPI requis"
+    },
+    "ppeHint": "Équipements de protection individuelle à porter (casque, gants, lunettes, harnais, appareil respiratoire…).",
+    "backToDraftHint": "Modifier le contenu renvoie le permis en brouillon : il sera soumis de nouveau à la revue.",
+    "saveContent": "Enregistrer le contenu",
+    "notFilled": "Non renseigné",
+    "hse": {
+      "title": "Approbation HSE",
+      "recorded": "Enregistrée",
+      "missing": "Requise, non enregistrée",
+      "byAt": "Par {{name}} le {{date}}",
+      "note": "Commentaire (facultatif)",
+      "record": "Enregistrer l'approbation HSE",
+      "confirm": "Approuver (HSE)",
+      "selfApproved": "Enregistrée par le rédacteur (site sans 4 yeux)"
+    },
+    "gas": {
+      "title": "Tests atmosphériques",
+      "required": "Requis avant délivrance",
+      "limits": "Limites (Paramètres) : O2 de {{o2Min}} à {{o2Max}} %, LIE < {{lel}} %, H2S < {{h2s}} ppm, CO < {{co}} ppm. La dernière mesure fait foi.",
+      "empty": "Aucun test enregistré.",
+      "ok": "Dans les limites",
+      "outOfLimits": "Hors limites",
+      "reading": "O2 {{o2}} % · LIE {{lel}} % · H2S {{h2s}} ppm",
+      "readingCo": "CO {{co}} ppm",
+      "measuredBy": "par {{name}} le {{date}} ({{instrument}})",
+      "o2": "O2 (%)",
+      "lel": "LIE (% de la LIE)",
+      "h2s": "H2S (ppm)",
+      "co": "CO (ppm, facultatif)",
+      "measuredAt": "Mesuré le",
+      "instrument": "Appareil de mesure",
+      "invalidReading": "Saisissez un nombre positif.",
+      "now": "Maintenant",
+      "record": "Enregistrer le test",
+      "validity": "Un test reste valable {{hours}} h : au-delà, refaites-le avant de délivrer, d'activer ou de reprendre le travail.",
+      "notCounting": "Ne compte plus (avant l'établissement du permis ou son dernier retour en brouillon)"
+    },
+    "proposed": {
+      "title": "Points d'isolement de l'équipement",
+      "hint": "Points définis sur l'équipement : « Utiliser » pré-remplit le formulaire ci-dessous, que vous pouvez modifier avant d'ajouter l'isolement.",
+      "use": "Utiliser",
+      "alreadyOnPermit": "Déjà sur le permis",
+      "normalState": "État normal : {{state}}",
+      "loadError": "Les points d'isolement de l'équipement n'ont pas pu être lus."
+    }
+  },
+  "workers": {
+    "title": "Intervenants et cadenas personnels",
+    "hint": "Chaque intervenant pose son propre cadenas sur la boîte de consignation collective. Aucun cadenas d'isolement ne se retire, et le permis ne se clôture pas, tant qu'un cadenas personnel est posé.",
+    "loading": "Chargement des intervenants…",
+    "loadError": "Les intervenants du permis n'ont pas pu être lus.",
+    "empty": "Aucun intervenant sur ce permis.",
+    "external": "Extérieur",
+    "internal": "Interne",
+    "withdrawn": "Retiré du permis",
+    "role": "Rôle : {{role}}",
+    "company": "Entreprise : {{company}}",
+    "inductionDone": "Accueil sécurité le {{date}} par {{name}}",
+    "inductionMissing": "Accueil sécurité non enregistré",
+    "recordInduction": "Enregistrer l'accueil sécurité",
+    "withdraw": "Retirer du permis",
+    "lockOn": "Cadenas {{lock}} posé le {{date}}",
+    "noLock": "Pas de cadenas posé",
+    "me": "Vous",
+    "openLocks": "{{count}} cadenas personnel(s) sur la boîte",
+    "add": {
+      "title": "Ajouter un intervenant",
+      "kindPersonnel": "Personnel (fiche)",
+      "kindExternal": "Intervenant extérieur sans fiche",
+      "search": "Rechercher une personne",
+      "searchButton": "Rechercher",
+      "noResult": "Aucune personne trouvée.",
+      "person": "Personne",
+      "choose": "Choisir…",
+      "name": "Nom de l'intervenant",
+      "company": "Entreprise extérieure",
+      "companiesError": "La liste des entreprises extérieures n'a pas pu être lue.",
+      "role": "Rôle sur le permis",
+      "inductionNow": "Accueil sécurité donné maintenant par moi",
+      "submit": "Ajouter"
+    },
+    "myLock": {
+      "number": "Numéro de mon cadenas",
+      "place": "Je pose mon cadenas",
+      "remove": "J'ai retiré mon cadenas"
+    },
+    "force": {
+      "open": "Retrait forcé (propriétaire absent)",
+      "forced": "Retiré de force : {{reason}}",
+      "point": "cadenas personnel {{lock}}"
+    },
+    "history": "Cadenas retirés",
+    "removedAt": "Cadenas {{lock}} de {{name}} retiré le {{date}} par {{by}}",
+    "told": {
+      "pending": "Cadenas {{lock}} de {{name}} retiré de force (autorisé par {{by}}) : l'intervenant doit en être informé avant de poser un cadenas.",
+      "acknowledge": "J'ai été informé du retrait de mon cadenas",
+      "method": "Moyen d'information",
+      "record": "Intervenant informé"
+    }
+  },
+  "myPadlocks": {
+    "title": "Mes cadenas",
+    "hint": "Les permis sur lesquels vous êtes intervenant : posez votre cadenas sur la boîte de consignation avant de travailler, retirez-le en partant.",
+    "empty": "Vous n'êtes intervenant sur aucun permis en cours.",
+    "loadError": "Impossible de charger vos permis"
   }
 }

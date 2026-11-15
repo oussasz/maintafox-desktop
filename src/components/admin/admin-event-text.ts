@@ -52,6 +52,7 @@ export function describeAdminEvent(
     case "role_retired":
     case "role_assigned":
     case "role_revoked":
+    case "role_replaced":
     case "emergency_grant_created":
     case "permission_created":
       return t(`console.summary.${evt.action}`, { target: name });

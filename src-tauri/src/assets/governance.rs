@@ -40,6 +40,7 @@ pub enum ConflictCategory {
     OrgNodeMissing,
     OrgNodeInactive,
     HierarchyCycleRisk,
+    ParentAssetMissing,
     ForbiddenStatusTransition,
     ReclassificationRequiresReview,
     MissingRequiredField,
@@ -84,7 +85,10 @@ pub struct NormalizedImportRow {
     pub family_code: Option<String>,
     pub criticality_code: Option<String>,
     pub status_code: Option<String>,
+    /// Legacy numeric organisation node id (column `org_node_id`).
     pub org_node_id: Option<i64>,
+    /// Organisation node code as shown in Organisation (column `emplacement`).
+    pub org_node_code: Option<String>,
     pub parent_asset_code: Option<String>,
     pub manufacturer: Option<String>,
     pub model: Option<String>,
@@ -189,18 +193,42 @@ pub async fn validate_import_row(
         None
     };
 
-    // Family code — validate parent linkage if both class and family are provided
-    if let (Some(ref family_code), Some(ref class_code)) = (&row.family_code, &row.class_code) {
-        if existing_class_parent_id.is_some() && validate_family_exists(db, family_code, class_code).await.is_err() {
-            messages.push(ValidationMessage {
-                category: ConflictCategory::FamilyClassMismatch,
-                field: "family_code".into(),
+    // The class must also exist in Données de référence (the apply step needs its reference id),
+    // and a family is a value of the published EQUIPMENT.FAMILY list that belongs to that class
+    // (same rule as the equipment form).
+    if let (Some(class_code), true) = (&row.class_code, existing_class_parent_id.is_some()) {
+        match identity::resolve_class_ref_id(db, class_code).await {
+            Err(_) => messages.push(ValidationMessage {
+                category: ConflictCategory::UnknownClassCode,
+                field: "class_code".into(),
                 message: format!(
-                    "Le code famille '{}' ne correspond pas a la classe '{}'.",
-                    family_code, class_code
+                    "La classe '{class_code}' est absente des Données de référence (Classes d'équipement)."
                 ),
                 severity: ValidationSeverity::Error,
-            });
+            }),
+            Ok(class_ref_id) => {
+                if let Some(ref family_code) = row.family_code {
+                    if let Err(e) = identity::validate_family_for_class_ref(db, family_code, class_ref_id).await {
+                        let (category, message) = if e.to_string().contains("GATE_ASSET_FAMILY_UNKNOWN") {
+                            (
+                                ConflictCategory::UnknownFamilyCode,
+                                format!("Famille '{family_code}' introuvable dans les Données de référence (Familles d'équipement)."),
+                            )
+                        } else {
+                            (
+                                ConflictCategory::FamilyClassMismatch,
+                                format!("La famille '{family_code}' n'appartient pas à la classe '{class_code}' dans les Données de référence."),
+                            )
+                        };
+                        messages.push(ValidationMessage {
+                            category,
+                            field: "family_code".into(),
+                            message,
+                            severity: ValidationSeverity::Error,
+                        });
+                    }
+                }
+            }
         }
     }
 
@@ -253,7 +281,51 @@ pub async fn validate_import_row(
     }
 
     // ── 3. Org node validation ────────────────────────────────────────────
-    if let Some(org_id) = row.org_node_id {
+    // The location is given by its code (column `emplacement`); the numeric id
+    // column is still read for files exported before.
+    let mut org_target = row.org_node_id;
+    if let Some(ref org_code) = row.org_node_code {
+        match lookup_org_node_by_code(db, org_code).await? {
+            OrgCodeLookup::Found(id) => {
+                if row.org_node_id.is_some_and(|explicit| explicit != id) {
+                    messages.push(ValidationMessage {
+                        category: ConflictCategory::OrgNodeMissing,
+                        field: "emplacement".into(),
+                        message: format!(
+                            "L'emplacement '{org_code}' et le numéro de nœud du fichier désignent deux nœuds différents. \
+                             Gardez uniquement la colonne « emplacement »."
+                        ),
+                        severity: ValidationSeverity::Error,
+                    });
+                    org_target = None;
+                } else {
+                    org_target = Some(id);
+                }
+            }
+            OrgCodeLookup::NotFound => {
+                messages.push(ValidationMessage {
+                    category: ConflictCategory::OrgNodeMissing,
+                    field: "emplacement".into(),
+                    message: format!(
+                        "Emplacement '{org_code}' introuvable dans l'organisation active. \
+                         Utilisez le code d'un nœud tel qu'il apparaît dans Organisation."
+                    ),
+                    severity: ValidationSeverity::Error,
+                });
+                org_target = None;
+            }
+            OrgCodeLookup::Ambiguous => {
+                messages.push(ValidationMessage {
+                    category: ConflictCategory::OrgNodeMissing,
+                    field: "emplacement".into(),
+                    message: format!("Le code d'emplacement '{org_code}' désigne plusieurs nœuds de l'organisation."),
+                    severity: ValidationSeverity::Error,
+                });
+                org_target = None;
+            }
+        }
+    }
+    if let Some(org_id) = org_target {
         match check_org_node_active(db, org_id).await? {
             OrgNodeCheck::Active => {}
             OrgNodeCheck::NotFound => {
@@ -358,18 +430,55 @@ pub async fn validate_import_row(
     }
 
     // ── 6. Hierarchy cycle risk ───────────────────────────────────────────
-    if let (Some(ref parent_code), Some(ref code)) = (&row.parent_asset_code, &asset_code) {
-        if let Some(ref info) = existing_asset {
-            if let Some(parent_info) = find_existing_asset_by_code(db, parent_code).await? {
-                if would_create_cycle(db, parent_info.id, info.id).await? {
+    // The parent is given by its equipment code. It must already exist or be created by
+    // another line of the same file; the link itself is made once all lines are applied.
+    if let (Some(parent_raw), Some(code)) = (&row.parent_asset_code, &asset_code) {
+        let parent_code = parent_raw.trim().to_uppercase();
+        if &parent_code == code {
+            messages.push(ValidationMessage {
+                category: ConflictCategory::HierarchyCycleRisk,
+                field: "parent_asset_code".into(),
+                message: format!("L'équipement '{code}' ne peut pas être son propre parent."),
+                severity: ValidationSeverity::Error,
+            });
+        } else {
+            let parent_in_registry = find_existing_asset_by_code(db, &parent_code).await?;
+            let parent_in_file = batch_row_exists(db, batch_id, &parent_code).await?;
+            if parent_in_registry.is_none() && !parent_in_file {
+                messages.push(ValidationMessage {
+                    category: ConflictCategory::ParentAssetMissing,
+                    field: "parent_asset_code".into(),
+                    message: format!(
+                        "Parent '{parent_code}' introuvable : il doit exister dans le registre ou figurer dans ce fichier."
+                    ),
+                    severity: ValidationSeverity::Error,
+                });
+            } else if parent_in_registry
+                .as_ref()
+                .is_some_and(|p| p.status_code == "DECOMMISSIONED" || p.status_code == "SCRAPPED")
+            {
+                messages.push(ValidationMessage {
+                    category: ConflictCategory::ParentAssetMissing,
+                    field: "parent_asset_code".into(),
+                    message: format!(
+                        "Le parent '{parent_code}' est déclassé : il ne peut plus recevoir de sous-ensemble."
+                    ),
+                    severity: ValidationSeverity::Error,
+                });
+            } else if parent_chain_reaches(db, batch_id, &parent_code, code).await? {
+                messages.push(ValidationMessage {
+                    category: ConflictCategory::HierarchyCycleRisk,
+                    field: "parent_asset_code".into(),
+                    message: format!("Le parent '{parent_code}' créerait un cycle dans la hiérarchie de '{code}'."),
+                    severity: ValidationSeverity::Error,
+                });
+            } else if let Some(current) = registry_parent_code(db, code).await? {
+                if current != parent_code {
                     messages.push(ValidationMessage {
-                        category: ConflictCategory::HierarchyCycleRisk,
+                        category: ConflictCategory::ReclassificationRequiresReview,
                         field: "parent_asset_code".into(),
-                        message: format!(
-                            "Le parent '{}' creerait un cycle dans la hierarchie de '{}'.",
-                            parent_code, code
-                        ),
-                        severity: ValidationSeverity::Error,
+                        message: format!("Le parent actuel '{current}' sera remplacé par '{parent_code}'."),
+                        severity: ValidationSeverity::Warning,
                     });
                 }
             }
@@ -411,7 +520,6 @@ pub async fn validate_import_row(
 /// Existing asset info for reclassification and status transition checks.
 #[derive(Debug, Clone)]
 struct ExistingAssetInfo {
-    id: i64,
     class_code: Option<String>,
     criticality_code: Option<String>,
     status_code: String,
@@ -446,26 +554,108 @@ async fn resolve_class_exists(db: &impl ConnectionTrait, class_code: &str) -> Ap
     }
 }
 
-/// Validate that a family code is the parent of the given class code.
-async fn validate_family_exists(db: &impl ConnectionTrait, family_code: &str, class_code: &str) -> AppResult<()> {
+/// Outcome of looking an organisation node up by its code.
+pub(crate) enum OrgCodeLookup {
+    Found(i64),
+    NotFound,
+    Ambiguous,
+}
+
+/// Resolve an organisation node code (as shown in Organisation) in the active structure.
+pub(crate) async fn lookup_org_node_by_code(db: &impl ConnectionTrait, code: &str) -> AppResult<OrgCodeLookup> {
+    let Some(model_id) = crate::org::model_scope::try_get_active_model_id(db).await? else {
+        return Ok(OrgCodeLookup::NotFound);
+    };
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id FROM org_nodes \
+             WHERE structure_model_id = ? AND UPPER(TRIM(code)) = UPPER(TRIM(?)) AND deleted_at IS NULL",
+            [model_id.into(), code.into()],
+        ))
+        .await?;
+    match rows.as_slice() {
+        [] => Ok(OrgCodeLookup::NotFound),
+        [only] => {
+            Ok(OrgCodeLookup::Found(only.try_get("", "id").map_err(|e| {
+                AppError::Internal(anyhow::anyhow!("org_node.id decode: {e}"))
+            })?))
+        }
+        _ => Ok(OrgCodeLookup::Ambiguous),
+    }
+}
+
+/// True when another line of the batch (or this one) carries the given equipment code.
+async fn batch_row_exists(db: &impl ConnectionTrait, batch_id: i64, asset_code: &str) -> AppResult<bool> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT ec.id FROM equipment_classes ec \
-             INNER JOIN equipment_classes ef ON ef.id = ec.parent_id \
-             WHERE ec.code = ? AND ef.code = ? \
-               AND ec.is_active = 1 AND ec.deleted_at IS NULL \
-               AND ef.is_active = 1 AND ef.deleted_at IS NULL",
-            [class_code.into(), family_code.into()],
+            "SELECT COUNT(*) AS cnt FROM asset_import_staging \
+             WHERE batch_id = ? AND UPPER(TRIM(normalized_asset_code)) = ?",
+            [batch_id.into(), asset_code.into()],
+        ))
+        .await?
+        .expect("COUNT always returns a row");
+    Ok(row.try_get::<i64>("", "cnt").unwrap_or(0) > 0)
+}
+
+/// Active PARENT_CHILD parent of an equipment already in the registry.
+async fn registry_parent_code(db: &impl ConnectionTrait, asset_code: &str) -> AppResult<Option<String>> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT p.asset_id_code AS code FROM equipment_hierarchy h \
+             INNER JOIN equipment c ON c.id = h.child_equipment_id \
+             INNER JOIN equipment p ON p.id = h.parent_equipment_id \
+             WHERE c.asset_id_code = ? AND c.deleted_at IS NULL \
+               AND h.relationship_type = 'PARENT_CHILD' AND h.effective_to IS NULL \
+             LIMIT 1",
+            [asset_code.into()],
         ))
         .await?;
-    if row.is_none() {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "GATE_ASSET_FAMILY_CLASS_MISMATCH: The selected family ('{}') does not match class '{}'. Please choose a matching family or leave family empty.",
-            family_code, class_code
-        )]));
+    Ok(match row {
+        Some(r) => Some(
+            r.try_get::<String>("", "code")
+                .map_err(|e| AppError::Internal(anyhow::anyhow!("parent code decode: {e}")))?,
+        ),
+        None => None,
+    })
+}
+
+/// Parent a code will have once the batch is applied: the one written in the file when
+/// the line has one, else the registry parent.
+async fn parent_after_import(db: &impl ConnectionTrait, batch_id: i64, code: &str) -> AppResult<Option<String>> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT json_extract(raw_json, '$.parent_asset_code') AS parent FROM asset_import_staging \
+             WHERE batch_id = ? AND UPPER(TRIM(normalized_asset_code)) = ? LIMIT 1",
+            [batch_id.into(), code.into()],
+        ))
+        .await?;
+    if let Some(r) = row {
+        let parent: Option<String> = r.try_get("", "parent").unwrap_or(None);
+        if let Some(p) = parent.map(|p| p.trim().to_uppercase()).filter(|p| !p.is_empty()) {
+            return Ok(Some(p));
+        }
     }
-    Ok(())
+    registry_parent_code(db, code).await
+}
+
+/// Walk up from `start`; true when `target` is met (the proposed link would close a loop).
+async fn parent_chain_reaches(db: &impl ConnectionTrait, batch_id: i64, start: &str, target: &str) -> AppResult<bool> {
+    let mut current = start.to_string();
+    for _ in 0..200 {
+        if current == target {
+            return Ok(true);
+        }
+        match parent_after_import(db, batch_id, &current).await? {
+            Some(next) => current = next,
+            None => return Ok(false),
+        }
+    }
+    // A chain this deep is a loop that does not include the target: refuse it too.
+    Ok(true)
 }
 
 enum OrgNodeCheck {
@@ -523,9 +713,6 @@ async fn find_existing_asset_by_code(
         .await?;
     match row {
         Some(r) => Ok(Some(ExistingAssetInfo {
-            id: r
-                .try_get("", "id")
-                .map_err(|e| AppError::Internal(anyhow::anyhow!("equipment.id decode: {e}")))?,
             class_code: r.try_get("", "class_code").unwrap_or(None),
             criticality_code: r.try_get("", "criticality_code").unwrap_or(None),
             status_code: r
@@ -557,9 +744,6 @@ async fn find_existing_asset_by_external_key(
         .await?;
     match row {
         Some(r) => Ok(Some(ExistingAssetInfo {
-            id: r
-                .try_get("", "id")
-                .map_err(|e| AppError::Internal(anyhow::anyhow!("equipment.id decode: {e}")))?,
             class_code: r.try_get("", "class_code").unwrap_or(None),
             criticality_code: r.try_get("", "criticality_code").unwrap_or(None),
             status_code: r
@@ -589,44 +773,4 @@ async fn check_intra_batch_duplicate(
         .expect("COUNT always returns a row");
     let cnt: i64 = row.try_get("", "cnt").unwrap_or(0);
     Ok(cnt > 0)
-}
-
-/// Hierarchy cycle detection — mirrors hierarchy.rs::detect_cycle logic
-/// via BFS walk. Returns true if creating a parent→child link would form a cycle.
-async fn would_create_cycle(
-    db: &impl ConnectionTrait,
-    proposed_parent_id: i64,
-    proposed_child_id: i64,
-) -> AppResult<bool> {
-    if proposed_parent_id == proposed_child_id {
-        return Ok(true);
-    }
-
-    let mut visited = std::collections::HashSet::new();
-    let mut queue = vec![proposed_parent_id];
-
-    while let Some(current) = queue.pop() {
-        if current == proposed_child_id {
-            return Ok(true);
-        }
-        if !visited.insert(current) {
-            continue;
-        }
-        let rows = db
-            .query_all(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "SELECT parent_equipment_id FROM equipment_hierarchy \
-                 WHERE child_equipment_id = ? AND effective_to IS NULL",
-                [current.into()],
-            ))
-            .await?;
-        for r in &rows {
-            let pid: i64 = r
-                .try_get("", "parent_equipment_id")
-                .map_err(|e| AppError::Internal(anyhow::anyhow!("parent_equipment_id decode: {e}")))?;
-            queue.push(pid);
-        }
-    }
-
-    Ok(false)
 }

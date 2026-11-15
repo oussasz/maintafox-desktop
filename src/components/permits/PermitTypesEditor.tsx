@@ -197,7 +197,6 @@ export function PermitTypesEditor({ types, canEdit, onSaved }: PermitTypesEditor
         <table className="w-full text-left text-sm">
           <thead>
             <tr className="border-b border-surface-border text-text-muted">
-              <th className="px-2 py-1.5 font-medium">{t("types.code")}</th>
               <th className="px-2 py-1.5 font-medium">{t("types.name")}</th>
               <th className="px-2 py-1.5 font-medium">{t("types.maxHours")}</th>
               <th className="px-2 py-1.5 font-medium">{t("types.energyIsolationShort")}</th>
@@ -210,7 +209,6 @@ export function PermitTypesEditor({ types, canEdit, onSaved }: PermitTypesEditor
           <tbody>
             {types.map((ty) => (
               <tr key={ty.id} className="border-b border-surface-border/60">
-                <td className="px-2 py-1.5 font-mono text-xs">{ty.code}</td>
                 <td className="px-2 py-1.5">{typeName(ty.code, ty.name)}</td>
                 <td className="px-2 py-1.5">{ty.max_duration_hours ?? t("detail.none")}</td>
                 <td className="px-2 py-1.5">
@@ -251,7 +249,9 @@ export function PermitTypesEditor({ types, canEdit, onSaved }: PermitTypesEditor
         >
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-medium text-text-primary">
-              {draft.id == null ? t("types.new") : `${t("actions.edit")} — ${draft.code}`}
+              {draft.id == null
+                ? t("types.new")
+                : `${t("actions.edit")} — ${typeName(draft.code, draft.name)}`}
             </h3>
             {draft.id != null ? (
               <Button type="button" variant="ghost" size="sm" onClick={() => setDraft(EMPTY)}>

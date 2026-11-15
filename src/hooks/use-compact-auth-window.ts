@@ -24,7 +24,7 @@ async function applyMode(mode: WindowMode): Promise<void> {
 }
 
 /**
- * Pre-login screens (activation, administrator setup, sign-in) use a compact, fixed-size window
+ * Pre-login screens (activation, administrator setup, sign-in) use a compact window that can be resized and maximised
  * like an installer; leaving them restores the main window at its remembered size.
  */
 export function useCompactAuthWindow(): void {

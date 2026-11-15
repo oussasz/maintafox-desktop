@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
+import { useFormatters } from "@/hooks/use-formatters";
 import { appErrorReason } from "@/lib/app-error";
 import {
   getWorkforceKpiReport,
@@ -34,6 +35,7 @@ export function WorkforceReportPanel() {
 
 function WorkforceReportContent() {
   const { t } = useTranslation("personnel");
+  const { formatDecimal, formatPercent } = useFormatters();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [summary, setSummary] = useState<WorkforceSummaryReport | null>(null);
@@ -90,10 +92,14 @@ function WorkforceReportContent() {
             {t("reports.kpis.totalPersonnel", { count: summary?.total_personnel ?? 0 })}
           </Badge>
           <Badge variant="secondary" className="justify-center py-2">
-            {t("reports.kpis.avgSkills", { value: kpi?.avg_skills_per_person ?? 0 })}
+            {t("reports.kpis.avgSkills", {
+              value: formatDecimal(kpi?.avg_skills_per_person ?? 0, 1),
+            })}
           </Badge>
           <Badge variant="secondary" className="justify-center py-2">
-            {t("reports.kpis.blockedRatio", { value: kpi?.blocked_ratio ?? 0 })}
+            {t("reports.kpis.blockedRatio", {
+              value: formatPercent((kpi?.blocked_ratio ?? 0) * 100),
+            })}
           </Badge>
         </div>
 
@@ -113,7 +119,7 @@ function WorkforceReportContent() {
                   <span className="font-mono">{row.employee_code}</span>
                   <span className="truncate px-2">{row.full_name}</span>
                   <Badge variant="outline">
-                    {t("reports.skillsGap.score", { score: row.gap_score })}
+                    {t("reports.skillsGap.score", { score: formatDecimal(row.gap_score, 1) })}
                   </Badge>
                 </div>
               ))}

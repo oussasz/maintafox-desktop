@@ -17,6 +17,9 @@ vi.mock("react-i18next", () => ({
 }));
 
 const svc = vi.hoisted(() => ({ getBudgetCockpitDrilldown: vi.fn() }));
+const budget = vi.hoisted(() => ({ reverseBudgetActual: vi.fn() }));
+vi.mock("@/services/budget-service", () => budget);
+vi.mock("@/hooks/use-permissions", () => ({ usePermissions: () => ({ can: () => true }) }));
 vi.mock("@/services/finance-cost-service", () => svc);
 vi.mock("@/components/finance/use-finance-catalogs", () => ({
   useFinanceCatalogs: () => ({
@@ -54,6 +57,7 @@ function line(id: number, equipment: string) {
     equipment_code: equipment,
     event_at: "2026-10-10T10:00:00Z",
     is_reversal: false,
+    row_version: 1,
   };
 }
 
@@ -145,6 +149,29 @@ describe("CockpitDrilldownSheet", () => {
     expect(await screen.findByText("B-8")).toBeInTheDocument();
     expect(svc.getBudgetCockpitDrilldown).toHaveBeenLastCalledWith(
       expect.objectContaining({ cost_center_id: 2, offset: 1 }),
+    );
+  });
+
+  it("offers a reversal only on posted manual entries and sends the entry's version", async () => {
+    svc.getBudgetCockpitDrilldown.mockResolvedValue(
+      page([line(1, "M-1"), { ...line(2, "OT-2"), source_type: "wo_settlement" }], 2, 20),
+    );
+    budget.reverseBudgetActual.mockResolvedValue({});
+    render(sheet(row(1, "CC-A")));
+    expect(await screen.findByText("M-1")).toBeInTheDocument();
+    const buttons = screen.getAllByRole("button", { name: "drill.reverse.action" });
+    expect(buttons).toHaveLength(1);
+    fireEvent.click(buttons[0] as HTMLElement);
+    fireEvent.change(screen.getByLabelText("drill.reverse.reason"), {
+      target: { value: "saisie en double" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "drill.reverse.confirm" }));
+    await waitFor(() =>
+      expect(budget.reverseBudgetActual).toHaveBeenCalledWith({
+        actual_id: 1,
+        expected_row_version: 1,
+        reason: "saisie en double",
+      }),
     );
   });
 });

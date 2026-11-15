@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SingleAdministratorWarning } from "@/components/auth/SingleAdministratorWarning";
@@ -42,6 +42,19 @@ describe("SingleAdministratorWarning", () => {
       expect(screen.queryByTestId("single-administrator-warning")).not.toBeInTheDocument(),
     );
     expect(ipc.calls).toHaveLength(2);
+  });
+
+  it("can be hidden for the session and stays hidden after a page change", async () => {
+    ipc.answer = { sole_active_administrator: true };
+    const first = render(<SingleAdministratorWarning sessionUserId={99} />);
+    await screen.findByTestId("single-administrator-warning");
+    fireEvent.click(screen.getByRole("button", { name: "session.singleAdministrator.dismiss" }));
+    expect(screen.queryByTestId("single-administrator-warning")).not.toBeInTheDocument();
+
+    first.unmount();
+    render(<SingleAdministratorWarning sessionUserId={99} />);
+    await waitFor(() => expect(ipc.calls).toHaveLength(2));
+    expect(screen.queryByTestId("single-administrator-warning")).not.toBeInTheDocument();
   });
 
   it("asks nothing while signed out", () => {

@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 
 import { categoryLabel } from "@/components/notifications/notification-text";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import { DateTimeField } from "@/components/ui/date-time-field";
 import {
@@ -159,7 +160,13 @@ export function NotificationPreferencesPanel() {
         </div>
       )}
       <div className="text-xs text-muted-foreground">{t("preferences.receiveHelp")}</div>
-      <div className="text-xs text-muted-foreground">{t("preferences.digestHelp")}</div>
+      {/* The long explanation stays one click away: the table comes first (L5-28). */}
+      <details className="text-xs text-muted-foreground">
+        <summary className="cursor-pointer select-none">
+          {t("preferences.digestHelpToggle")}
+        </summary>
+        <p className="mt-1">{t("preferences.digestHelp")}</p>
+      </details>
 
       <Table>
         <TableHeader>
@@ -173,90 +180,146 @@ export function NotificationPreferencesPanel() {
           </TableRow>
         </TableHeader>
         <TableBody>
-          {rows.map((row) => {
-            const disabled = !row.is_user_configurable;
-            return (
-              <TableRow
-                key={row.category_code}
-                className={disabled ? "bg-muted/40 text-muted-foreground" : undefined}
-              >
-                <TableCell>
-                  <div className="flex items-center gap-2">
-                    <span>{categoryLabel(row.category_code, t)}</span>
-                    <span className="text-xs text-muted-foreground">
-                      {t(`module.${row.module_code}`)}
+          {groupByModule(rows).flatMap(([moduleCode, groupRows]) => {
+            const configurable = groupRows.filter((r) => r.is_user_configurable);
+            const allOn = configurable.every((r) => r.in_app_enabled);
+            const header = (
+              <TableRow key={`module-${moduleCode}`} className="bg-surface-1 hover:bg-surface-1">
+                <TableCell colSpan={6} className="py-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-semibold text-text-primary">
+                      {t(`module.${moduleCode}`)}{" "}
+                      <span className="font-normal text-text-muted">({groupRows.length})</span>
                     </span>
-                    {disabled && (
-                      <span title={t("preferences.systemManaged")}>
-                        <Lock className="h-3.5 w-3.5" aria-hidden />
-                      </span>
-                    )}
+                    {configurable.length > 0 ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => {
+                          for (const r of configurable) {
+                            if (r.in_app_enabled === allOn) {
+                              void patchRow(r, { in_app_enabled: !allOn });
+                            }
+                          }
+                        }}
+                      >
+                        {allOn ? t("preferences.groupAllOff") : t("preferences.groupAllOn")}
+                      </Button>
+                    ) : null}
                   </div>
-                </TableCell>
-                <TableCell>
-                  <Switch
-                    checked={row.in_app_enabled}
-                    disabled={disabled}
-                    aria-label={`${t("preferences.col.inApp")} ${categoryLabel(row.category_code, t)}`}
-                    onCheckedChange={(v) => void patchRow(row, { in_app_enabled: v })}
-                  />
-                </TableCell>
-                <TableCell>
-                  <Switch
-                    checked={row.os_enabled}
-                    disabled={disabled || !row.in_app_enabled}
-                    aria-label={`${t("preferences.col.os")} ${categoryLabel(row.category_code, t)}`}
-                    onCheckedChange={(v) => void patchRow(row, { os_enabled: v })}
-                  />
-                </TableCell>
-                <TableCell>
-                  <Switch
-                    checked={row.email_enabled}
-                    disabled={disabled || !emailAvailable || !row.in_app_enabled}
-                    aria-label={t("preferences.col.email")}
-                    title={emailUnavailableText ?? undefined}
-                    onCheckedChange={(v) => void patchRow(row, { email_enabled: v })}
-                  />
-                </TableCell>
-                <TableCell>
-                  <Select
-                    value={row.digest_mode}
-                    disabled={
-                      disabled || !row.in_app_enabled || row.category_code === DIGEST_CATEGORY
-                    }
-                    onValueChange={(v) => void patchRow(row, { digest_mode: v })}
-                  >
-                    <SelectTrigger
-                      className="w-36"
-                      aria-label={`${t("preferences.col.digest")} ${categoryLabel(row.category_code, t)}`}
-                    >
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="instant">{t("preferences.digest.instant")}</SelectItem>
-                      <SelectItem value="daily_digest">
-                        {t("preferences.digest.daily_digest")}
-                      </SelectItem>
-                      <SelectItem value="off">{t("preferences.digest.off")}</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </TableCell>
-                <TableCell>
-                  <DateTimeField
-                    disabled={disabled}
-                    aria-label={`${t("preferences.col.muteUntil")} ${categoryLabel(row.category_code, t)}`}
-                    className="h-9 rounded-md border border-surface-border bg-surface-0 px-2 text-sm"
-                    value={muteDrafts[row.category_code] ?? toDatetimeLocalValue(row.muted_until)}
-                    onChange={(v) => typeMuteUntil(row, v)}
-                  />
                 </TableCell>
               </TableRow>
             );
+            return [header, ...groupRows.map((row) => renderRow(row))];
           })}
         </TableBody>
       </Table>
     </div>
   );
+
+  function renderRow(row: UserPreferenceRow) {
+    const disabled = !row.is_user_configurable;
+    return (
+      <TableRow
+        key={row.category_code}
+        className={disabled ? "bg-muted/40 text-muted-foreground" : undefined}
+      >
+        <TableCell>
+          <div className="flex items-center gap-2">
+            <span>{categoryLabel(row.category_code, t)}</span>
+            {disabled && (
+              <span title={t("preferences.systemManaged")}>
+                <Lock className="h-3.5 w-3.5" aria-hidden />
+              </span>
+            )}
+          </div>
+        </TableCell>
+        <TableCell>
+          <Switch
+            checked={row.in_app_enabled}
+            disabled={disabled}
+            aria-label={`${t("preferences.col.inApp")} ${categoryLabel(row.category_code, t)}`}
+            onCheckedChange={(v) => void patchRow(row, { in_app_enabled: v })}
+          />
+        </TableCell>
+        <TableCell>
+          <Switch
+            checked={row.os_enabled}
+            disabled={disabled || !row.in_app_enabled}
+            aria-label={`${t("preferences.col.os")} ${categoryLabel(row.category_code, t)}`}
+            onCheckedChange={(v) => void patchRow(row, { os_enabled: v })}
+          />
+        </TableCell>
+        <TableCell>
+          <Switch
+            checked={row.email_enabled}
+            disabled={disabled || !emailAvailable || !row.in_app_enabled}
+            aria-label={t("preferences.col.email")}
+            title={emailUnavailableText ?? undefined}
+            onCheckedChange={(v) => void patchRow(row, { email_enabled: v })}
+          />
+        </TableCell>
+        <TableCell>
+          <Select
+            value={row.digest_mode}
+            disabled={disabled || !row.in_app_enabled || row.category_code === DIGEST_CATEGORY}
+            onValueChange={(v) => void patchRow(row, { digest_mode: v })}
+          >
+            <SelectTrigger
+              className="w-36"
+              aria-label={`${t("preferences.col.digest")} ${categoryLabel(row.category_code, t)}`}
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="instant">{t("preferences.digest.instant")}</SelectItem>
+              <SelectItem value="daily_digest">{t("preferences.digest.daily_digest")}</SelectItem>
+              <SelectItem value="off">{t("preferences.digest.off")}</SelectItem>
+            </SelectContent>
+          </Select>
+        </TableCell>
+        <TableCell>
+          <DateTimeField
+            disabled={disabled}
+            aria-label={`${t("preferences.col.muteUntil")} ${categoryLabel(row.category_code, t)}`}
+            className="h-9 rounded-md border border-surface-border bg-surface-0 px-2 text-sm"
+            value={muteDrafts[row.category_code] ?? toDatetimeLocalValue(row.muted_until)}
+            onChange={(v) => typeMuteUntil(row, v)}
+          />
+        </TableCell>
+      </TableRow>
+    );
+  }
+}
+
+/** The module order of the menu; a module not listed comes last, in its code order. */
+const MODULE_ORDER = [
+  "di",
+  "ot",
+  "pm",
+  "ins",
+  "plan",
+  "inv",
+  "ptw",
+  "per",
+  "fin",
+  "sync",
+  "system",
+];
+
+function groupByModule<T extends { module_code: string }>(rows: T[]): [string, T[]][] {
+  const groups = new Map<string, T[]>();
+  for (const row of rows) {
+    const list = groups.get(row.module_code) ?? [];
+    list.push(row);
+    groups.set(row.module_code, list);
+  }
+  const rank = (code: string) => {
+    const i = MODULE_ORDER.indexOf(code);
+    return i === -1 ? MODULE_ORDER.length : i;
+  };
+  return [...groups.entries()].sort(([a], [b]) => rank(a) - rank(b) || a.localeCompare(b));
 }
 
 function toDatetimeLocalValue(value: string | null): string {

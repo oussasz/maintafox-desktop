@@ -76,3 +76,48 @@ export function referenceDomainLabel(
   const translated = t(key);
   return translated && !translated.includes(key) ? translated : domain.name;
 }
+
+/**
+ * Domain groups of the Reference data tree (presentation only), in display order. A list belongs
+ * to a group by the module prefix of its code (DI, WORK, ...); the label of each group is
+ * `groups.<id>` in the reference locale. Lists whose prefix is unknown fall in "other".
+ */
+export const REFERENCE_DOMAIN_GROUPS = [
+  "requests",
+  "workOrders",
+  "preventive",
+  "equipment",
+  "stock",
+  "permits",
+  "personnel",
+  "reliability",
+  "finance",
+  "measures",
+  "other",
+] as const;
+
+export type ReferenceDomainGroup = (typeof REFERENCE_DOMAIN_GROUPS)[number];
+
+const DOMAIN_GROUP_BY_PREFIX: Record<string, ReferenceDomainGroup> = {
+  DI: "requests",
+  WORK: "workOrders",
+  WO: "workOrders",
+  PM: "preventive",
+  PLANNING: "preventive",
+  EQUIPMENT: "equipment",
+  INVENTORY: "stock",
+  PERMIT: "permits",
+  PERSONNEL: "personnel",
+  ORG: "personnel",
+  RELIABILITY: "reliability",
+  FINANCE: "finance",
+  MEASURE: "measures",
+  DOCUMENT: "measures",
+  NOTIFICATION: "measures",
+};
+
+/** The group a list is shown under, from the module prefix of its code. */
+export function referenceDomainGroup(code: string): ReferenceDomainGroup {
+  const prefix = code.split(/[._]/)[0]?.toUpperCase() ?? "";
+  return DOMAIN_GROUP_BY_PREFIX[prefix] ?? "other";
+}

@@ -99,7 +99,7 @@ function CompletionSummary({ adherence }: { adherence: WoPlanAdherence | null })
                     "auto",
                     durationLabels,
                   )
-                : "—"}
+                : t("completion.summary.notEstimated")}
             </p>
           </div>
           <div>
@@ -111,13 +111,17 @@ function CompletionSummary({ adherence }: { adherence: WoPlanAdherence | null })
                     "auto",
                     durationLabels,
                   )
-                : "—"}
+                : t("completion.summary.noHours")}
             </p>
           </div>
           <div>
             <p className="text-xs text-muted-foreground">{t("completion.summary.efficiency")}</p>
             <p className="font-medium tabular-nums">
-              {efficiency != null ? `${Math.round(efficiency)} %` : "—"}
+              {efficiency != null
+                ? `${Math.round(efficiency)} %`
+                : adherence.planned_hours == null
+                  ? t("completion.summary.efficiencyNeedsEstimate")
+                  : "—"}
             </p>
           </div>
         </div>

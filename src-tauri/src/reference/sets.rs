@@ -16,7 +16,6 @@
 //!   - Published and superseded sets are immutable (no direct edits).
 
 use crate::errors::{AppError, AppResult};
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -274,7 +273,7 @@ async fn clone_published_values_into_draft(
     }
 
     // Pass 3: clone aliases onto new value IDs.
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
     if id_map.is_empty() {
         return Ok(());
     }
@@ -409,7 +408,7 @@ pub async fn create_draft_set(db: &DatabaseConnection, domain_id: i64, actor_id:
     let txn = db.begin().await?;
 
     let version_no = next_version_no(&txn, domain_id).await?;
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
 
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -622,7 +621,7 @@ pub async fn publish_set(db: &DatabaseConnection, set_id: i64, actor_id: i64) ->
     ))
     .await?;
 
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
 
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,

@@ -2,7 +2,6 @@
 //! published reference sets + idempotent integrity repair (same idea as `wo::statuses`).
 
 use crate::errors::{AppError, AppResult};
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use serde::Serialize;
 
@@ -539,7 +538,7 @@ pub async fn sync_equipment_classes_from_published_reference(db: &DatabaseConnec
         ))
         .await?;
 
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
 
     for row in rows {
         let code: String = row

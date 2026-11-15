@@ -756,6 +756,14 @@ pub(crate) async fn judged_as_row_of_batch<F: std::future::Future>(server_batch_
         .await
 }
 
+impl InboxRow {
+    /// The batch this row came with (a snapshot page or an exchange), for
+    /// [`judged_as_row_of_batch`].
+    pub(crate) fn server_batch_id(&self) -> &str {
+        &self.server_batch_id
+    }
+}
+
 async fn evaluate_and_apply(conn: &impl ConnectionTrait, item: &InboxRow) -> AppResult<ApplyOutcome> {
     APPLYING_SNAPSHOT_ROW
         .scope(

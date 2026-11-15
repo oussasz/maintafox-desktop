@@ -1,172 +1,144 @@
 //! Fleet view of the reliability module: KPIs of the filtered fleet over a period and the
-//! equipment ranked by downtime, computed from the failure records of the period.
+//! equipment ranked by downtime, computed live from the failure records of the period.
 //!
-//! Fleet KPIs are ratios of sums (`reliability::fleet::pool_fleet`): MTBF = Σ hours / Σ failures,
-//! MTTR = Σ active repair / Σ repairs, A_o = Σ hours / (Σ hours + Σ downtime). Hours are operating
-//! hours when the equipment has run-hour data (see `study::clock`), calendar hours otherwise; the
-//! number of each is returned so the screen says which.
+//! The KPIs and the per-equipment MTBF / MTTR come from the one shared calculation
+//! (`study::fleet_kpis`, definitions there): MTBF over every unplanned failure, MTTR = mean time
+//! to restore, A_o = MTBF / (MTBF + MTTR), data quality = completely coded records.
 
+use std::cmp::Ordering;
 use std::collections::HashMap;
 
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
-use crate::errors::AppResult;
-use crate::reliability::fleet::{pool_fleet, FleetSnapshotRow};
-use crate::reliability::study::clock::{load_clock, parse_instant};
-use crate::reliability::study::domain::{FilterOption, FleetAssetRow, FleetKpis, FleetView, FleetViewFilter};
-use crate::reliability::study::store::{get, opt_i64};
+use crate::errors::{AppError, AppResult};
+use crate::reliability::study::clock::SOURCE_CALENDAR;
+use crate::reliability::study::domain::{AssetReliabilityFigures, FleetAssetRow, FleetView, FleetViewFilter};
+use crate::reliability::study::fleet_kpis::{
+    filter_options, fleet_hours, kpis_of, load_asset_aggs, missing_date_count, outside_service_count, scope_from_sql,
+    AssetAgg, AssetHours, FleetScope,
+};
+use crate::reliability::study::store::get;
 
 const DEFAULT_LIMIT: i64 = 50;
 const MAX_LIMIT: i64 = 200;
+/// Columns the ranking can be sorted by.
+const SORT_KEYS: [&str; 4] = ["failures", "downtime", "mtbf", "cost"];
 
-struct AssetAgg {
+/// MTBF of one equipment: its hours / its unplanned failures (the fleet-figure definition).
+fn asset_mtbf(a: &AssetAgg, hours: &HashMap<i64, AssetHours>, too_short: bool) -> Option<f64> {
+    let h = hours.get(&a.equipment_id).map_or(0.0, |h| h.hours);
+    (!too_short && a.failures > 0 && h > 0.0).then(|| h / a.failures as f64)
+}
+
+/// Cost of the work behind the failure records of the scope, per equipment (work-order total
+/// cost; imported history labour + parts + services).
+async fn failure_costs(db: &DatabaseConnection, scope: &FleetScope) -> AppResult<HashMap<i64, f64>> {
+    let sql = format!(
+        "SELECT fe2.equipment_id AS equipment_id,
+                COALESCE(SUM(CASE WHEN fe2.source_type = 'work_order' THEN w.total_cost
+                                  WHEN fe2.source_type = 'history_record'
+                                  THEN COALESCE(h.labor_cost, 0) + COALESCE(h.parts_cost, 0) + COALESCE(h.service_cost, 0)
+                             END), 0.0) AS cost
+         FROM failure_events fe2
+         LEFT JOIN work_orders w ON fe2.source_type = 'work_order' AND w.id = fe2.source_id
+         LEFT JOIN wo_history_records h ON fe2.source_type = 'history_record' AND h.id = fe2.source_id
+         WHERE fe2.id IN (SELECT fe.id {from})
+         GROUP BY fe2.equipment_id",
+        from = scope_from_sql()
+    );
+    let rows = db
+        .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, sql, scope.binds()))
+        .await?;
+    let mut out = HashMap::new();
+    for r in &rows {
+        let id: i64 = get(r, "equipment_id")?;
+        let cost: f64 = get(r, "cost")?;
+        out.insert(id, cost);
+    }
+    Ok(out)
+}
+
+/// Failure figures of one equipment over a period, from the same calculation as the fleet view.
+pub async fn asset_figures(
+    db: &DatabaseConnection,
     equipment_id: i64,
-    asset_code: String,
-    asset_name: String,
-    class_id: Option<i64>,
-    class_name: Option<String>,
-    failures: i64,
-    downtime: f64,
-    repair_hours: f64,
-    missing_mode: i64,
-    missing_cause: i64,
-    di_earlier: i64,
+    period_start: &str,
+    period_end: &str,
+) -> AppResult<AssetReliabilityFigures> {
+    let scope = FleetScope::new(period_start, period_end, None, None)?;
+    let aggs = load_asset_aggs(db, &scope).await?;
+    let hours = fleet_hours(db, &scope).await?;
+    let too_short = scope.window_too_short();
+    let agg = aggs.iter().find(|a| a.equipment_id == equipment_id);
+    Ok(AssetReliabilityFigures {
+        equipment_id,
+        period_start: scope.start.to_rfc3339(),
+        period_end: scope.end.to_rfc3339(),
+        window_too_short: too_short,
+        failures: agg.map_or(0, |a| a.failures),
+        downtime_hours: agg.map_or(0.0, |a| a.downtime),
+        mtbf_hours: agg.and_then(|a| asset_mtbf(a, &hours, too_short)),
+        mttr_hours: agg
+            .and_then(|a| (!too_short && a.restore_count > 0).then(|| a.restore_hours / a.restore_count as f64)),
+    })
 }
 
 pub async fn fleet_view(db: &DatabaseConnection, filter: FleetViewFilter) -> AppResult<FleetView> {
-    let start = parse_instant(&filter.period_start)?;
-    let end = {
-        let e = parse_instant(&filter.period_end)?;
-        let now = Utc::now();
-        if e > now {
-            now
-        } else {
-            e
-        }
-    };
+    let scope = FleetScope::new(
+        &filter.period_start,
+        &filter.period_end,
+        filter.equipment_class_id,
+        filter.org_node_id,
+    )?;
     let limit = filter.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
     let offset = filter.offset.unwrap_or(0).max(0);
-    let rows = db
-        .query_all(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT e.id, e.asset_id_code, e.name, e.class_id, ec.name AS class_name,
-                    COUNT(fe.id) AS failures,
-                    COALESCE(SUM(fe.downtime_duration_hours), 0.0) AS downtime,
-                    COALESCE(SUM(fe.active_repair_hours), 0.0) AS repair_hours,
-                    SUM(CASE WHEN fe.failure_mode_id IS NULL THEN 1 ELSE 0 END) AS missing_mode,
-                    SUM(CASE WHEN fe.failure_mode_id IS NOT NULL AND fe.failure_cause_id IS NULL
-                              AND COALESCE(fe.cause_not_determined, 0) = 0 THEN 1 ELSE 0 END) AS missing_cause,
-                    SUM(CASE WHEN di.id IS NOT NULL AND fe.failed_at IS NOT NULL
-                              AND (julianday(fe.failed_at) - julianday(COALESCE(di.observed_at, di.submitted_at))) * 24.0 > 1.0
-                         THEN 1 ELSE 0 END) AS di_earlier
-             FROM failure_events fe
-             JOIN equipment e ON e.id = fe.equipment_id AND e.deleted_at IS NULL
-             LEFT JOIN equipment_classes ec ON ec.id = e.class_id
-             LEFT JOIN org_nodes n ON n.id = e.installed_at_node_id
-             LEFT JOIN work_orders wo ON fe.source_type = 'work_order' AND wo.id = fe.source_id
-             LEFT JOIN intervention_requests di ON di.id = wo.source_di_id
-             WHERE COALESCE(fe.is_planned, 0) = 0
-               AND datetime(COALESCE(fe.failed_at, fe.detected_at, fe.created_at)) >= datetime(?)
-               AND datetime(COALESCE(fe.failed_at, fe.detected_at, fe.created_at)) <= datetime(?)
-               AND (? IS NULL OR e.class_id = ?)
-               AND (? IS NULL OR n.ancestor_path LIKE '%/' || ? || '/%')
-             GROUP BY e.id
-             ORDER BY downtime DESC, failures DESC, e.asset_id_code ASC",
-            [
-                start.to_rfc3339().into(),
-                end.to_rfc3339().into(),
-                opt_i64(filter.equipment_class_id),
-                opt_i64(filter.equipment_class_id),
-                opt_i64(filter.org_node_id),
-                opt_i64(filter.org_node_id),
-            ],
-        ))
-        .await?;
-    let mut aggs = Vec::with_capacity(rows.len());
-    for r in &rows {
-        aggs.push(AssetAgg {
-            equipment_id: get(r, "id")?,
-            asset_code: get(r, "asset_id_code")?,
-            asset_name: get(r, "name")?,
-            class_id: get(r, "class_id")?,
-            class_name: get(r, "class_name")?,
-            failures: get(r, "failures")?,
-            downtime: get(r, "downtime")?,
-            repair_hours: get(r, "repair_hours")?,
-            missing_mode: get(r, "missing_mode")?,
-            missing_cause: get(r, "missing_cause")?,
-            di_earlier: get(r, "di_earlier")?,
-        });
-    }
-
-    // Equipment of the filtered fleet with no failure still count in the hours (A_o, MTBF).
-    let fleet = db
-        .query_all(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT e.id FROM equipment e LEFT JOIN org_nodes n ON n.id = e.installed_at_node_id
-             WHERE e.deleted_at IS NULL
-               AND (? IS NULL OR e.class_id = ?)
-               AND (? IS NULL OR n.ancestor_path LIKE '%/' || ? || '/%')",
-            [
-                opt_i64(filter.equipment_class_id),
-                opt_i64(filter.equipment_class_id),
-                opt_i64(filter.org_node_id),
-                opt_i64(filter.org_node_id),
-            ],
-        ))
-        .await?;
-    let by_id: HashMap<i64, &AssetAgg> = aggs.iter().map(|a| (a.equipment_id, a)).collect();
-    let mut pooled_rows = Vec::with_capacity(fleet.len());
-    let mut asset_hours: HashMap<i64, (f64, &'static str)> = HashMap::new();
-    let (mut operating_count, mut calendar_count) = (0_i64, 0_i64);
-    for r in &fleet {
-        let id: i64 = get(r, "id")?;
-        let clock = load_clock(db, id).await?;
-        let hours = clock.hours_between(start, end);
-        if clock.is_operating() {
-            operating_count += 1;
-        } else {
-            calendar_count += 1;
+    if let Some(key) = filter.sort_by.as_deref() {
+        if !SORT_KEYS.contains(&key) {
+            return Err(AppError::ValidationFailed(vec![format!(
+                "GATE_REL_FLEET_SORT_INVALID: sort_by must be one of {SORT_KEYS:?}."
+            )]));
         }
-        asset_hours.insert(id, (hours, clock.source()));
-        let agg = by_id.get(&id);
-        pooled_rows.push(FleetSnapshotRow {
-            equipment_id: id,
-            data_quality_score: 1.0,
-            repairable: true,
-            event_count: agg.map_or(0, |a| a.failures),
-            exposure_hours: Some(hours),
-            repair_event_count: Some(agg.map_or(0, |a| a.failures)),
-            active_repair_hours_total: Some(agg.map_or(0.0, |a| a.repair_hours)),
-            downtime_hours_total: Some(agg.map_or(0.0, |a| a.downtime)),
+    }
+    let mut aggs = load_asset_aggs(db, &scope).await?;
+    let costs = failure_costs(db, &scope).await?;
+    // Equipment of the filtered fleet with no failure still count in the hours (A_o, MTBF).
+    let hours = fleet_hours(db, &scope).await?;
+    let missing_date = missing_date_count(db, &scope).await?;
+    let outside_service = outside_service_count(db, &scope).await?;
+    let kpis = kpis_of(&scope, &aggs, &hours, missing_date, outside_service);
+    let downtime_total = kpis.downtime_hours;
+    let too_short = scope.window_too_short();
+
+    // The ranking is ordered before it is paged, so a page is the Nth slice of the chosen column.
+    // Without a chosen column the default order (downtime, failures, code) is kept.
+    if let Some(key) = filter.sort_by.as_deref() {
+        let desc = filter.sort_desc.unwrap_or(key != "mtbf");
+        let value = |a: &AssetAgg| -> Option<f64> {
+            match key {
+                "failures" => Some(a.failures as f64),
+                "downtime" => Some(a.downtime),
+                "cost" => Some(costs.get(&a.equipment_id).copied().unwrap_or(0.0)),
+                _ => asset_mtbf(a, &hours, too_short),
+            }
+        };
+        aggs.sort_by(|x, y| match (value(x), value(y)) {
+            (Some(a), Some(b)) => {
+                let o = a.partial_cmp(&b).unwrap_or(Ordering::Equal);
+                (if desc { o.reverse() } else { o }).then_with(|| x.asset_code.cmp(&y.asset_code))
+            }
+            (Some(_), None) => Ordering::Less,
+            (None, Some(_)) => Ordering::Greater,
+            (None, None) => x.asset_code.cmp(&y.asset_code),
         });
     }
-    let pooled = pool_fleet(&pooled_rows, 0.0);
-    let failure_count: i64 = aggs.iter().map(|a| a.failures).sum();
-    let downtime_total: f64 = aggs.iter().map(|a| a.downtime).sum();
-    let missing_mode: i64 = aggs.iter().map(|a| a.missing_mode).sum();
-    let missing_cause: i64 = aggs.iter().map(|a| a.missing_cause).sum();
-    let kpis = FleetKpis {
-        equipment_count: fleet.len() as i64,
-        failure_count,
-        downtime_hours: downtime_total,
-        availability_operational: pooled.availability_operational,
-        mtbf_hours: pooled.mtbf_hours,
-        mttr_hours: pooled.mttr_hours,
-        data_quality: (failure_count > 0)
-            .then(|| (failure_count - missing_mode - missing_cause).max(0) as f64 / failure_count as f64),
-        records_missing_mode: missing_mode,
-        records_missing_cause: missing_cause,
-        operating_basis_count: operating_count,
-        calendar_basis_count: calendar_count,
-    };
 
     let total_rows = aggs.len() as i64;
     let mut out_rows = Vec::new();
     // Pages of the ranking: the fleet KPIs above always cover every asset.
     for a in aggs.iter().skip(offset as usize).take(limit as usize) {
-        let (hours, source) = asset_hours.get(&a.equipment_id).copied().unwrap_or((0.0, "calendar"));
+        let (asset_hours, source) = hours
+            .get(&a.equipment_id)
+            .map_or((0.0, SOURCE_CALENDAR), |h| (h.hours, h.source));
         let last = db
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
@@ -177,7 +149,6 @@ pub async fn fleet_view(db: &DatabaseConnection, filter: FleetViewFilter) -> App
                 [a.equipment_id.into()],
             ))
             .await?;
-        let to_check = a.missing_mode + a.missing_cause + a.di_earlier;
         out_rows.push(FleetAssetRow {
             equipment_id: a.equipment_id,
             asset_code: a.asset_code.clone(),
@@ -191,66 +162,30 @@ pub async fn fleet_view(db: &DatabaseConnection, filter: FleetViewFilter) -> App
             } else {
                 0.0
             },
-            mtbf_hours: (a.failures > 0 && hours > 0.0).then(|| hours / a.failures as f64),
-            mttr_hours: (a.failures > 0).then(|| a.repair_hours / a.failures as f64),
+            // Same definitions as the fleet figures (every unplanned failure, time to restore).
+            mtbf_hours: (!too_short && a.failures > 0 && asset_hours > 0.0).then(|| asset_hours / a.failures as f64),
+            mttr_hours: (!too_short && a.restore_count > 0).then(|| a.restore_hours / a.restore_count as f64),
+            failure_cost: costs.get(&a.equipment_id).copied().filter(|c| *c > 0.0),
             time_basis: source.to_string(),
-            data_quality: if source == "calendar" {
+            data_quality: if source == SOURCE_CALENDAR {
                 "no_operating_hours"
-            } else if to_check > 0 {
+            } else if a.to_check > 0 {
                 "to_check"
             } else {
                 "complete"
             }
             .into(),
-            records_to_check: to_check,
+            records_to_check: a.to_check,
             last_study_id: last.as_ref().map(|r| get(r, "id")).transpose()?,
             last_study_title: last.as_ref().map(|r| get(r, "title")).transpose()?,
             last_study_updated_at: last.as_ref().map(|r| get(r, "updated_at")).transpose()?,
         });
     }
 
-    let org_nodes = db
-        .query_all(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT DISTINCT n.id, n.name, n.depth, n.ancestor_path FROM org_nodes n
-             WHERE n.deleted_at IS NULL AND EXISTS (
-                SELECT 1 FROM equipment e JOIN org_nodes h ON h.id = e.installed_at_node_id
-                WHERE e.deleted_at IS NULL AND h.ancestor_path LIKE '%/' || n.id || '/%')
-             ORDER BY n.ancestor_path ASC"
-                .to_string(),
-        ))
-        .await?
-        .iter()
-        .map(|r| {
-            Ok(FilterOption {
-                id: get(r, "id")?,
-                label: get(r, "name")?,
-                depth: get(r, "depth")?,
-            })
-        })
-        .collect::<AppResult<Vec<_>>>()?;
-    let equipment_classes = db
-        .query_all(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT DISTINCT ec.id, ec.name FROM equipment_classes ec
-             JOIN equipment e ON e.class_id = ec.id AND e.deleted_at IS NULL
-             ORDER BY ec.name ASC"
-                .to_string(),
-        ))
-        .await?
-        .iter()
-        .map(|r| {
-            Ok(FilterOption {
-                id: get(r, "id")?,
-                label: get(r, "name")?,
-                depth: 0,
-            })
-        })
-        .collect::<AppResult<Vec<_>>>()?;
-
+    let (org_nodes, equipment_classes) = filter_options(db).await?;
     Ok(FleetView {
-        period_start: start.to_rfc3339(),
-        period_end: end.to_rfc3339(),
+        period_start: kpis.period_start.clone(),
+        period_end: kpis.period_end.clone(),
         kpis,
         rows: out_rows,
         total_rows,

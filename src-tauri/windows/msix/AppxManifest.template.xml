@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Microsoft Store (MSIX) package manifest of Maintafox. scripts/store/build-msix.ps1 fills the
+  {{...}} values; nothing here is a default:
+  - IDENTITY_NAME, PUBLISHER, PUBLISHER_DISPLAY_NAME: Partner Center > the app > Product
+    management > Product identity (repository variables MSSTORE_IDENTITY_NAME,
+    MSSTORE_PUBLISHER, MSSTORE_PUBLISHER_DISPLAY_NAME; docs/store/MICROSOFT_STORE.md);
+  - VERSION: tauri.conf.json's version as X.Y.Z.0 (the Store requires the last part to be 0);
+  - EXECUTABLE: the app binary copied into the package.
+
+  Full-trust desktop app (runFullTrust): same file, network and credential-store access as the
+  installer build. AppData write virtualisation is OFF (desktop6:FileSystemWriteVirtualization,
+  restricted capability unvirtualizedResources): the database, attachments and backups stay in
+  the user's real AppData folder, the same folder as the direct-download build, so they survive an
+  uninstall/reinstall and a move from the installer build to the Store build. Without it, Windows
+  would keep the files the app creates in a private package folder that uninstalling deletes.
+-->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  xmlns:desktop6="http://schemas.microsoft.com/appx/manifest/desktop/windows10/6"
+  IgnorableNamespaces="uap rescap desktop6">
+
+  <Identity
+    Name="{{IDENTITY_NAME}}"
+    Publisher="{{PUBLISHER}}"
+    Version="{{VERSION}}"
+    ProcessorArchitecture="x64" />
+
+  <Properties>
+    <DisplayName>Maintafox</DisplayName>
+    <PublisherDisplayName>{{PUBLISHER_DISPLAY_NAME}}</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+    <desktop6:FileSystemWriteVirtualization>disabled</desktop6:FileSystemWriteVirtualization>
+  </Properties>
+
+  <Dependencies>
+    <!-- Windows 10 version 1903: first version honouring FileSystemWriteVirtualization. -->
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.18362.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="fr-FR" />
+    <Resource Language="en-US" />
+  </Resources>
+
+  <Applications>
+    <Application Id="Maintafox" Executable="{{EXECUTABLE}}" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="Maintafox"
+        Description="GMAO / CMMS industrielle : équipements, ordres de travail, maintenance préventive, stocks et fiabilité."
+        BackgroundColor="transparent"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png">
+        <uap:DefaultTile
+          Wide310x150Logo="Assets\Wide310x150Logo.png"
+          Square71x71Logo="Assets\SmallTile.png"
+          Square310x310Logo="Assets\LargeTile.png"
+          ShortName="Maintafox" />
+      </uap:VisualElements>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <Capability Name="internetClient" />
+    <rescap:Capability Name="runFullTrust" />
+    <rescap:Capability Name="unvirtualizedResources" />
+  </Capabilities>
+</Package>

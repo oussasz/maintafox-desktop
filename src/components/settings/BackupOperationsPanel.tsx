@@ -9,6 +9,7 @@ import {
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { BackupDestinationCard } from "@/components/settings/BackupDestinationCard";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -72,6 +73,8 @@ export function BackupOperationsPanel({ onToast }: BackupOperationsPanelProps) {
   const [validation, setValidation] = useState<RestoreTestResult | null>(null);
   const [resetPhrase, setResetPhrase] = useState("");
   const [restorePath, setRestorePath] = useState<string | null>(null);
+  /** Bumped after a backup: the outside-copy status is read again. */
+  const [backupsMade, setBackupsMade] = useState(0);
 
   const reloadRuns = useCallback(async () => {
     setLoadingRuns(true);
@@ -109,6 +112,7 @@ export function BackupOperationsPanel({ onToast }: BackupOperationsPanelProps) {
         description: result.output_path,
         variant: "success",
       });
+      setBackupsMade((n) => n + 1);
       void reloadRuns();
     } catch (err) {
       if (isStepUpCancelled(err)) return;
@@ -244,6 +248,8 @@ export function BackupOperationsPanel({ onToast }: BackupOperationsPanelProps) {
         </Button>
       </div>
 
+      <BackupDestinationCard onToast={onToast} withStepUp={withStepUp} refreshKey={backupsMade} />
+
       {validation ? (
         <div className="rounded-md border border-border bg-muted/40 p-3 text-sm">
           <p>
@@ -304,11 +310,12 @@ export function BackupOperationsPanel({ onToast }: BackupOperationsPanelProps) {
         )}
       </div>
 
-      <div className="space-y-2 rounded-md border border-destructive/30 bg-destructive/5 p-3">
-        <h4 className="flex items-center gap-2 text-sm font-medium text-destructive">
+      {/* Kept apart and folded: erasing everything is never next to the everyday actions. */}
+      <details className="mt-6 space-y-2 rounded-md border border-destructive/30 bg-destructive/5 p-3">
+        <summary className="flex cursor-pointer items-center gap-2 text-sm font-medium text-destructive">
           <RotateCcw className="h-4 w-4" />
           {t("backupOps.resetTitle")}
-        </h4>
+        </summary>
         <p className="text-xs text-text-muted">{t("backupOps.resetDescription")}</p>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
           <div className="flex-1 space-y-1">
@@ -329,7 +336,7 @@ export function BackupOperationsPanel({ onToast }: BackupOperationsPanelProps) {
             {t("backupOps.resetAction")}
           </Button>
         </div>
-      </div>
+      </details>
 
       <Dialog open={restorePath !== null} onOpenChange={(o) => !o && setRestorePath(null)}>
         <DialogContent className="max-w-md">

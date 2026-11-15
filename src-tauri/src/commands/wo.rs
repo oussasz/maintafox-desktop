@@ -13,6 +13,10 @@
 //!                open_downtime, close_downtime, save_failure_detail, save_verification,
 //!                close_wo, upload_wo_attachment, update_service_cost
 //!   ot.admin   — reopen_wo, delete_wo_attachment
+//!   ot.create + ot.edit (+ ot.emergency_assign to assign someone else) — start_depannage_wo
+//!   ot.edit    — set_wo_breakdown_at, join_wo (own labour only; the joiner is not an execution actor)
+//!   ot.approve — validate_depannage_wo (never by the dépannage's starter)
+//!   ot.view    — get_depannage_times
 //!
 //! Site scope (step 6, `docs/SITE_SCOPED_ROLES.md`): every work order is checked at its org node
 //! `work_orders.entity_id` (`wo::access`), with the same permission as before; what belongs to a
@@ -30,8 +34,8 @@ use crate::errors::{AppError, AppResult};
 use crate::state::AppState;
 use crate::wo::types;
 use crate::wo::{
-    access, analytics, attachments, audit, closeout, costs, delay, execution, labor, parts, queries, stats, statuses,
-    tasks,
+    access, analytics, attachments, audit, closeout, costs, delay, depannage, execution, execution_actor, labor, parts,
+    queries, stats, statuses, tasks,
 };
 use crate::{require_permission, require_session};
 
@@ -69,6 +73,25 @@ async fn require_on_child(
     id: i64,
 ) -> AppResult<()> {
     access::require_on_child(&state.db, &state.permission_cache, user_id, permission, child, id).await
+}
+
+/// An execution action (close-out details, completion, close, cancel): `permission` on the work
+/// order as before, then the execution-actor rule (`wo::execution_actor`), which only narrows.
+async fn require_execution_on_wo(state: &AppState, user_id: i32, permission: &str, wo_id: i64) -> AppResult<()> {
+    execution_actor::require_execution_on_wo(&state.db, &state.permission_cache, user_id, permission, wo_id).await
+}
+
+/// An execution action on a record of the work order (task result, part or tool use, downtime):
+/// `permission` on its work order, then the actor rule.
+async fn require_execution_on_child(
+    state: &AppState,
+    user_id: i32,
+    permission: &str,
+    child: access::WoChild,
+    id: i64,
+) -> AppResult<()> {
+    execution_actor::require_execution_on_child(&state.db, &state.permission_cache, user_id, permission, child, id)
+        .await
 }
 
 /// `permission` on the work order, and at the new equipment's node when the equipment changes.
@@ -205,15 +228,9 @@ pub async fn get_wo(id: i64, state: State<'_, AppState>) -> AppResult<queries::W
         Anchor::of(wo.entity_id),
     )
     .await?;
-    // Several plant rules naming different permit types match it, or the rule it carries (received
-    // from another PC) names a type the list here does not give: shown with its rule (display only).
-    wo.permit_rule_matching_types = crate::permit::requirement_rules::matching_permit_types(
-        &state.db,
-        wo.equipment_id,
-        wo.type_id,
-        wo.permit_rule_permit_type.as_deref(),
-    )
-    .await?;
+    // Every permit type the plant's rules require of it, each live, missing or cleared (judged as the
+    // start gate judges it; CMMS Advisor 2026-11-04).
+    wo.required_permits = crate::permit::wo_gate::required_permit_views(&state.db, id).await?;
 
     let transitions = queries::get_wo_transition_log(&state.db, id).await?;
     // Read after the work order: a coding saved in between moved the version, so the next
@@ -227,14 +244,35 @@ pub async fn get_wo(id: i64, state: State<'_, AppState>) -> AppResult<queries::W
     })
 }
 
+/// Whether the signed-in user carries out this work order (its assignee, a member of its team,
+/// its planner, or an `ot.approve` holder at its site), and else why not: the screens grey the
+/// execution actions with that reason (`wo::execution_actor`). Read with `ot.view` on the work order.
+#[tauri::command]
+pub async fn get_wo_execution_standing(
+    wo_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<execution_actor::ExecutionStanding> {
+    let user = require_session!(state);
+    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_VIEW, wo_id).await?;
+    execution_actor::standing_of(&state.db, &state.permission_cache, user.user_id, wo_id).await
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // C) create_wo — requires ot.create
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
 pub async fn create_wo(
-    mut input: crate::wo::domain::WoCreateInput,
+    input: crate::wo::domain::WoCreateInput,
     state: State<'_, AppState>,
+) -> AppResult<crate::wo::domain::WorkOrder> {
+    create_wo_impl(state.inner(), input).await
+}
+
+/// The command body, callable with an `AppState` (command-level tests, L5-08).
+pub(crate) async fn create_wo_impl(
+    state: &AppState,
+    mut input: crate::wo::domain::WoCreateInput,
 ) -> AppResult<crate::wo::domain::WorkOrder> {
     let user = require_session!(state);
     // The creator (requester of record) is the signed-in user, never an id sent by the screen.
@@ -249,6 +287,17 @@ pub async fn create_wo(
         user.user_id,
         input.entity_id,
         input.equipment_id,
+    )
+    .await?;
+    // Naming the planner needs ot.approve or plan.confirm at the new work order's site (CMMS
+    // Advisor 2026-11-06): refused, never dropped silently.
+    execution_actor::require_people_on_create(
+        &state.db,
+        &state.permission_cache,
+        user.user_id,
+        input.entity_id,
+        input.equipment_id,
+        input.planner_id,
     )
     .await?;
 
@@ -494,13 +543,25 @@ pub async fn update_wo_draft(
         input.equipment_id,
     )
     .await?;
+    // L1-35: only its execution actors (assignee, team, planner, `ot.approve`) or its creator edit a draft.
+    execution_actor::require_draft_edit(
+        &state.db,
+        &state.permission_cache,
+        user.user_id,
+        crate::rbac::permissions::OT_EDIT,
+        input.id,
+    )
+    .await?;
     let before = queries::get_work_order(&state.db, input.id).await?;
+    let expected = input.expected_row_version;
     let wo = queries::update_wo_draft_fields(&state.db, input, Some(i64::from(user.user_id))).await?;
     // Every change of a draft's equipment is recorded (who, when, old and new equipment), and
     // whether the order moved with it to another location (org node).
-    if let Some(before) = before.filter(|b| b.equipment_id != wo.equipment_id) {
+    // Any other edit is recorded as "updated" with the fields it changed (old → new values).
+    let equipment_changed = before.as_ref().is_some_and(|b| b.equipment_id != wo.equipment_id);
+    if let Some(before) = before.as_ref().filter(|_| equipment_changed) {
         let moved = before.entity_id != wo.entity_id;
-        audit::record_wo_change_event(
+        audit::record_wo_change_with_diff(
             &state.db,
             audit::WoAuditInput {
                 wo_id: Some(wo.id),
@@ -526,8 +587,30 @@ pub async fn update_wo_draft(
                 requires_step_up: false,
                 apply_result: "applied".into(),
             },
+            Some(before),
+            Some(&wo),
+            Some(expected),
         )
         .await;
+    } else if let Some(before) = before.as_ref() {
+        if !audit::wo_field_changes(before, &wo).is_empty() {
+            audit::record_wo_change_with_diff(
+                &state.db,
+                audit::WoAuditInput {
+                    wo_id: Some(wo.id),
+                    action: "updated".into(),
+                    actor_id: Some(i64::from(user.user_id)),
+                    summary: Some("OT modifié".into()),
+                    details_json: None,
+                    requires_step_up: false,
+                    apply_result: "applied".into(),
+                },
+                Some(before),
+                Some(&wo),
+                Some(expected),
+            )
+            .await;
+        }
     }
     Ok(wo)
 }
@@ -538,11 +621,28 @@ pub async fn update_wo_draft(
 
 #[tauri::command]
 pub async fn cancel_wo(
-    mut input: crate::wo::domain::WoCancelInput,
+    input: crate::wo::domain::WoCancelInput,
     state: State<'_, AppState>,
 ) -> AppResult<crate::wo::domain::WorkOrder> {
+    cancel_wo_impl(state.inner(), input).await
+}
+
+/// The command body, callable with an `AppState` (command-level tests, L5-08).
+pub(crate) async fn cancel_wo_impl(
+    state: &AppState,
+    mut input: crate::wo::domain::WoCancelInput,
+) -> AppResult<crate::wo::domain::WorkOrder> {
     let user = require_session!(state);
-    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.id).await?;
+    // Cancelling is an execution action: its right, then its assignee / team / planner / approver;
+    // the creator of a draft cancels it too (CMMS Advisor 2026-11-06).
+    execution_actor::require_cancel(
+        &state.db,
+        &state.permission_cache,
+        user.user_id,
+        crate::rbac::permissions::OT_EDIT,
+        input.id,
+    )
+    .await?;
     // The actor is the signed-in user, never an id sent by the screen.
     input.actor_id = i64::from(user.user_id);
 
@@ -579,8 +679,10 @@ pub async fn cancel_wo(
         }
     }
 
+    let before = queries::get_work_order(&state.db, input.id).await.ok().flatten();
+    let expected = input.expected_row_version;
     let wo = queries::cancel_work_order(&state.db, input).await?;
-    audit::record_wo_change_event(
+    audit::record_wo_change_with_diff(
         &state.db,
         audit::WoAuditInput {
             wo_id: Some(wo.id),
@@ -591,6 +693,9 @@ pub async fn cancel_wo(
             requires_step_up: false,
             apply_result: "applied".into(),
         },
+        before.as_ref(),
+        Some(&wo),
+        Some(expected),
     )
     .await;
     Ok(wo)
@@ -602,15 +707,35 @@ pub async fn cancel_wo(
 
 #[tauri::command]
 pub async fn plan_wo(
-    mut input: execution::WoPlanInput,
+    input: execution::WoPlanInput,
     state: State<'_, AppState>,
 ) -> AppResult<crate::wo::domain::WorkOrder> {
+    plan_wo_impl(state.inner(), input).await
+}
+
+/// The command body, callable with an `AppState` (command-level tests, L5-08).
+pub(crate) async fn plan_wo_impl(
+    state: &AppState,
+    mut input: execution::WoPlanInput,
+) -> AppResult<crate::wo::domain::WorkOrder> {
     let user = require_session!(state);
-    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
+    require_on_wo(state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
+    // Changing the planner needs ot.approve or plan.confirm at the site (CMMS Advisor 2026-11-06);
+    // the planner already recorded passes, so the dates and the rest are planned as before.
+    execution_actor::require_planner_change(
+        &state.db,
+        &state.permission_cache,
+        user.user_id,
+        input.wo_id,
+        input.planner_id,
+    )
+    .await?;
     // The actor is the signed-in user, never an id sent by the screen.
     input.actor_id = i64::from(user.user_id);
+    let before = queries::get_work_order(&state.db, input.wo_id).await.ok().flatten();
+    let expected = input.expected_row_version;
     let wo = execution::plan_wo(&state.db, input).await?;
-    audit::record_wo_change_event(
+    audit::record_wo_change_with_diff(
         &state.db,
         audit::WoAuditInput {
             wo_id: Some(wo.id),
@@ -621,6 +746,9 @@ pub async fn plan_wo(
             requires_step_up: false,
             apply_result: "applied".into(),
         },
+        before.as_ref(),
+        Some(&wo),
+        Some(expected),
     )
     .await;
     Ok(wo)
@@ -639,8 +767,10 @@ pub async fn set_wo_permit_requirement(
     require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
     let actor_id = i64::from(user.user_id);
     let requires_permit = input.requires_permit;
+    let before = queries::get_work_order(&state.db, input.wo_id).await.ok().flatten();
+    let expected = input.expected_row_version;
     let wo = crate::wo::workflow::actions::set_permit_requirement(&state.db, input, actor_id).await?;
-    audit::record_wo_change_event(
+    audit::record_wo_change_with_diff(
         &state.db,
         audit::WoAuditInput {
             wo_id: Some(wo.id),
@@ -658,15 +788,19 @@ pub async fn set_wo_permit_requirement(
             requires_step_up: false,
             apply_result: "applied".into(),
         },
+        before.as_ref(),
+        Some(&wo),
+        Some(expected),
     )
     .await;
     Ok(wo)
 }
 
-/// Clear the permit flag a plant rule set when the work order was converted from a request, or the
-/// permit requirement carried from a request flagged "sécurité" (migration 255). Needs the
-/// permit-issue right (`ptw.issue`) — editing the work order is not enough — and a reason of 10
-/// characters or more; recorded on the work order and in its audit trail.
+/// Clear one permit type a plant rule requires of the work order (`input.permit_type_code`, or its
+/// only type not lifted), or the permit requirement carried from a request flagged "sécurité"
+/// (migration 255). Needs the permit-issue right (`ptw.issue`) at the work order's site — editing the
+/// work order is not enough — and a reason of 10 characters or more; recorded on the work order and
+/// in its audit trail.
 #[tauri::command]
 pub async fn clear_wo_permit_rule_flag(
     input: crate::wo::workflow::actions::permit_requirement::WoPermitRuleClearInput,
@@ -674,13 +808,17 @@ pub async fn clear_wo_permit_rule_flag(
 ) -> AppResult<crate::wo::domain::WorkOrder> {
     let user = require_session!(state);
     // A safety gate: `ptw.issue` at the work order's site (plant-wide for a work order without a
-    // site), with the entitlement and licence checks. The action re-checks, in its transaction,
-    // the right its origin needs: plant-wide for a plant rule (a site role does not lift a plant
-    // rule), at the work order's site for a safety request (CMMS Advisor decision D1).
+    // site), with the entitlement and licence checks. The action re-checks it in its transaction,
+    // for a plant rule's permit type as for a safety request (lead decision D-a, CMMS Advisor
+    // decision D1).
     require_on_wo(&state, user.user_id, crate::rbac::permissions::PTW_ISSUE, input.wo_id).await?;
     let actor_id = i64::from(user.user_id);
-    // The action writes the audit trail entry (origin, reason, site) in its own transaction.
-    crate::wo::workflow::actions::permit_requirement::clear_permit_rule_flag(&state.db, input, actor_id).await
+    // The action writes the audit trail entry (origin, type, reason, site) in its own transaction.
+    let mut wo =
+        crate::wo::workflow::actions::permit_requirement::clear_permit_rule_flag(&state.db, input, actor_id).await?;
+    // The screen shows the permit types left to obtain at once.
+    wo.required_permits = crate::permit::wo_gate::required_permit_views(&state.db, wo.id).await?;
+    Ok(wo)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -696,8 +834,10 @@ pub async fn submit_wo(
     require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
     // The actor is the signed-in user, never an id sent by the screen.
     input.actor_id = i64::from(user.user_id);
+    let before = queries::get_work_order(&state.db, input.wo_id).await.ok().flatten();
+    let expected = input.expected_row_version;
     let wo = crate::wo::workflow::actions::submit_wo(&state.db, input).await?;
-    audit::record_wo_change_event(
+    audit::record_wo_change_with_diff(
         &state.db,
         audit::WoAuditInput {
             wo_id: Some(wo.id),
@@ -708,6 +848,9 @@ pub async fn submit_wo(
             requires_step_up: false,
             apply_result: "applied".into(),
         },
+        before.as_ref(),
+        Some(&wo),
+        Some(expected),
     )
     .await;
     Ok(wo)
@@ -732,8 +875,10 @@ pub async fn mark_wo_ready(
     require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
     // The actor is the signed-in user, never an id sent by the screen.
     input.actor_id = i64::from(user.user_id);
+    let before = queries::get_work_order(&state.db, input.wo_id).await.ok().flatten();
+    let expected = input.expected_row_version;
     let wo = crate::wo::workflow::actions::mark_wo_ready(&state.db, input).await?;
-    audit::record_wo_change_event(
+    audit::record_wo_change_with_diff(
         &state.db,
         audit::WoAuditInput {
             wo_id: Some(wo.id),
@@ -744,6 +889,9 @@ pub async fn mark_wo_ready(
             requires_step_up: false,
             apply_result: "applied".into(),
         },
+        before.as_ref(),
+        Some(&wo),
+        Some(expected),
     )
     .await;
     Ok(wo)
@@ -758,8 +906,10 @@ pub async fn return_to_planning(
     require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
     // The actor is the signed-in user, never an id sent by the screen.
     input.actor_id = i64::from(user.user_id);
+    let before = queries::get_work_order(&state.db, input.wo_id).await.ok().flatten();
+    let expected = input.expected_row_version;
     let wo = crate::wo::workflow::actions::return_to_planning(&state.db, input).await?;
-    audit::record_wo_change_event(
+    audit::record_wo_change_with_diff(
         &state.db,
         audit::WoAuditInput {
             wo_id: Some(wo.id),
@@ -770,6 +920,9 @@ pub async fn return_to_planning(
             requires_step_up: false,
             apply_result: "applied".into(),
         },
+        before.as_ref(),
+        Some(&wo),
+        Some(expected),
     )
     .await;
     Ok(wo)
@@ -784,8 +937,10 @@ pub async fn approve_planning(
     require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_APPROVE, input.wo_id).await?;
     // The actor is the signed-in user, never an id sent by the screen.
     input.actor_id = i64::from(user.user_id);
+    let before = queries::get_work_order(&state.db, input.wo_id).await.ok().flatten();
+    let expected = input.expected_row_version;
     let wo = crate::wo::workflow::actions::approve_planning(&state.db, input).await?;
-    audit::record_wo_change_event(
+    audit::record_wo_change_with_diff(
         &state.db,
         audit::WoAuditInput {
             wo_id: Some(wo.id),
@@ -796,13 +951,17 @@ pub async fn approve_planning(
             requires_step_up: false,
             apply_result: "applied".into(),
         },
+        before.as_ref(),
+        Some(&wo),
+        Some(expected),
     )
     .await;
     Ok(wo)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// G) assign_wo — ot.edit (requires override_reason; prefer emergency_reassign_wo)
+// G) assign_wo — ot.edit at the work order's site (routine "Affecter", no waiver reason; the
+//    emergency override is emergency_reassign_wo)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
@@ -811,28 +970,26 @@ pub async fn assign_wo(
     state: State<'_, AppState>,
 ) -> AppResult<crate::wo::domain::WorkOrder> {
     let user = require_session!(state);
-    require_on_wo(
-        &state,
-        user.user_id,
-        crate::rbac::permissions::OT_EMERGENCY_ASSIGN,
-        input.wo_id,
-    )
-    .await?;
+    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
     // The actor is the signed-in user, never an id sent by the screen.
     input.actor_id = i64::from(user.user_id);
-    let reason = input.override_reason.clone();
+    let before = queries::get_work_order(&state.db, input.wo_id).await.ok().flatten();
+    let expected = input.expected_row_version;
     let wo = execution::assign_wo(&state.db, input).await?;
-    audit::record_wo_change_event(
+    audit::record_wo_change_with_diff(
         &state.db,
         audit::WoAuditInput {
             wo_id: Some(wo.id),
-            action: "emergency_reassigned".into(),
+            action: "assigned".into(),
             actor_id: Some(i64::from(user.user_id)),
-            summary: Some("Work order emergency reassigned".into()),
-            details_json: Some(serde_json::json!({ "override_reason": reason }).to_string()),
+            summary: Some("Work order assigned".into()),
+            details_json: None,
             requires_step_up: false,
             apply_result: "applied".into(),
         },
+        before.as_ref(),
+        Some(&wo),
+        Some(expected),
     )
     .await;
     Ok(wo)
@@ -858,8 +1015,10 @@ pub async fn emergency_reassign_wo(
     // The actor is the signed-in user, never an id sent by the screen.
     input.actor_id = i64::from(user.user_id);
     let reason = input.override_reason.clone();
+    let before = queries::get_work_order(&state.db, input.wo_id).await.ok().flatten();
+    let expected = input.expected_row_version;
     let wo = execution::emergency_reassign_wo(&state.db, input).await?;
-    audit::record_wo_change_event(
+    audit::record_wo_change_with_diff(
         &state.db,
         audit::WoAuditInput {
             wo_id: Some(wo.id),
@@ -870,9 +1029,185 @@ pub async fn emergency_reassign_wo(
             requires_step_up: false,
             apply_result: "applied".into(),
         },
+        before.as_ref(),
+        Some(&wo),
+        Some(expected),
     )
     .await;
     Ok(wo)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// G3) start_depannage_wo — ot.create + ot.edit at the site (+ ot.emergency_assign for another
+//     assignee); set_wo_breakdown_at — ot.edit
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Creates a corrective work order and starts it at once (`wo::depannage`), in one transaction; when
+/// a permit is needed it stays ready, waiting for it (never refused for the permit).
+#[tauri::command]
+pub async fn start_depannage_wo(
+    mut input: depannage::WoDepannageInput,
+    state: State<'_, AppState>,
+) -> AppResult<depannage::WoDepannageStartResult> {
+    let user = require_session!(state);
+    // The actor is the signed-in user, never an id sent by the screen.
+    input.actor_id = i64::from(user.user_id);
+    let assigned_to_other = input.assignee_id.is_some_and(|a| a != input.actor_id);
+    access::require_depannage_at(
+        &state.db,
+        &state.permission_cache,
+        user.user_id,
+        None,
+        Some(input.equipment_id),
+        assigned_to_other,
+    )
+    .await?;
+    // Permit drafts only with the permit-issue right (checked per draft at the work order's site).
+    input.permit_drafting =
+        crate::permit::access::permit_drafting_rights(&state.db, &state.permission_cache, user.user_id).await;
+    let result = depannage::start_depannage(&state.db, input).await?;
+    let waiting = result.outcome == depannage::DepannageOutcome::WaitingForPermit;
+    audit::record_wo_change_event(
+        &state.db,
+        audit::WoAuditInput {
+            wo_id: Some(result.wo.id),
+            action: if waiting {
+                "depannage_waiting_permit"
+            } else {
+                "depannage_started"
+            }
+            .into(),
+            actor_id: Some(i64::from(user.user_id)),
+            summary: Some(
+                if waiting {
+                    "Dépannage work order created, waiting for its permit"
+                } else {
+                    "Dépannage work order created and started"
+                }
+                .into(),
+            ),
+            details_json: Some(
+                serde_json::json!({
+                    "breakdown_at": result.wo.breakdown_at,
+                    "machine_stopped": result.wo.machine_stopped,
+                    "primary_responsible_id": result.wo.primary_responsible_id,
+                    "breakdown_old_warning": result.breakdown_old_warning,
+                    "outcome": result.outcome,
+                    "required_permit_types": result.required_permit_types,
+                    "permit_draft_ids": result.permit_draft_ids,
+                })
+                .to_string(),
+            ),
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+    )
+    .await;
+    Ok(result)
+}
+
+/// "Rejoindre": joins a work order in progress or on hold by starting one's own labour on it
+/// (ot.edit at the work order's site); the assignee is told. The joiner is not an execution actor
+/// (`wo::join`).
+#[tauri::command]
+pub async fn join_wo(
+    mut input: crate::wo::join::WoJoinInput,
+    state: State<'_, AppState>,
+) -> AppResult<labor::WoIntervener> {
+    let user = require_session!(state);
+    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
+    input.actor_id = i64::from(user.user_id);
+    let wo_id = input.wo_id;
+    let entry = crate::wo::join::join_wo(&state.db, input).await?;
+    audit::record_wo_change_event(
+        &state.db,
+        audit::WoAuditInput {
+            wo_id: Some(wo_id),
+            action: "joined".into(),
+            actor_id: Some(i64::from(user.user_id)),
+            summary: Some("Joined the work order (own labour started)".into()),
+            details_json: Some(serde_json::json!({ "labor_entry_id": entry.id }).to_string()),
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+    )
+    .await;
+    Ok(entry)
+}
+
+/// Changes the "Panne constatée à" of a dépannage until it is closed; audited with old → new.
+#[tauri::command]
+pub async fn set_wo_breakdown_at(
+    mut input: depannage::WoBreakdownAtInput,
+    state: State<'_, AppState>,
+) -> AppResult<depannage::WoDepannageResult> {
+    let user = require_session!(state);
+    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
+    input.actor_id = i64::from(user.user_id);
+    let before = queries::get_work_order(&state.db, input.wo_id).await.ok().flatten();
+    let expected = input.expected_row_version;
+    let result = depannage::set_breakdown_at(&state.db, input).await?;
+    audit::record_wo_change_with_diff(
+        &state.db,
+        audit::WoAuditInput {
+            wo_id: Some(result.wo.id),
+            action: "breakdown_at_changed".into(),
+            actor_id: Some(i64::from(user.user_id)),
+            summary: Some("Dépannage breakdown time changed".into()),
+            details_json: None,
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+        before.as_ref(),
+        Some(&result.wo),
+        Some(expected),
+    )
+    .await;
+    Ok(result)
+}
+
+/// Validates a dépannage after the fact (four-eyes): ot.approve at the work order's site, never by
+/// the person who started it (`wo::depannage_validation`); audited.
+#[tauri::command]
+pub async fn validate_depannage_wo(
+    mut input: crate::wo::depannage_validation::WoDepannageValidateInput,
+    state: State<'_, AppState>,
+) -> AppResult<crate::wo::domain::WorkOrder> {
+    let user = require_session!(state);
+    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_APPROVE, input.wo_id).await?;
+    input.actor_id = i64::from(user.user_id);
+    let before = queries::get_work_order(&state.db, input.wo_id).await.ok().flatten();
+    let expected = input.expected_row_version;
+    let wo = crate::wo::depannage_validation::validate_depannage(&state.db, input).await?;
+    audit::record_wo_change_with_diff(
+        &state.db,
+        audit::WoAuditInput {
+            wo_id: Some(wo.id),
+            action: "depannage_validated".into(),
+            actor_id: Some(i64::from(user.user_id)),
+            summary: Some("Dépannage validated after the fact".into()),
+            details_json: None,
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+        before.as_ref(),
+        Some(&wo),
+        Some(expected),
+    )
+    .await;
+    Ok(wo)
+}
+
+/// The times of a dépannage (response, active repair, time to restore; EN 13306): ot.view at the
+/// work order's site. `None`: not a dépannage.
+#[tauri::command]
+pub async fn get_depannage_times(
+    wo_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<Option<crate::wo::depannage_validation::DepannageTimes>> {
+    let user = require_session!(state);
+    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_VIEW, wo_id).await?;
+    crate::wo::depannage_validation::depannage_times(&state.db, wo_id).await
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -881,15 +1216,26 @@ pub async fn emergency_reassign_wo(
 
 #[tauri::command]
 pub async fn start_wo(
-    mut input: execution::WoStartInput,
+    input: execution::WoStartInput,
     state: State<'_, AppState>,
 ) -> AppResult<crate::wo::domain::WorkOrder> {
+    start_wo_impl(state.inner(), input).await
+}
+
+/// The command body, callable with an `AppState` (command-level tests, L5-08).
+pub(crate) async fn start_wo_impl(
+    state: &AppState,
+    mut input: execution::WoStartInput,
+) -> AppResult<crate::wo::domain::WorkOrder> {
     let user = require_session!(state);
-    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
+    // An execution action (L5-08): the edit right, then the execution-actor rule.
+    require_execution_on_wo(state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
     // The actor is the signed-in user, never an id sent by the screen.
     input.actor_id = i64::from(user.user_id);
+    let before = queries::get_work_order(&state.db, input.wo_id).await.ok().flatten();
+    let expected = input.expected_row_version;
     let wo = execution::start_wo(&state.db, input).await?;
-    audit::record_wo_change_event(
+    audit::record_wo_change_with_diff(
         &state.db,
         audit::WoAuditInput {
             wo_id: Some(wo.id),
@@ -900,6 +1246,9 @@ pub async fn start_wo(
             requires_step_up: false,
             apply_result: "applied".into(),
         },
+        before.as_ref(),
+        Some(&wo),
+        Some(expected),
     )
     .await;
     Ok(wo)
@@ -915,11 +1264,14 @@ pub async fn pause_wo(
     state: State<'_, AppState>,
 ) -> AppResult<crate::wo::domain::WorkOrder> {
     let user = require_session!(state);
-    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
+    // An execution action (L5-08): the edit right, then the execution-actor rule.
+    require_execution_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
     // The actor is the signed-in user, never an id sent by the screen.
     input.actor_id = i64::from(user.user_id);
+    let before = queries::get_work_order(&state.db, input.wo_id).await.ok().flatten();
+    let expected = input.expected_row_version;
     let wo = execution::pause_wo(&state.db, input).await?;
-    audit::record_wo_change_event(
+    audit::record_wo_change_with_diff(
         &state.db,
         audit::WoAuditInput {
             wo_id: Some(wo.id),
@@ -930,6 +1282,9 @@ pub async fn pause_wo(
             requires_step_up: false,
             apply_result: "applied".into(),
         },
+        before.as_ref(),
+        Some(&wo),
+        Some(expected),
     )
     .await;
     Ok(wo)
@@ -945,11 +1300,14 @@ pub async fn resume_wo(
     state: State<'_, AppState>,
 ) -> AppResult<crate::wo::domain::WorkOrder> {
     let user = require_session!(state);
-    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
+    // An execution action (L5-08): the edit right, then the execution-actor rule.
+    require_execution_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
     // The actor is the signed-in user, never an id sent by the screen.
     input.actor_id = i64::from(user.user_id);
+    let before = queries::get_work_order(&state.db, input.wo_id).await.ok().flatten();
+    let expected = input.expected_row_version;
     let wo = execution::resume_wo(&state.db, input).await?;
-    audit::record_wo_change_event(
+    audit::record_wo_change_with_diff(
         &state.db,
         audit::WoAuditInput {
             wo_id: Some(wo.id),
@@ -960,6 +1318,9 @@ pub async fn resume_wo(
             requires_step_up: false,
             apply_result: "applied".into(),
         },
+        before.as_ref(),
+        Some(&wo),
+        Some(expected),
     )
     .await;
     Ok(wo)
@@ -975,11 +1336,14 @@ pub async fn hold_wo(
     state: State<'_, AppState>,
 ) -> AppResult<crate::wo::domain::WorkOrder> {
     let user = require_session!(state);
-    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
+    // An execution action (L5-08): the edit right, then the execution-actor rule.
+    require_execution_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
     // The actor is the signed-in user, never an id sent by the screen.
     input.actor_id = i64::from(user.user_id);
+    let before = queries::get_work_order(&state.db, input.wo_id).await.ok().flatten();
+    let expected = input.expected_row_version;
     let wo = execution::set_waiting_for_prerequisite(&state.db, input).await?;
-    audit::record_wo_change_event(
+    audit::record_wo_change_with_diff(
         &state.db,
         audit::WoAuditInput {
             wo_id: Some(wo.id),
@@ -990,6 +1354,9 @@ pub async fn hold_wo(
             requires_step_up: false,
             apply_result: "applied".into(),
         },
+        before.as_ref(),
+        Some(&wo),
+        Some(expected),
     )
     .await;
     Ok(wo)
@@ -1005,11 +1372,14 @@ pub async fn complete_wo_mechanically(
     state: State<'_, AppState>,
 ) -> AppResult<crate::wo::domain::WorkOrder> {
     let user = require_session!(state);
-    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
+    // "Terminé" is an execution action: its right, then the execution-actor rule.
+    require_execution_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
     // The actor is the signed-in user, never an id sent by the screen.
     input.actor_id = i64::from(user.user_id);
+    let before = queries::get_work_order(&state.db, input.wo_id).await.ok().flatten();
+    let expected = input.expected_row_version;
     let wo = execution::complete_wo_mechanically(&state.db, input).await?;
-    audit::record_wo_change_event(
+    audit::record_wo_change_with_diff(
         &state.db,
         audit::WoAuditInput {
             wo_id: Some(wo.id),
@@ -1020,6 +1390,9 @@ pub async fn complete_wo_mechanically(
             requires_step_up: false,
             apply_result: "applied".into(),
         },
+        before.as_ref(),
+        Some(&wo),
+        Some(expected),
     )
     .await;
     Ok(wo)
@@ -1041,9 +1414,54 @@ pub async fn evaluate_wo_completion_gates(
 
 #[tauri::command]
 pub async fn add_labor(input: labor::AddLaborInput, state: State<'_, AppState>) -> AppResult<labor::WoIntervener> {
+    add_labor_impl(state.inner(), input).await
+}
+
+/// The command body, callable with an `AppState` (command-level tests, L5-08).
+pub(crate) async fn add_labor_impl(state: &AppState, input: labor::AddLaborInput) -> AppResult<labor::WoIntervener> {
     let user = require_session!(state);
-    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
-    labor::add_labor_entry(&state.db, input).await
+    require_on_wo(state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
+    // Someone who does not carry out this work order books their own hours only.
+    execution_actor::require_labor_for(
+        &state.db,
+        &state.permission_cache,
+        user.user_id,
+        input.wo_id,
+        Some(input.intervener_id),
+        None,
+    )
+    .await?;
+    let entry = labor::add_labor_entry(&state.db, input).await?;
+    record_labor_added(state, i64::from(user.user_id), &entry).await;
+    Ok(entry)
+}
+
+/// L1-36: a labour entry, retroactive included, appears in the WO history.
+async fn record_labor_added(state: &AppState, actor_id: i64, entry: &labor::WoIntervener) {
+    audit::record_wo_change_event(
+        &state.db,
+        audit::WoAuditInput {
+            wo_id: Some(entry.work_order_id),
+            action: "labor_added".into(),
+            actor_id: Some(actor_id),
+            summary: Some(match entry.hours_worked {
+                Some(h) => format!("{h:.2} h de main-d'œuvre saisies"),
+                None => "Main-d'œuvre démarrée".to_string(),
+            }),
+            details_json: Some(
+                serde_json::json!({
+                    "labor_id": entry.id,
+                    "started_at": entry.started_at,
+                    "ended_at": entry.ended_at,
+                    "hours_worked": entry.hours_worked,
+                })
+                .to_string(),
+            ),
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+    )
+    .await;
 }
 
 /// Labour for a person of the register, login or not (contractor technicians). Refused with
@@ -1056,17 +1474,85 @@ pub async fn add_personnel_labor(
 ) -> AppResult<labor::WoIntervener> {
     let user = require_session!(state);
     require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
-    labor::add_personnel_labor_entry(&state.db, input).await
+    // Someone who does not carry out this work order books their own hours only.
+    execution_actor::require_labor_for(
+        &state.db,
+        &state.permission_cache,
+        user.user_id,
+        input.wo_id,
+        None,
+        Some(input.personnel_id),
+    )
+    .await?;
+    // Without the right to see the staff register, a user books his own hours only.
+    if !can_see_staff_register(&state, &user).await? {
+        let own = crate::commands::qualification::linked_personnel_id(&state, user.user_id).await?;
+        if own != Some(input.personnel_id) {
+            return Err(AppError::PermissionDenied(
+                "Vous ne pouvez saisir que vos propres heures.".to_string(),
+            ));
+        }
+    }
+    let entry = labor::add_personnel_labor_entry(&state.db, input).await?;
+    record_labor_added(&state, i64::from(user.user_id), &entry).await;
+    Ok(entry)
 }
 
-/// Everyone who can be booked for labour (active personnel, with or without a login).
+/// Whether the user may see people other than himself (training or personnel view right).
+async fn can_see_staff_register(
+    state: &State<'_, AppState>,
+    user: &crate::auth::session_manager::AuthenticatedUser,
+) -> AppResult<bool> {
+    match crate::commands::qualification::require_any_permission(
+        state,
+        user,
+        crate::commands::qualification::PEOPLE_VIEW,
+    )
+    .await
+    {
+        Ok(()) => Ok(true),
+        Err(AppError::PermissionDenied(_)) => Ok(false),
+        Err(e) => Err(e),
+    }
+}
+
+/// Everyone who can be booked for labour (active personnel, with or without a login). A user
+/// without the right to see the staff register gets his own personnel card only, so a
+/// technician can always book his hours.
 #[tauri::command]
 pub async fn list_wo_labor_people(state: State<'_, AppState>) -> AppResult<Vec<labor::WoLaborPerson>> {
     let user = require_session!(state);
     require_permission!(state, &user, crate::rbac::permissions::OT_VIEW, PermissionScope::Global);
-    crate::commands::qualification::require_any_permission(&state, &user, crate::commands::qualification::PEOPLE_VIEW)
-        .await?;
-    labor::list_labor_people(&state.db).await
+    let own = crate::commands::qualification::linked_personnel_id(&state, user.user_id).await?;
+    if can_see_staff_register(&state, &user).await? {
+        labor::list_labor_people(&state.db, None, own).await
+    } else {
+        match own {
+            Some(pid) => labor::list_labor_people(&state.db, Some(pid), own).await,
+            None => Ok(Vec::new()),
+        }
+    }
+}
+
+/// Hourly rates that a labour entry for this person and day will be priced at.
+#[tauri::command]
+pub async fn preview_wo_labor_rate(
+    personnel_id: i64,
+    day: String,
+    state: State<'_, AppState>,
+) -> AppResult<labor::WoLaborRatePreview> {
+    let user = require_session!(state);
+    require_permission!(state, &user, crate::rbac::permissions::OT_VIEW, PermissionScope::Global);
+    // Pay rates follow the one sensitive-data rule (per.sensitiveview, or the person's own card).
+    if !crate::commands::personnel::SensitiveAccess::load(&state, user.user_id)
+        .await?
+        .can_view(personnel_id)
+    {
+        return Err(AppError::PermissionDenied(
+            "Vous ne pouvez consulter que votre propre taux.".to_string(),
+        ));
+    }
+    labor::preview_labor_rate(&state.db, personnel_id, &day).await
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1080,15 +1566,27 @@ pub async fn close_labor(
     actor_id: i64,
     state: State<'_, AppState>,
 ) -> AppResult<labor::WoIntervener> {
+    close_labor_impl(state.inner(), intervener_id, ended_at, actor_id).await
+}
+
+/// The command body, callable with an `AppState` (command-level tests, L5-08).
+pub(crate) async fn close_labor_impl(
+    state: &AppState,
+    intervener_id: i64,
+    ended_at: String,
+    actor_id: i64,
+) -> AppResult<labor::WoIntervener> {
     let user = require_session!(state);
     require_on_child(
-        &state,
+        state,
         user.user_id,
         crate::rbac::permissions::OT_EDIT,
         access::WoChild::Labor,
         intervener_id,
     )
     .await?;
+    // Someone who does not carry out this work order closes their own labour entries only.
+    execution_actor::require_labor_entry(&state.db, &state.permission_cache, user.user_id, intervener_id).await?;
     // The actor is the signed-in user; the id the screen still sends is not used.
     let _ = actor_id;
     labor::close_labor_entry(&state.db, intervener_id, ended_at, i64::from(user.user_id)).await
@@ -1117,11 +1615,97 @@ pub async fn list_wo_labor_candidates(state: State<'_, AppState>) -> AppResult<V
 // P) add_part — ot.edit
 // ═══════════════════════════════════════════════════════════════════════════════
 
+/// Whether the user may move stock (`inv.manage`, as the store desk checks it, L3-21): refused by
+/// the role, the entitlement or the licence means "à sortir" for the storekeeper, never an error
+/// of the work-order action itself.
+async fn stock_authority(state: &AppState, user_id: i32) -> AppResult<parts::StockAuthority> {
+    let perm = crate::rbac::permissions::INV_MANAGE;
+    let held = crate::auth::rbac::check_permission_cached(
+        &state.db,
+        &state.permission_cache,
+        user_id,
+        perm,
+        &PermissionScope::Global,
+    )
+    .await?;
+    if !held {
+        return Ok(parts::StockAuthority::RequestOnly);
+    }
+    let enforced = match crate::entitlements::queries::enforce_capability_for_permission(&state.db, perm).await {
+        Ok(()) => crate::license::queries::enforce_permission_matrix(&state.db, user_id, perm).await,
+        Err(err) => Err(err),
+    };
+    match enforced {
+        Ok(()) => Ok(parts::StockAuthority::MayMoveStock),
+        Err(AppError::PermissionDenied(_) | AppError::LicenseDenied { .. }) => Ok(parts::StockAuthority::RequestOnly),
+        Err(err) => Err(err),
+    }
+}
+
 #[tauri::command]
 pub async fn add_part(input: parts::AddPartInput, state: State<'_, AppState>) -> AppResult<parts::WoPart> {
     let user = require_session!(state);
-    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
-    parts::add_planned_part(&state.db, input).await
+    // An execution action (L5-08): the edit right, then the execution-actor rule.
+    require_execution_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
+    // A hors-stock part is bought for the work order (`create_wo_non_stock_purchase`), never added
+    // from the store by hand. PM generation keeps its own path (`pm::wo_content`).
+    if let Some(article_id) = input.article_id {
+        crate::inventory::non_stock::ensure_stock_article_line(&state.db, article_id).await?;
+    }
+    let authority = stock_authority(&state, user.user_id).await?;
+    parts::add_planned_part(&state.db, input, authority).await
+}
+
+// ── Hors-stock purchase charged to the work order (L3-04) ──────────────────────────────────
+
+/// Hors-stock articles to reuse before creating one — ot.view.
+#[tauri::command]
+pub async fn search_non_stock_articles(
+    query: Option<String>,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::inventory::non_stock::NonStockArticle>> {
+    let user = require_session!(state);
+    require_permission!(state, &user, crate::rbac::permissions::OT_VIEW, PermissionScope::Global);
+    crate::inventory::non_stock::search_non_stock_articles(&state.db, query).await
+}
+
+/// Ask for a hors-stock part on the work order: article (reused or created "à revoir"), work-order
+/// line and requisition in one step — ot.edit at the work order's site. The requisition then goes
+/// through the normal approvals; the buyer orders it.
+#[tauri::command]
+pub async fn create_wo_non_stock_purchase(
+    input: crate::inventory::non_stock::CreateWoNonStockPurchaseInput,
+    state: State<'_, AppState>,
+) -> AppResult<crate::inventory::non_stock::WoNonStockPurchase> {
+    let user = require_session!(state);
+    // An execution action like adding a part: the edit right, then the execution-actor rule.
+    require_execution_on_wo(
+        &state,
+        user.user_id,
+        crate::rbac::permissions::OT_EDIT,
+        input.work_order_id,
+    )
+    .await?;
+    crate::inventory::non_stock::create_wo_non_stock_purchase(&state.db, input, user.user_id.into()).await
+}
+
+/// "Remis à <personne>" on a received hors-stock line — ot.edit at the work order's site.
+#[tauri::command]
+pub async fn set_wo_part_handed_to(
+    wo_part_id: i64,
+    personnel_id: Option<i64>,
+    state: State<'_, AppState>,
+) -> AppResult<parts::WoPart> {
+    let user = require_session!(state);
+    require_execution_on_child(
+        &state,
+        user.user_id,
+        crate::rbac::permissions::OT_EDIT,
+        access::WoChild::Part,
+        wo_part_id,
+    )
+    .await?;
+    crate::inventory::non_stock::set_part_handed_to(&state.db, wo_part_id, personnel_id).await
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1135,16 +1719,107 @@ pub async fn record_part_usage(
     unit_cost: Option<f64>,
     state: State<'_, AppState>,
 ) -> AppResult<parts::WoPart> {
+    record_part_usage_impl(state.inner(), wo_part_id, quantity_used, unit_cost).await
+}
+
+/// The command body, callable with an `AppState` (command-level tests, L5-08).
+pub(crate) async fn record_part_usage_impl(
+    state: &AppState,
+    wo_part_id: i64,
+    quantity_used: f64,
+    unit_cost: Option<f64>,
+) -> AppResult<parts::WoPart> {
     let user = require_session!(state);
-    require_on_child(
-        &state,
+    // An execution action (L5-08): the edit right, then the execution-actor rule.
+    require_execution_on_child(
+        state,
         user.user_id,
         crate::rbac::permissions::OT_EDIT,
         access::WoChild::Part,
         wo_part_id,
     )
     .await?;
-    parts::record_actual_usage(&state.db, wo_part_id, quantity_used, unit_cost).await
+    let authority = stock_authority(state, user.user_id).await?;
+    parts::record_actual_usage(&state.db, wo_part_id, quantity_used, unit_cost, authority).await
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Q2) parts "à sortir" — the storekeeper's list, issue and cancellation (L3-21)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[tauri::command]
+pub async fn list_wo_parts_to_issue(state: State<'_, AppState>) -> AppResult<Vec<parts::PartToIssue>> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INV_MANAGE,
+        PermissionScope::Global
+    );
+    parts::list_parts_to_issue(&state.db).await
+}
+
+#[tauri::command]
+pub async fn issue_wo_part_to_issue(
+    input: parts::IssuePartToIssueInput,
+    state: State<'_, AppState>,
+) -> AppResult<parts::WoPart> {
+    issue_wo_part_to_issue_impl(state.inner(), input).await
+}
+
+/// The command body, callable with an `AppState` (command-level tests, L5-08).
+pub(crate) async fn issue_wo_part_to_issue_impl(
+    state: &AppState,
+    input: parts::IssuePartToIssueInput,
+) -> AppResult<parts::WoPart> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INV_MANAGE,
+        PermissionScope::Global
+    );
+    let issued = parts::issue_part_to_issue(&state.db, input, i64::from(user.user_id)).await?;
+    // An issue reaching an already settled OT is a late cost (finance settlement), as at the desk.
+    crate::finance::settlement::post_late_costs_best_effort(
+        &state.db,
+        &[issued.work_order_id],
+        i64::from(user.user_id),
+    )
+    .await;
+    Ok(issued)
+}
+
+/// The storekeeper (stock right) or whoever edits the work order (the person who recorded the
+/// use) withdraws a quantity "à sortir" with a reason; no stock moves.
+#[tauri::command]
+pub async fn cancel_wo_part_to_issue(
+    input: parts::CancelPartToIssueInput,
+    state: State<'_, AppState>,
+) -> AppResult<parts::WoPart> {
+    cancel_wo_part_to_issue_impl(state.inner(), input).await
+}
+
+/// The command body, callable with an `AppState` (command-level tests, L5-08).
+pub(crate) async fn cancel_wo_part_to_issue_impl(
+    state: &AppState,
+    input: parts::CancelPartToIssueInput,
+) -> AppResult<parts::WoPart> {
+    let user = require_session!(state);
+    if stock_authority(state, user.user_id).await? == parts::StockAuthority::RequestOnly {
+        // Without the stock right, withdrawing the use is an execution action on the work order
+        // (it resets the recorded use, L5-08): its edit right, then the execution-actor rule. The
+        // storekeeper's path (`inv.manage`) is unchanged.
+        require_execution_on_child(
+            state,
+            user.user_id,
+            crate::rbac::permissions::OT_EDIT,
+            access::WoChild::Part,
+            input.wo_part_id,
+        )
+        .await?;
+    }
+    parts::cancel_part_to_issue(&state.db, input, i64::from(user.user_id)).await
 }
 
 #[tauri::command]
@@ -1153,7 +1828,8 @@ pub async fn mark_part_not_used(
     state: State<'_, AppState>,
 ) -> AppResult<parts::WoPart> {
     let user = require_session!(state);
-    require_on_child(
+    // An execution action (L5-08): the edit right, then the execution-actor rule.
+    require_execution_on_child(
         &state,
         user.user_id,
         crate::rbac::permissions::OT_EDIT,
@@ -1210,14 +1886,16 @@ pub async fn set_planned_part_required(
 #[tauri::command]
 pub async fn confirm_no_parts(wo_id: i64, state: State<'_, AppState>) -> AppResult<()> {
     let user = require_session!(state);
-    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, wo_id).await?;
+    // An execution action (L5-08): the edit right, then the execution-actor rule.
+    require_execution_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, wo_id).await?;
     parts::confirm_no_parts_used(&state.db, wo_id, user.user_id.into()).await
 }
 
 #[tauri::command]
 pub async fn unconfirm_no_parts(wo_id: i64, state: State<'_, AppState>) -> AppResult<()> {
     let user = require_session!(state);
-    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, wo_id).await?;
+    // An execution action (L5-08): the edit right, then the execution-actor rule.
+    require_execution_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, wo_id).await?;
     parts::unconfirm_no_parts_used(&state.db, wo_id, user.user_id.into()).await
 }
 
@@ -1257,9 +1935,32 @@ pub async fn complete_task(
     follow_up_work_order_id: Option<i64>,
     state: State<'_, AppState>,
 ) -> AppResult<tasks::WoTask> {
+    complete_task_impl(
+        state.inner(),
+        task_id,
+        actor_id,
+        result_code,
+        notes,
+        finding_note,
+        follow_up_work_order_id,
+    )
+    .await
+}
+
+/// The command body, callable with an `AppState` (command-level tests, L5-08).
+pub(crate) async fn complete_task_impl(
+    state: &AppState,
+    task_id: i64,
+    actor_id: i64,
+    result_code: String,
+    notes: Option<String>,
+    finding_note: Option<String>,
+    follow_up_work_order_id: Option<i64>,
+) -> AppResult<tasks::WoTask> {
     let user = require_session!(state);
-    require_on_child(
-        &state,
+    // A task result is an execution action: the edit right, then the execution-actor rule.
+    require_execution_on_child(
+        state,
         user.user_id,
         crate::rbac::permissions::OT_EDIT,
         access::WoChild::Task,
@@ -1289,7 +1990,8 @@ pub async fn complete_task(
 #[tauri::command]
 pub async fn reopen_task(task_id: i64, comment: String, state: State<'_, AppState>) -> AppResult<tasks::WoTask> {
     let user = require_session!(state);
-    require_on_child(
+    // A task result is an execution action: the edit right, then the execution-actor rule.
+    require_execution_on_child(
         &state,
         user.user_id,
         crate::rbac::permissions::OT_EDIT,
@@ -1344,14 +2046,16 @@ pub async fn add_wo_tool(
     state: State<'_, AppState>,
 ) -> AppResult<crate::wo::tools::WoTool> {
     let user = require_session!(state);
-    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
+    // An execution action (L5-08): the edit right, then the execution-actor rule.
+    require_execution_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
     crate::wo::tools::add_tool(&state.db, input).await
 }
 
 #[tauri::command]
 pub async fn mark_wo_tool_used(tool_id: i64, state: State<'_, AppState>) -> AppResult<crate::wo::tools::WoTool> {
     let user = require_session!(state);
-    require_on_child(
+    // An execution action (L5-08): the edit right, then the execution-actor rule.
+    require_execution_on_child(
         &state,
         user.user_id,
         crate::rbac::permissions::OT_EDIT,
@@ -1365,7 +2069,8 @@ pub async fn mark_wo_tool_used(tool_id: i64, state: State<'_, AppState>) -> AppR
 #[tauri::command]
 pub async fn mark_wo_tool_not_used(tool_id: i64, state: State<'_, AppState>) -> AppResult<crate::wo::tools::WoTool> {
     let user = require_session!(state);
-    require_on_child(
+    // An execution action (L5-08): the edit right, then the execution-actor rule.
+    require_execution_on_child(
         &state,
         user.user_id,
         crate::rbac::permissions::OT_EDIT,
@@ -1390,7 +2095,8 @@ pub async fn open_downtime(
     state: State<'_, AppState>,
 ) -> AppResult<delay::WoDowntimeSegment> {
     let user = require_session!(state);
-    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, wo_id).await?;
+    // An execution action (L5-08): the edit right, then the execution-actor rule.
+    require_execution_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, wo_id).await?;
     // The actor is the signed-in user; the id the screen still sends is not used.
     let _ = actor_id;
     delay::open_downtime_segment(
@@ -1417,7 +2123,8 @@ pub async fn close_downtime(
     state: State<'_, AppState>,
 ) -> AppResult<delay::WoDowntimeSegment> {
     let user = require_session!(state);
-    require_on_child(
+    // An execution action (L5-08): the edit right, then the execution-actor rule.
+    require_execution_on_child(
         &state,
         user.user_id,
         crate::rbac::permissions::OT_EDIT,
@@ -1467,7 +2174,8 @@ pub async fn save_failure_detail(
     state: State<'_, AppState>,
 ) -> AppResult<closeout::FailureDetailSaved> {
     let user = require_session!(state);
-    require_on_wo(
+    // The close-out details are an execution action: the edit right, then the actor rule.
+    require_execution_on_wo(
         &state,
         user.user_id,
         crate::rbac::permissions::OT_EDIT,
@@ -1506,8 +2214,18 @@ pub async fn save_verification(
     // The verifier is the signed-in user (as the screen sends), never another id.
     input.verified_by_id = i64::from(user.user_id);
 
+    // Only a pass with the return to service confirmed writes the work order row
+    // (`closeout::save_verification`); any other review changes none of its fields, so none is
+    // recorded (a change made by someone else meanwhile is never credited to the reviewer).
+    let writes_wo = input.result == "pass" && input.return_to_service_confirmed;
+    let before = if writes_wo {
+        queries::get_work_order(&state.db, input.wo_id).await.ok().flatten()
+    } else {
+        None
+    };
+    let expected = input.expected_row_version;
     let result = closeout::save_verification(&state.db, input).await?;
-    audit::record_wo_change_event(
+    audit::record_wo_change_with_diff(
         &state.db,
         audit::WoAuditInput {
             wo_id: Some(result.1.id),
@@ -1518,6 +2236,9 @@ pub async fn save_verification(
             requires_step_up: false,
             apply_result: "applied".into(),
         },
+        before.as_ref(),
+        Some(&result.1),
+        Some(expected),
     )
     .await;
     Ok(result)
@@ -1540,7 +2261,8 @@ pub(crate) async fn close_wo_impl(
     mut input: closeout::WoCloseInput,
 ) -> AppResult<crate::wo::domain::WorkOrder> {
     let user = require_session!(state);
-    require_on_wo(state, user.user_id, crate::rbac::permissions::OT_CLOSE, input.wo_id).await?;
+    // `ot.close` as before, then the execution-actor rule (it never stands in for the right).
+    require_execution_on_wo(state, user.user_id, crate::rbac::permissions::OT_CLOSE, input.wo_id).await?;
     // The actor is the signed-in user, never an id sent by the screen.
     input.actor_id = i64::from(user.user_id);
 
@@ -1578,9 +2300,11 @@ async fn close_wo_audited(
     user: &crate::auth::session_manager::AuthenticatedUser,
     input: closeout::WoCloseInput,
 ) -> AppResult<crate::wo::domain::WorkOrder> {
+    let before = queries::get_work_order(&state.db, input.wo_id).await.ok().flatten();
+    let expected = input.expected_row_version;
     match closeout::close_wo(&state.db, input).await {
         Ok(wo) => {
-            audit::record_wo_change_event(
+            audit::record_wo_change_with_diff(
                 &state.db,
                 audit::WoAuditInput {
                     wo_id: Some(wo.id),
@@ -1591,8 +2315,17 @@ async fn close_wo_audited(
                     requires_step_up: false,
                     apply_result: "applied".into(),
                 },
+                before.as_ref(),
+                // Read after the close's commit (PM generation, KPI refresh… run in between):
+                // not a proof; the work order is read again and must be one version later.
+                None,
+                Some(expected),
             )
             .await;
+            // L1-31: the requester of the request it came from is told the work is done.
+            if let Some(di_id) = wo.source_di_id {
+                crate::di::notifications::notify_work_done(&state.db, di_id, wo.id, &wo.code).await;
+            }
             Ok(wo)
         }
         Err(AppError::ValidationFailed(ref errs)) => {
@@ -1651,8 +2384,10 @@ pub async fn reopen_wo(
         }
     }
 
+    let before = queries::get_work_order(&state.db, input.wo_id).await.ok().flatten();
+    let expected = input.expected_row_version;
     let wo = closeout::reopen_wo(&state.db, input).await?;
-    audit::record_wo_change_event(
+    audit::record_wo_change_with_diff(
         &state.db,
         audit::WoAuditInput {
             wo_id: Some(wo.id),
@@ -1663,6 +2398,9 @@ pub async fn reopen_wo(
             requires_step_up: true,
             apply_result: "applied".into(),
         },
+        before.as_ref(),
+        Some(&wo),
+        Some(expected),
     )
     .await;
     Ok(wo)
@@ -1675,7 +2413,8 @@ pub async fn reopen_wo(
 #[tauri::command]
 pub async fn update_wo_rca(input: closeout::UpdateWoRcaInput, state: State<'_, AppState>) -> AppResult<i64> {
     let user = require_session!(state);
-    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
+    // Root cause and corrective action: close-out details, an execution action.
+    require_execution_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
     let wo_id = input.wo_id;
     let row_version = closeout::update_wo_rca(&state.db, input).await?;
     audit::record_wo_change_event(
@@ -1796,7 +2535,10 @@ pub async fn update_service_cost(
     state: State<'_, AppState>,
 ) -> AppResult<i64> {
     let user = require_session!(state);
-    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, wo_id).await?;
+    // Saved with the close-out details (an execution action): the edit right, then the actor rule.
+    require_execution_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, wo_id).await?;
+    let before = queries::get_work_order(&state.db, wo_id).await.ok().flatten();
+    let expected = expected_row_version;
     let row_version = costs::update_service_cost(
         &state.db,
         wo_id,
@@ -1805,7 +2547,7 @@ pub async fn update_service_cost(
         i64::from(user.user_id),
     )
     .await?;
-    audit::record_wo_change_event(
+    audit::record_wo_change_with_diff(
         &state.db,
         audit::WoAuditInput {
             wo_id: Some(wo_id),
@@ -1816,6 +2558,9 @@ pub async fn update_service_cost(
             requires_step_up: false,
             apply_result: "applied".into(),
         },
+        before.as_ref(),
+        None,
+        Some(expected),
     )
     .await;
     Ok(row_version)
@@ -1883,7 +2628,8 @@ pub async fn list_wo_change_events(
 ) -> AppResult<Vec<audit::WoChangeEvent>> {
     let user = require_session!(state);
     require_on_wo_records(&state, user.user_id, crate::rbac::permissions::OT_VIEW, wo_id).await?;
-    audit::list_wo_change_events(&state.db, wo_id, limit.unwrap_or(50)).await
+    // The WO's change events and the audit-trail events about it (close-out, imported history).
+    audit::list_wo_history(&state.db, wo_id, limit.unwrap_or(50)).await
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1916,6 +2662,8 @@ pub async fn set_wo_requires_shutdown(
 ) -> AppResult<crate::wo::domain::WorkOrder> {
     let user = require_session!(state);
     require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, wo_id).await?;
+    let before = queries::get_work_order(&state.db, wo_id).await.ok().flatten();
+    let expected = expected_row_version;
     let wo = crate::wo::workflow::actions::schedule::save_shutdown_requirement(
         &state.db,
         wo_id,
@@ -1924,7 +2672,7 @@ pub async fn set_wo_requires_shutdown(
         i64::from(user.user_id),
     )
     .await?;
-    audit::record_wo_change_event(
+    audit::record_wo_change_with_diff(
         &state.db,
         audit::WoAuditInput {
             wo_id: Some(wo.id),
@@ -1943,7 +2691,79 @@ pub async fn set_wo_requires_shutdown(
             requires_step_up: false,
             apply_result: "applied".into(),
         },
+        before.as_ref(),
+        Some(&wo),
+        Some(expected),
     )
     .await;
     Ok(wo)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// AI) contractor work on the work order — ot.view / ot.edit
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Contractor, order reference, hours and cost of one work order.
+#[tauri::command]
+pub async fn get_wo_subcontracting(
+    wo_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<crate::wo::subcontracting::WoSubcontracting> {
+    let user = require_session!(state);
+    require_on_wo_records(&state, user.user_id, crate::rbac::permissions::OT_VIEW, wo_id).await?;
+    crate::wo::subcontracting::get_wo_subcontracting(&state.db, wo_id).await
+}
+
+/// Active contractors the work order screen offers (name, contract number and state).
+#[tauri::command]
+pub async fn list_wo_contractor_options(
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::wo::subcontracting::WoContractorOption>> {
+    let user = require_session!(state);
+    require_permission!(state, &user, crate::rbac::permissions::OT_VIEW, PermissionScope::Global);
+    crate::wo::subcontracting::list_wo_contractor_options(&state.db).await
+}
+
+/// Saves the contractor, its order reference, hours and cost on the work order (an execution
+/// action: the edit right, then the actor rule).
+#[tauri::command]
+pub async fn set_wo_subcontracting(
+    input: crate::wo::subcontracting::SetWoSubcontractingInput,
+    state: State<'_, AppState>,
+) -> AppResult<crate::wo::subcontracting::WoSubcontracting> {
+    let user = require_session!(state);
+    require_execution_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
+    let before = queries::get_work_order(&state.db, input.wo_id).await.ok().flatten();
+    let wo_id = input.wo_id;
+    let expected = input.expected_row_version;
+    let summary = format!(
+        "Contractor updated (company {}, cost {}{})",
+        input
+            .external_company_id
+            .map_or_else(|| "none".to_string(), |id| id.to_string()),
+        input.service_cost.unwrap_or(0.0),
+        match input.under_warranty {
+            Some(true) => ", under warranty",
+            Some(false) => ", not under warranty",
+            None => "",
+        }
+    );
+    let saved = crate::wo::subcontracting::set_wo_subcontracting(&state.db, input).await?;
+    audit::record_wo_change_with_diff(
+        &state.db,
+        audit::WoAuditInput {
+            wo_id: Some(wo_id),
+            action: "service_cost_updated".into(),
+            actor_id: Some(i64::from(user.user_id)),
+            summary: Some(summary),
+            details_json: None,
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+        before.as_ref(),
+        None,
+        Some(expected),
+    )
+    .await;
+    Ok(saved)
 }

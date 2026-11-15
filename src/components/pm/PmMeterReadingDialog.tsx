@@ -62,9 +62,12 @@ export function PmMeterReadingDialog({ open, onClose, onRecorded }: PmMeterReadi
   const [kind, setKind] = useState<PmMeterReadingKind>("normal");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Set when the value is far above the usual use: asks to confirm before saving.
+  const [jumpAsk, setJumpAsk] = useState(false);
 
   useEffect(() => {
     if (!open) return;
+    setJumpAsk(false);
     setAsset(null);
     setMeters(null);
     setMeterId("");
@@ -73,6 +76,11 @@ export function PmMeterReadingDialog({ open, onClose, onRecorded }: PmMeterReadi
     setKind("normal");
     setError(null);
   }, [open]);
+
+  // A confirmation only covers the exact asset, meter, date and kind it was asked for.
+  useEffect(() => {
+    setJumpAsk(false);
+  }, [asset, meterId, readAt, kind]);
 
   useEffect(() => {
     setMeters(null);
@@ -99,7 +107,7 @@ export function PmMeterReadingDialog({ open, onClose, onRecorded }: PmMeterReadi
   const numeric = value;
   const lower = meter != null && numeric != null && numeric < meter.current_reading;
 
-  async function submit() {
+  async function submit(confirmJump = false) {
     if (!meter || numeric == null || !Number.isFinite(numeric) || numeric < 0) {
       setError(t("errors.readingRequired"));
       return;
@@ -116,11 +124,16 @@ export function PmMeterReadingDialog({ open, onClose, onRecorded }: PmMeterReadi
         reading_value: numeric,
         reading_at: new Date(readAt).toISOString(),
         kind,
+        confirm_jump: confirmJump,
       });
       onRecorded(updated);
       onClose();
     } catch (err) {
-      setError(pmUnreportedErrorText(err));
+      if (err instanceof Error && err.message.includes("GATE_ASSET_METER_JUMP_UNCONFIRMED")) {
+        setJumpAsk(true);
+      } else {
+        setError(pmUnreportedErrorText(err));
+      }
     } finally {
       setSaving(false);
     }
@@ -187,7 +200,10 @@ export function PmMeterReadingDialog({ open, onClose, onRecorded }: PmMeterReadi
                     decimals={3}
                     min={0}
                     value={value}
-                    onValueChange={setValue}
+                    onValueChange={(v) => {
+                      setValue(v);
+                      setJumpAsk(false);
+                    }}
                   />
                 </div>
                 <div className="grid gap-1">
@@ -228,6 +244,23 @@ export function PmMeterReadingDialog({ open, onClose, onRecorded }: PmMeterReadi
                 <p className="text-sm text-tone-warning-fg">{t("errors.readingLower")}</p>
               ) : null}
             </>
+          ) : null}
+          {jumpAsk ? (
+            <div
+              role="alert"
+              className="space-y-2 rounded-md border border-status-warning/40 bg-status-warning/10 p-3 text-sm"
+            >
+              <p className="font-medium">{t("errors.jumpTitle")}</p>
+              <p>{t("errors.jumpBody")}</p>
+              <div className="flex flex-wrap gap-2">
+                <Button variant="outline" onClick={() => setJumpAsk(false)} disabled={saving}>
+                  {t("errors.jumpBack")}
+                </Button>
+                <Button onClick={() => void submit(true)} disabled={saving}>
+                  {t("errors.jumpConfirm")}
+                </Button>
+              </div>
+            </div>
           ) : null}
           {error ? (
             <p role="alert" className="text-sm text-tone-danger-fg">

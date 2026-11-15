@@ -65,10 +65,11 @@ describe("settings reads that may find nothing", () => {
   it("returns null when the setting or the logo preview does not exist", async () => {
     ipc.invoke.mockResolvedValue(null);
     expect(await getSetting("document.header", "tenant")).toBeNull();
-    expect(ipc.invoke).toHaveBeenCalledWith("get_setting", {
-      key: "document.header",
-      scope: "tenant",
-    });
+    expect(ipc.invoke).toHaveBeenCalledWith(
+      "get_setting",
+      { key: "document.header", scope: "tenant" },
+      undefined,
+    );
     expect(await readDocumentBrandingLogoPreview()).toBeNull();
   });
 });

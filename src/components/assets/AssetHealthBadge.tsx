@@ -78,14 +78,21 @@ export function AssetHealthBadge({ assetId, compact }: AssetHealthBadgeProps) {
         : health.label === "poor"
           ? t("health.poor")
           : t("health.noData");
-  const scoreText = health.score !== null ? `${health.score}` : "";
+  // No maintenance evidence yet: "—", never a good-looking default score (L2-06).
+  if (health.score === null) {
+    return (
+      <StatusChip
+        tone="neutral"
+        label={compact ? labelText : `${t("health.title")} —`}
+        title={t("health.noDataHint")}
+      />
+    );
+  }
 
   return (
     <StatusChip
       tone={LABEL_TONE[health.label]}
-      label={
-        compact ? labelText : `${t("health.title")} ${scoreText} · ${labelText}`.replace("  ", " ")
-      }
+      label={compact ? labelText : `${t("health.title")} ${health.score} · ${labelText}`}
       title={t("health.hint")}
     />
   );

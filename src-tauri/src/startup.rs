@@ -204,6 +204,17 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
         window.show().ok();
         return Err(e);
     }
+    // Microsoft Store build: the Store installed this version, so the backup the in-app updater
+    // takes before an update was not made. Back up before migrating; without it, nothing changes.
+    if let Err(e) = crate::updater::store_pre_migration_backup(&app, &app_state.db).await {
+        let reason = format!(
+            "The database could not be checked and backed up before this version updates it, so it was not changed: {e}"
+        );
+        error!("{reason}");
+        emit_event(&app, StartupEvent::Failed { reason });
+        window.show().ok();
+        return Err(e);
+    }
     match crate::db::run_migrations(&app_state.db).await {
         Ok(()) => {
             info!(
@@ -359,11 +370,24 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
     // Phase 4a: change capture for every synchronised table. Without it local changes would not
     // reach the outbox, so a failure stops the startup.
     match crate::sync::capture::install_capture(&app_state.db).await {
-        Ok(report) => info!(
-            entity_types = report.entity_types,
-            baseline_rows = report.baseline_rows,
-            "startup: sync capture installed"
-        ),
+        Ok(report) => {
+            info!(
+                entity_types = report.entity_types,
+                baseline_rows = report.baseline_rows,
+                "startup: sync capture installed"
+            );
+            // Nobody is signed in at startup: a session that ended with the PC (crash, power cut)
+            // leaves no capture actor behind (per-user signing, design v9 §9).
+            // Fatal when it fails: the previous user would stay the maker of background writes
+            // until their session's expiry (review of 5feb40ade).
+            if let Err(e) = crate::sync::capture::set_capture_actor(&app_state.db, None).await {
+                let reason = format!("Sync capture actor could not be cleared: {e}");
+                error!("{reason}");
+                emit_event(&app, StartupEvent::Failed { reason });
+                window.show().ok();
+                return Err(e);
+            }
+        }
         Err(e) => {
             let reason = format!("Sync capture could not be installed: {e}");
             error!("{reason}");
@@ -410,6 +434,7 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
     let permit_sweep = crate::permit::ended_hold::sweep(&app_state.db).await;
     info!(
         held = permit_sweep.work_orders_held,
+        expired_held = permit_sweep.expired_held,
         downtimes_ended = permit_sweep.downtimes_ended,
         failures = permit_sweep.failures,
         "startup: permit-end catch-up"
@@ -434,6 +459,16 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
         info!("startup: notification scheduler started");
     }
 
+    // Phase 5 (permits): running work under an expired permit is put on hold, every minute
+    // (`permit::ended_hold::start_expiry_watch`; L4-08, CMMS Advisor decision 9). Non-fatal.
+    {
+        let expiry_db = app_state.db.clone();
+        tauri::async_runtime::spawn(async move {
+            crate::permit::ended_hold::start_expiry_watch(expiry_db).await;
+        });
+        info!("startup: permit expiry watch started");
+    }
+
     // Phase 5a: notification emails through the control API (non-fatal; `notifications::email`)
     {
         let email_db = app_state.db.clone();
@@ -445,6 +480,20 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
             .await;
         });
         info!("startup: notification email dispatcher started");
+    }
+
+    // Phone enrolments issued here and revocations of disabled accounts' phones
+    // (`commands::mobile_enrolment`; desktop only, non-fatal), supervised background task: each
+    // round runs on its own, so a failed round never stops the next.
+    {
+        let phones_db = app_state.db.clone();
+        app_state
+            .tasks
+            .spawn("mobile_enrolment_follow_up", move |cancel| {
+                crate::commands::mobile_enrolment::run_follow_up(phones_db, cancel)
+            })
+            .await;
+        info!("startup: phone enrolment follow-up started");
     }
 
     // Daily digest of notifications (`notifications::digest`), supervised background task.
@@ -661,7 +710,19 @@ fn rights_changed_hook(
     })
 }
 
+/// The last startup event, for a page that starts listening after it was sent (the phone's webview
+/// loads later than the engine starts). Process memory only.
+static LAST_STARTUP_EVENT: std::sync::Mutex<Option<StartupEvent>> = std::sync::Mutex::new(None);
+
+/// The last startup event sent, if any (`commands::mobile::get_last_startup_event`).
+pub fn last_startup_event() -> Option<StartupEvent> {
+    LAST_STARTUP_EVENT.lock().ok().and_then(|last| last.clone())
+}
+
 fn emit_event(app: &AppHandle, event: StartupEvent) {
+    if let Ok(mut last) = LAST_STARTUP_EVENT.lock() {
+        *last = Some(event.clone());
+    }
     if let Err(e) = app.emit("startup_event", event) {
         error!("failed to emit startup event: {e}");
     }

@@ -23,9 +23,10 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { usePermissions } from "@/hooks/use-permissions";
-import { useStepUp } from "@/hooks/use-step-up";
-import { gateSentenceText } from "@/lib/app-error";
+import { isStepUpCancelled, useStepUp } from "@/hooks/use-step-up";
+import { appErrorReason, gateSentenceText } from "@/lib/app-error";
 import { usePermissionText } from "@/lib/permission-labels";
+import { formerRoleMatches, roleDescription, roleLabel } from "@/lib/role-labels";
 import {
   exportRoleModel,
   importRoleModel,
@@ -58,6 +59,7 @@ export function RoleImportExportPanel() {
   const { withStepUp, StepUpDialogElement } = useStepUp();
 
   const [roles, setRoles] = useState<RoleWithPermissions[]>([]);
+  const matches = useMemo(() => formerRoleMatches(roles), [roles]);
   const [loading, setLoading] = useState(true);
 
   // Export state
@@ -114,9 +116,10 @@ export function RoleImportExportPanel() {
       a.click();
       URL.revokeObjectURL(url);
       toast({ title: t("importExport.export.success", "Export completed"), variant: "success" });
-    } catch {
+    } catch (err) {
       toast({
         title: t("importExport.errors.exportFailed", "Failed to export"),
+        description: appErrorReason(err),
         variant: "destructive",
       });
     }
@@ -198,9 +201,11 @@ export function RoleImportExportPanel() {
         variant: "success",
       });
       void fetchRoles();
-    } catch {
+    } catch (err) {
+      if (isStepUpCancelled(err)) return;
       toast({
         title: t("importExport.errors.importFailed", "Failed to import"),
+        description: appErrorReason(err),
         variant: "destructive",
       });
     } finally {
@@ -230,8 +235,9 @@ export function RoleImportExportPanel() {
   return (
     <div className="space-y-6">
       <h2 className="text-lg font-semibold text-text-primary">
-        {t("importExport.title", "Role Import / Export")}
+        {t("importExport.title", "Role import / export")}
       </h2>
+      <p className="text-sm text-text-muted">{t("importExport.description")}</p>
 
       {/* ═══════════ Export Section ═══════════ */}
       <div className="rounded-lg border border-surface-border bg-surface-1 p-4 space-y-3">
@@ -269,9 +275,12 @@ export function RoleImportExportPanel() {
                           onCheckedChange={() => toggleExportRole(role.id)}
                         />
                       </TableCell>
-                      <TableCell className="font-medium">{role.name}</TableCell>
+                      <TableCell className="font-medium">
+                        {roleLabel(t, role.name, matches.get(role.name))}
+                      </TableCell>
                       <TableCell className="text-xs text-text-muted">
-                        {role.description ?? "—"}
+                        {roleDescription(t, role.name, role.description, matches.get(role.name)) ??
+                          "—"}
                       </TableCell>
                       <TableCell className="text-center">
                         <Badge variant="secondary" className="text-[10px]">

@@ -3,6 +3,7 @@
  * requirements and Maximo labour qualifications:
  * - matrix of people × certifications and skills with expiry colours;
  * - expiries and renewal plan (grouped by certification, plan a session for those concerned);
+ * - the validation list: unvalidated skills and certificates to verify, validated in bulk;
  * - training sessions, attendance and results (a pass issues the certification);
  * - what jobs require (work-order types, permit types, LOTO roles);
  * - the certification catalogue; the log of supervisor overrides; the user's own record.
@@ -17,18 +18,22 @@ import { CertificationCatalogPanel } from "@/components/personnel/qualification/
 import { ExpiryRenewalPanel } from "@/components/personnel/qualification/ExpiryRenewalPanel";
 import { MyQualificationsPanel } from "@/components/personnel/qualification/MyQualificationsPanel";
 import { OverrideLogPanel } from "@/components/personnel/qualification/OverrideLogPanel";
+import { PendingValidationPanel } from "@/components/personnel/qualification/PendingValidationPanel";
 import { QualificationMatrixView } from "@/components/personnel/qualification/QualificationMatrixView";
 import { QualificationRequirementsPanel } from "@/components/personnel/qualification/QualificationRequirementsPanel";
 import { TrainingSessionsPanel } from "@/components/personnel/qualification/TrainingSessionsPanel";
 import { useQualificationLookups } from "@/components/personnel/qualification/use-qualification-lookups";
-import { ErrorState } from "@/components/ui/data-state";
+import { ErrorState, LoadingState } from "@/components/ui/data-state";
+import { LicenceModuleOffNote } from "@/components/ui/licence-module-off-note";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useModuleLicensed } from "@/hooks/use-module-capabilities";
 import { usePermissions } from "@/hooks/use-permissions";
 import { P } from "@shared/rbac/permissions.generated";
 
 type TrainingTab =
   | "matrix"
   | "expiry"
+  | "validation"
   | "sessions"
   | "requirements"
   | "catalog"
@@ -36,6 +41,26 @@ type TrainingTab =
   | "mine";
 
 export function TrainingPage() {
+  const { t } = useTranslation("training");
+  // Outside the licence the screen says so once and asks the server for none of its lists
+  // (each refused list used to show "Permission refusée", even to an administrator).
+  const licence = useModuleLicensed(P.TRN_VIEW);
+  if (licence.loading || !licence.licensed) {
+    return (
+      <ModulePageShell
+        icon={GraduationCap}
+        title={t("page.title")}
+        description={t("page.description")}
+        bodyClassName="space-y-4 overflow-auto p-4"
+      >
+        {licence.loading ? <LoadingState /> : <LicenceModuleOffNote permission={P.TRN_VIEW} />}
+      </ModulePageShell>
+    );
+  }
+  return <TrainingWorkspace />;
+}
+
+function TrainingWorkspace() {
   const { t } = useTranslation("training");
   const { can } = usePermissions();
   const canView = can(P.TRN_VIEW);
@@ -57,6 +82,7 @@ export function TrainingPage() {
   const tabs: { value: TrainingTab; label: string; visible: boolean }[] = [
     { value: "matrix", label: t("tabs.matrix"), visible: canView },
     { value: "expiry", label: t("tabs.expiry"), visible: canView },
+    { value: "validation", label: t("tabs.validation"), visible: canView },
     { value: "sessions", label: t("tabs.sessions"), visible: canView },
     { value: "requirements", label: t("tabs.requirements"), visible: canView },
     { value: "catalog", label: t("tabs.catalog"), visible: canView },
@@ -101,6 +127,12 @@ export function TrainingPage() {
             </TabsContent>
             <TabsContent value="expiry">
               <ExpiryRenewalPanel refreshKey={refreshKey} onPlanSession={planSession} />
+            </TabsContent>
+            <TabsContent value="validation">
+              <PendingValidationPanel
+                refreshKey={refreshKey}
+                onChanged={() => setRefreshKey((k) => k + 1)}
+              />
             </TabsContent>
             <TabsContent value="sessions">
               <TrainingSessionsPanel

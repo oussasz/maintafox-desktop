@@ -149,12 +149,18 @@ pub(super) async fn set_status_as(
     status: &str,
     actor: i64,
 ) -> Result<WorkPermit, AppError> {
+    // The issue gate (L4-03 / L4-04): the permit says what is done, its risks, measures and PPE,
+    // with its HSE approval and gas test when needed.
+    if status == "issued" {
+        crate::permit::safety_content::fill_issue_requirements_for_tests(db, wp.id).await;
+    }
     queries::set_work_permit_status(
         db,
         WorkPermitStatusInput {
             id: wp.id,
             status: status.into(),
             expected_row_version: wp.row_version,
+            reason: (status == "cancelled").then(|| "Essai : permis annulé".to_string()),
         },
         actor,
     )
@@ -205,6 +211,9 @@ pub(super) fn action(iso: &PermitIsolation) -> PermitIsolationActionInput {
         isolation_id: iso.id,
         expected_row_version: iso.row_version,
         lock_number: None,
+        // The verifier's zero-energy test (L4-13); ignored by the other actions.
+        zero_energy_confirmed: Some(true),
+        zero_energy_note: Some("Essai de démarrage refusé, VAT 0 V".into()),
     }
 }
 
@@ -896,6 +905,54 @@ async fn verify_requires_application_first() {
     );
 }
 
+/// L4-13: an isolation is verified only with the zero-energy test confirmed and its measure or
+/// observation recorded (trimmed, not blank, bounded), kept with the verifier and the time.
+#[tokio::test]
+async fn verify_requires_the_zero_energy_test_with_a_comment() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-PTW-21Z").await;
+    let wp = advance_to_issued(&db, create_permit(&db, "loto", asset).await).await;
+    let iso = add_isolation(&db, wp.id, "Motor M-7 isolator").await;
+    let applied = queries::apply_permit_isolation(&db, action(&iso), APPLIER)
+        .await
+        .expect("apply");
+    let with = |confirmed: Option<bool>, note: Option<&str>| PermitIsolationActionInput {
+        zero_energy_confirmed: confirmed,
+        zero_energy_note: note.map(str::to_string),
+        ..action(&applied)
+    };
+    for (confirmed, note) in [(None, Some("VAT 0 V")), (Some(false), Some("VAT 0 V"))] {
+        assert_validation(
+            queries::verify_permit_isolation(&db, with(confirmed, note), VERIFIER).await,
+            "PERMIT_ZERO_ENERGY_NOT_CONFIRMED",
+        );
+    }
+    let too_long = "x".repeat(crate::permit::domain::MAX_ZERO_ENERGY_NOTE_CHARS + 1);
+    for note in [None, Some("   "), Some(too_long.as_str())] {
+        assert_validation(
+            queries::verify_permit_isolation(&db, with(Some(true), note), VERIFIER).await,
+            "PERMIT_ZERO_ENERGY_NOTE_REQUIRED",
+        );
+    }
+    let still = queries::list_permit_isolations(&db, wp.id).await.expect("list");
+    assert!(
+        still.iter().all(|i| i.verified_at.is_none()),
+        "nothing verified by a refusal"
+    );
+    let verified = queries::verify_permit_isolation(
+        &db,
+        with(Some(true), Some("  Essai de démarrage refusé, VAT 0 V  ")),
+        VERIFIER,
+    )
+    .await
+    .expect("verified with the test");
+    assert_eq!(verified.verified_by_id, Some(VERIFIER));
+    assert_eq!(
+        verified.zero_energy_note.as_deref(),
+        Some("Essai de démarrage refusé, VAT 0 V")
+    );
+}
+
 #[tokio::test]
 async fn applied_isolation_cannot_be_edited() {
     let db = setup().await;
@@ -1060,7 +1117,7 @@ pub(super) async fn assigned_wo_requiring_permit(db: &DatabaseConnection, asset_
             wo_id: wo.id,
             actor_id: actor,
             expected_row_version: wo.row_version,
-            planner_id: actor,
+            planner_id: Some(actor),
             planned_start: Some("2026-04-10T08:00:00Z".into()),
             planned_end: Some("2026-04-10T16:00:00Z".into()),
             shift: None,
@@ -1771,15 +1828,16 @@ async fn a_permit_always_has_a_bounded_future_expiry() {
     assert_validation(set_status(&db, &wp, "active").await, "PERMIT_EXPIRY_MISSING");
 }
 
-/// Editing a permit cannot link it to a work order that already has an open permit (same rule
-/// as creation); refusals of the permit rules are coded.
+/// Editing a permit cannot link it to a work order that already has an open permit of its type
+/// (same rule as creation: one open permit per type, L4-10b); refusals of the permit rules are
+/// coded.
 #[tokio::test]
 async fn editing_a_permit_cannot_link_a_second_open_permit_to_a_work_order() {
     let db = setup().await;
     let asset = insert_equipment(&db, "EQ-PTW-80").await;
     let (wo_id, _) = assigned_wo_requiring_permit(&db, asset).await;
     let first = create_from_wo(&db, "loto", wo_id).await.expect("first permit");
-    let other = create_permit(&db, "hot_work", asset).await;
+    let other = create_permit(&db, "loto", asset).await;
     let res = queries::update_work_permit(
         &db,
         WorkPermitUpdateInput {
@@ -2217,6 +2275,15 @@ fn session_user(id: i64, username: &str, is_admin: bool) -> crate::auth::session
     }
 }
 
+/// The command path checks the licence matrix, which refuses writes from a device that has no
+/// trusted binding for the user. Bind this device here so the test never depends on the network.
+async fn trust_this_device(db: &DatabaseConnection, user_id: i64) {
+    let fingerprint = crate::auth::device::derive_device_fingerprint().unwrap_or_else(|_| "unknown".to_string());
+    crate::auth::device::register_device_trust(db, i32::try_from(user_id).expect("fits"), &fingerprint, None)
+        .await
+        .expect("trust register");
+}
+
 /// The command asks `adm.settings` and a step-up only when the setting changes.
 #[tokio::test]
 async fn the_command_asks_adm_settings_and_step_up_to_change_the_three_person_chain() {
@@ -2232,6 +2299,7 @@ async fn the_command_asks_adm_settings_and_step_up_to_change_the_three_person_ch
     let issuer_id = user_with(&db, "ptw_issuer_only", &[crate::rbac::permissions::PTW_ISSUE]).await;
     let issuer = session_user(issuer_id, "ptw_issuer_only", false);
     let state = crate::state::AppState::new(db.clone());
+    trust_this_device(&db, issuer_id).await;
     state.session.write().await.create_session(issuer.clone());
     let renamed = crate::commands::permit::upsert_permit_type_impl(&state, &issuer, chain_input(&hot, None, None))
         .await
@@ -2248,6 +2316,7 @@ async fn the_command_asks_adm_settings_and_step_up_to_change_the_three_person_ch
     // The administrator: refused until the step-up, then accepted (and audited).
     let admin = session_user(APPLIER, "admin", true);
     let state = crate::state::AppState::new(db.clone());
+    trust_this_device(&db, APPLIER).await;
     state.session.write().await.create_session(admin.clone());
     let err = crate::commands::permit::upsert_permit_type_impl(
         &state,
@@ -3707,6 +3776,42 @@ async fn four_eyes_the_author_and_the_submitter_never_approve_a_permit() {
     );
 }
 
+/// L4-14: the read-only approval check gives the same answer as the approval itself (the author
+/// and the submitter refused with their codes, a second person allowed) and writes nothing.
+#[tokio::test]
+async fn the_approval_check_follows_four_eyes_and_writes_nothing() {
+    let db = setup().await;
+    let submitter = second_approver(&db).await;
+    let asset = insert_equipment(&db, "EQ-4EYES-CHECK").await;
+    make_test_site_a_planning_site(&db).await;
+    let wp = create_permit(&db, "hot_work", asset).await;
+    let wp = set_status_as(&db, &wp, "pending_review", submitter)
+        .await
+        .expect("submit");
+
+    let err = queries::check_work_permit_approval(&db, wp.id, APPLIER)
+        .await
+        .unwrap_err();
+    assert_eq!(refusal_code(err), "PERMIT_APPROVER_IS_CREATOR");
+    let err = queries::check_work_permit_approval(&db, wp.id, submitter)
+        .await
+        .unwrap_err();
+    assert_eq!(refusal_code(err), "PERMIT_APPROVER_IS_SUBMITTER");
+    queries::check_work_permit_approval(&db, wp.id, VERIFIER)
+        .await
+        .expect("a second person may approve");
+
+    let held = queries::get_work_permit(&db, wp.id)
+        .await
+        .expect("read")
+        .expect("permit");
+    assert_eq!(
+        (held.status.as_str(), held.row_version, held.approved_by_id),
+        ("pending_review", wp.row_version, None)
+    );
+    assert!(audit_details(&db, "permit.approved", wp.id).await.is_empty());
+}
+
 /// On a site that opted out of four-eyes (the per-site rule), the author who submitted it may
 /// approve: allowed, flagged "auto-approbation" on the permit and in the audit. The same approval
 /// is refused once the site keeps four-eyes again.
@@ -3842,4 +3947,67 @@ async fn four_eyes_a_permit_back_to_draft_is_submitted_again() {
     .expect("cancel line");
     assert_eq!(back.status, "draft");
     assert_eq!((back.submitted_by_id, back.submitted_at.as_deref()), (None, None));
+}
+
+/// L4-15 (field test p2 7.13): a permit is never cancelled without a reason (none or blank is
+/// refused, nothing written); with one, the permit keeps the reason (trimmed), who and when, and
+/// the cancellation is audited with it.
+#[tokio::test]
+async fn a_permit_is_cancelled_only_with_a_reason_kept_on_it() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-L415-1").await;
+    let wp = advance_to_issued(&db, create_permit(&db, "loto", asset).await).await;
+    let cancel = |reason: Option<&str>| {
+        let db = db.clone();
+        let reason = reason.map(str::to_string);
+        let (id, row_version) = (wp.id, wp.row_version);
+        async move {
+            queries::set_work_permit_status(
+                &db,
+                WorkPermitStatusInput {
+                    id,
+                    status: "cancelled".into(),
+                    expected_row_version: row_version,
+                    reason,
+                },
+                VERIFIER,
+            )
+            .await
+        }
+    };
+    for refused in [None, Some(""), Some("   ")] {
+        assert_validation(cancel(refused).await, "GATE_PERMIT_CANCEL_REASON_REQUIRED");
+    }
+    let unchanged = queries::get_work_permit(&db, wp.id)
+        .await
+        .expect("read")
+        .expect("permit");
+    assert_eq!(
+        (unchanged.status.as_str(), unchanged.row_version),
+        ("issued", wp.row_version)
+    );
+    assert_eq!(unchanged.cancel_reason, None);
+
+    let cancelled = cancel(Some("  Travaux reportés : pièce non livrée  "))
+        .await
+        .expect("cancel");
+    assert_eq!(cancelled.status, "cancelled");
+    assert_eq!(
+        cancelled.cancel_reason.as_deref(),
+        Some("Travaux reportés : pièce non livrée")
+    );
+    assert_eq!(cancelled.cancelled_by_id, Some(VERIFIER));
+    assert!(cancelled.cancelled_by_name.is_some(), "the person is named");
+    assert!(cancelled.cancelled_at.is_some());
+    assert_eq!(audit_count_of(&db, "permit.cancelled", wp.id).await, 1);
+    let reason = scalar_text(
+        &db,
+        &format!(
+            "SELECT json_extract(details_json, '$.reason') FROM audit_events \
+             WHERE action_code = 'permit.cancelled' AND target_id = '{}'",
+            wp.id
+        ),
+    )
+    .await;
+    assert_eq!(reason, "Travaux reportés : pièce non livrée");
 }

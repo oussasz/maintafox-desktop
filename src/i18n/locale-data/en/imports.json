@@ -1,0 +1,78 @@
+{
+  "title": "Data imports",
+  "description": "Load your plant from Excel or CSV files: checked before anything is written, the reason for every refused line, downloadable template.",
+  "guide": {
+    "title": "In which order should data be loaded?",
+    "intro": "Each import builds on the previous one: an unknown code is refused, never created automatically.",
+    "s0": "1. Reference lists (Reference data > Import): classes, families, units, priorities, failure causes…",
+    "s1": "2. Organisation: sites, zones, lines (this screen).",
+    "s2": "3. Cost centres.",
+    "s3": "4. Personnel, then teams and skills (Personnel > Import).",
+    "s4": "5. Equipment (Equipment > Import), then meters.",
+    "s5": "6. Warehouses, articles, suppliers and opening stock.",
+    "s6": "7. Preventive plans (they arrive as drafts, a planner publishes them).",
+    "s7": "8. History: past work orders and failures (so reliability indicators do not start empty).",
+    "rules": "Common rules: running the same file again updates without creating duplicates; an import never deletes what is missing from the file; an empty cell stays empty."
+  },
+  "choose": {
+    "title": "What do you want to import?",
+    "needs": "Load first:"
+  },
+  "columns": {
+    "name": "Column",
+    "required": "Required",
+    "hint": "Expected content",
+    "yes": "Yes",
+    "no": "No"
+  },
+  "file": {
+    "template": "Download the empty template",
+    "export": "Export current data",
+    "choose": "Choose a file",
+    "saved": "File saved",
+    "saveFailed": "Could not save the file",
+    "badType": "Choose a CSV or Excel (.xlsx) file."
+  },
+  "preview": {
+    "title": "Check of {{file}}",
+    "hint": "Nothing is written yet. Refused lines will not be imported; fix the file and load it again if needed.",
+    "appliedHint": "Import applied.",
+    "total": "Lines: {{n}}",
+    "ok": "Correct: {{n}}",
+    "warnings": "With a warning: {{n}}",
+    "errors": "Refused: {{n}}",
+    "ignored": "Ignored (unknown) columns: {{columns}}",
+    "data": "Content",
+    "status": "Result",
+    "action": "Action",
+    "messages": "Detail",
+    "s": {
+      "ok": "Correct",
+      "warning": "Warning",
+      "error": "Refused"
+    },
+    "a": {
+      "create": "Will be created",
+      "update": "Will be updated",
+      "skip": "Nothing to do"
+    },
+    "applied": {
+      "created": "Created",
+      "updated": "Updated",
+      "skipped": "Unchanged",
+      "failed": "Failed"
+    }
+  },
+  "result": {
+    "summary": "{{created}} created, {{updated}} updated, {{skipped}} unchanged, {{failed}} failed."
+  },
+  "apply": {
+    "run": "Run the import ({{n}})",
+    "cancel": "Abandon",
+    "another": "Import another file",
+    "nothing": "No line to import: all are refused or already up to date.",
+    "confirmTitle": "Apply the import?",
+    "confirmBody": "Lines that will be written: {{n}}. Refused lines, ignored: {{errors}}. You may be asked to confirm your password.",
+    "confirmLabel": "Apply the import"
+  }
+}

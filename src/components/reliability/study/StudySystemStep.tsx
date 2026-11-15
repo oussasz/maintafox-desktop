@@ -13,7 +13,6 @@ import { DecimalField } from "@/components/ui/decimal-field";
 import { EmptyState } from "@/components/ui/empty-state";
 import { mfLayout } from "@/design-system/tokens";
 import { useFormatters } from "@/hooks/use-formatters";
-import { usePermissions } from "@/hooks/use-permissions";
 import { cn } from "@/lib/utils";
 import {
   type FtResult,
@@ -33,7 +32,7 @@ import { AdvancedTools } from "./AdvancedTools";
 import { serializeSource } from "./SourceFields";
 import { SystemFtaEditor } from "./SystemFtaEditor";
 import { SystemRbdEditor, newNodeId } from "./SystemRbdEditor";
-
+import { RamsReadOnlyNote, useRamsRight } from "./rams-ui";
 type Tab = "rbd" | "fta" | "advanced";
 
 const HOURS_PER_YEAR = 8760;
@@ -54,7 +53,7 @@ export function StudySystemStep({
 }) {
   const { t } = useTranslation("reliability");
   const { formatNumber } = useFormatters();
-  const { can } = usePermissions();
+  const { can, reasonFor } = useRamsRight();
   const [model, setModel] = useState<SystemModel | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
@@ -149,6 +148,9 @@ export function StudySystemStep({
   if (model == null) return <LoadingState />;
 
   const canEdit = editable && model.editable && can(P.RAM_ANALYZE);
+  /** The save button stays visible on an open model; without the right it says what is missing. */
+  const showSave =
+    canEdit || (!can(P.RAM_ANALYZE) && model.editable && study.status !== "archived");
   const fit = model.fit;
 
   const startRbdFromEquipment = () => {
@@ -171,9 +173,11 @@ export function StudySystemStep({
         {
           id: root,
           label: t("rams.system.newSystem"),
-          node_type: "parallel",
+          // Series by default: the line stops when any of its machines stops (UX L2-34). The user
+          // switches a group to parallel when machines really back each other up.
+          node_type: "series",
           children: blocks.map((b) => b.id),
-          k: 1,
+          k: null,
           source: null,
           group: null,
           mttr_hours: null,
@@ -290,13 +294,21 @@ export function StudySystemStep({
           >
             {t("rams.system.oneYear", { hours: formatNumber(HOURS_PER_YEAR) })}
           </Button>
-          {canEdit ? (
+          {showSave ? (
             <Button
               className={mfLayout.primaryAction}
               disabled={
-                !missionOk || saving || !dirty || incomplete || (rbd == null && fta == null)
+                !can(P.RAM_ANALYZE) ||
+                !missionOk ||
+                saving ||
+                !dirty ||
+                incomplete ||
+                (rbd == null && fta == null)
               }
-              title={incomplete ? t("rams.system.saveIncomplete") : undefined}
+              title={
+                reasonFor(P.RAM_ANALYZE) ??
+                (incomplete ? t("rams.system.saveIncomplete") : undefined)
+              }
               onClick={() => void save()}
             >
               <Save className="h-4 w-4" aria-hidden />
@@ -305,6 +317,7 @@ export function StudySystemStep({
           ) : null}
         </div>
       </div>
+      {showSave && !can(P.RAM_ANALYZE) ? <RamsReadOnlyNote right={P.RAM_ANALYZE} /> : null}
       {!missionOk && tab !== "advanced" ? (
         <p className="text-sm text-text-muted">{t("rams.system.missionNeeded")}</p>
       ) : null}

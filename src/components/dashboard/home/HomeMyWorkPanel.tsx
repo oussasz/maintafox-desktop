@@ -7,9 +7,11 @@ import { UserRound } from "lucide-react";
 import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
 
+import { PersonnelLinkNotice } from "@/components/common/PersonnelLinkNotice";
 import { urgencyTone, useUrgencyScale } from "@/components/common/urgency/use-urgency-scale";
 import { useVisibleDiQueues } from "@/components/di/DiQueueBar";
 import { useFormatters } from "@/hooks/use-formatters";
+import { useMyPersonnelLink } from "@/hooks/use-my-personnel-link";
 import { useWoOpenRuleText } from "@/lib/wo-open-rule";
 import { getHomeMyWork } from "@/services/home-service";
 import { statusToI18nKey } from "@/utils/wo-status";
@@ -29,6 +31,7 @@ export function HomeMyWorkPanel({ refreshSignal = 0 }: { refreshSignal?: number 
   const { t } = useTranslation("dashboard");
   const load = useCallback(() => getHomeMyWork(), []);
   const state = usePanelLoad<HomeMyWork>(load, refreshSignal);
+  const { linked } = useMyPersonnelLink();
   return (
     <HomePanel
       icon={UserRound}
@@ -37,6 +40,11 @@ export function HomeMyWorkPanel({ refreshSignal = 0 }: { refreshSignal?: number 
       state={state}
       testId="home-my-work"
     >
+      {linked === false ? (
+        <div className="mb-4">
+          <PersonnelLinkNotice context="myWork" />
+        </div>
+      ) : null}
       {state.data ? <MyWorkBody data={state.data} /> : null}
     </HomePanel>
   );

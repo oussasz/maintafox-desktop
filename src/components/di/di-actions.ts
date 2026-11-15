@@ -47,10 +47,12 @@ export function diActions(
     screen: di.status === "in_review" && screener,
     returnForInfo: di.status === "in_review" && can(P.DI_REVIEW),
     resubmit: di.status === "returned_for_clarification" && isOwner && can(P.DI_CREATE_OWN),
-    approve: di.status === "awaiting_approval" && can(P.DI_APPROVE),
+    // L1-34: the declarer of a request neither approves nor converts it (GATE_DI_SELF_*).
+    approve: di.status === "awaiting_approval" && !isOwner && can(P.DI_APPROVE),
     // The work order is created where the request is: the work-order create right is needed too.
     convert:
       di.status === "approved" &&
+      !isOwner &&
       di.converted_to_wo_id == null &&
       can(P.DI_CONVERT) &&
       can(P.OT_CREATE),

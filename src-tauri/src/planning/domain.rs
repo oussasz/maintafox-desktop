@@ -370,6 +370,20 @@ pub struct PlanningCrewLane {
     pub commitments_json: String,
 }
 
+/// A work order with a planned start and end (set on the OT form) that holds no schedule
+/// commitment yet: the board draws it as a read-only "to commit" bar. It counts in no load.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ProposedWorkOrder {
+    pub work_order_id: i64,
+    pub code: String,
+    pub title: String,
+    pub planned_start: String,
+    pub planned_end: String,
+    pub assigned_team_id: Option<i64>,
+    pub assigned_team_name: Option<String>,
+    pub equipment_label: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlanningGanttSnapshot {
     pub period_start: String,
@@ -381,6 +395,9 @@ pub struct PlanningGanttSnapshot {
     /// Populated when `team_id` filter is None (plant-wide All Crews overview).
     #[serde(default)]
     pub crew_lanes: Vec<PlanningCrewLane>,
+    /// Planned OTs without a commitment in the period (not counted in `capacity`).
+    #[serde(default)]
+    pub proposed_work_orders: Vec<ProposedWorkOrder>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -30,6 +30,10 @@ export async function uploadLibraryDocument(input: {
   fileBytes: number[];
   mimeType: string;
   notes: string | null;
+  documentNumber: string | null;
+  revision: string | null;
+  /** `YYYY-MM-DD`, or null when the document never expires. */
+  validUntil: string | null;
 }): Promise<LibraryDocument> {
   return invoke<LibraryDocument>("upload_library_document", {
     category: input.category,
@@ -39,7 +43,37 @@ export async function uploadLibraryDocument(input: {
     fileBytes: input.fileBytes,
     mimeType: input.mimeType,
     notes: input.notes,
+    documentNumber: input.documentNumber,
+    revision: input.revision,
+    validUntil: input.validUntil,
   });
+}
+
+/** A new version of a document: a new file with its revision label (L7-17). */
+export async function uploadLibraryDocumentVersion(input: {
+  id: number;
+  fileName: string;
+  fileBytes: number[];
+  mimeType: string;
+  notes: string | null;
+  revision: string;
+  /** `YYYY-MM-DD`, or null when the new version never expires. */
+  validUntil: string | null;
+}): Promise<LibraryDocument> {
+  return invoke<LibraryDocument>("upload_library_document_version", {
+    id: input.id,
+    fileName: input.fileName,
+    fileBytes: input.fileBytes,
+    mimeType: input.mimeType,
+    notes: input.notes,
+    revision: input.revision,
+    validUntil: input.validUntil,
+  });
+}
+
+/** The versions of a document, newest first. */
+export async function listLibraryDocumentVersions(id: number): Promise<LibraryDocument[]> {
+  return invoke<LibraryDocument[]>("list_library_document_versions", { id });
 }
 
 export async function getLibraryDocumentFile(id: number): Promise<Uint8Array> {

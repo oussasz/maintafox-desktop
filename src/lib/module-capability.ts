@@ -3,22 +3,23 @@
  * Soft phase: missing/empty capability maps do not hide modules.
  */
 
-const PERMISSION_PREFIX_TO_MODULE: Array<{ prefix: string; module: string }> = [
-  { prefix: "eq.", module: "equipment" },
-  { prefix: "di.", module: "requests" },
-  { prefix: "ot.", module: "work_orders" },
-  { prefix: "inv.", module: "inventory" },
-  { prefix: "per.", module: "personnel" },
-  { prefix: "trn.", module: "training" },
-  { prefix: "org.", module: "organization" },
-  { prefix: "ref.", module: "reference" },
-  { prefix: "plan.", module: "planning" },
-  { prefix: "pm.", module: "pm" },
-  { prefix: "ptw.", module: "permits" },
-  { prefix: "ins.", module: "inspections" },
-  { prefix: "rep.", module: "reports" },
-  { prefix: "ram.", module: "rams" },
-  { prefix: "fin.", module: "finance" },
+/** `labelKey`: the module's menu name (`shell:nav.*`), for "not in your licence" messages. */
+const PERMISSION_PREFIX_TO_MODULE: Array<{ prefix: string; module: string; labelKey?: string }> = [
+  { prefix: "eq.", module: "equipment", labelKey: "nav.equipment" },
+  { prefix: "di.", module: "requests", labelKey: "nav.requests" },
+  { prefix: "ot.", module: "work_orders", labelKey: "nav.workOrders" },
+  { prefix: "inv.", module: "inventory", labelKey: "nav.inventory" },
+  { prefix: "per.", module: "personnel", labelKey: "nav.personnel" },
+  { prefix: "trn.", module: "training", labelKey: "nav.training" },
+  { prefix: "org.", module: "organization", labelKey: "nav.org" },
+  { prefix: "ref.", module: "reference", labelKey: "nav.lookups" },
+  { prefix: "plan.", module: "planning", labelKey: "nav.planning" },
+  { prefix: "pm.", module: "pm", labelKey: "nav.pm" },
+  { prefix: "ptw.", module: "permits", labelKey: "nav.permits" },
+  { prefix: "ins.", module: "inspections", labelKey: "nav.inspections" },
+  { prefix: "rep.", module: "reports", labelKey: "nav.analytics" },
+  { prefix: "ram.", module: "rams", labelKey: "nav.reliability" },
+  { prefix: "fin.", module: "finance", labelKey: "nav.budget" },
   { prefix: "sync.", module: "sync" },
   { prefix: "erp.", module: "erp" },
 ];
@@ -30,6 +31,11 @@ export function moduleCapabilityFromPermission(permission: string): string | nul
     }
   }
   return null;
+}
+
+/** The menu label key (`shell` namespace) of a module capability key; null when it has none. */
+export function moduleLabelKey(module: string): string | null {
+  return PERMISSION_PREFIX_TO_MODULE.find((e) => e.module === module)?.labelKey ?? null;
 }
 
 export function parseCapabilityMap(

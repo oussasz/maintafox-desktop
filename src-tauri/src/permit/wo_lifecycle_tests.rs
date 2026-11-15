@@ -1269,6 +1269,131 @@ async fn a_closure_received_over_running_work_puts_it_on_hold_after_the_apply() 
     );
 }
 
+/// L4-08 (CMMS Advisor decision 9): running work under a permit whose expiry passed is put on
+/// hold by the system with the reason "permit_expired", audited; nothing is held before the
+/// expiry; resume stays refused (the permit is expired), so a second look writes nothing more.
+#[tokio::test]
+async fn running_work_under_an_expired_permit_is_put_on_hold_by_the_system() {
+    let db = setup().await;
+    let (wo_id, wp) = running_work(&db, "EQ-L408-1").await;
+    // Expiry in the real past (the resume gate below reads the wall clock); the sweep is
+    // driven at the exact boundary: one second before holds nothing, the expiry itself holds.
+    let expiry_at = chrono::Utc::now() - chrono::Duration::minutes(5);
+    let expiry = expiry_at.format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let one_second_before = (expiry_at - chrono::Duration::seconds(1))
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string();
+    db.execute_unprepared(&format!(
+        "UPDATE work_permits SET expires_at = '{expiry}' WHERE id = {}",
+        wp.id
+    ))
+    .await
+    .expect("set expiry");
+
+    let before = crate::permit::ended_hold::hold_expired(&db, &one_second_before).await;
+    assert_eq!(before.expired_held, 0);
+    assert_eq!(wo_status(&db, wo_id).await, "in_progress");
+
+    let at = crate::permit::ended_hold::hold_expired(&db, &expiry).await;
+    assert_eq!((at.expired_held, at.failures), (1, 0));
+    assert_eq!(wo_status(&db, wo_id).await, "on_hold");
+    let (reason, by, _) = open_hold(&db, wo_id).await;
+    assert_eq!(reason, crate::wo::execution::PERMIT_EXPIRED_DELAY_REASON);
+    assert_eq!(by, None, "recorded as the system");
+    assert_eq!(
+        scalar_i64(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM audit_events WHERE action_code = '{}' AND actor_id IS NULL \
+                 AND details_json LIKE '%{}%'",
+                crate::wo::execution::AUDIT_HELD_PERMIT_EXPIRED,
+                wp.entity_sync_id
+            )
+        )
+        .await,
+        1
+    );
+    // The permit's own status is not rewritten (lock removal, close and hand-back stay possible).
+    assert_eq!(reread(&db, &wp).await.status, wp.status);
+
+    // Resume is refused while the permit is expired: the watch never holds the same work twice.
+    let refused = resume(&db, wo_id).await.expect_err("resume under an expired permit");
+    assert!(format!("{refused:?}").contains("PERMIT_EXPIRED"), "{refused:?}");
+    let version = wo_row_version(&db, wo_id).await;
+    let again = crate::permit::ended_hold::hold_expired(&db, &ago(0)).await;
+    assert_eq!(again.expired_held, 0);
+    assert_eq!(wo_row_version(&db, wo_id).await, version);
+}
+
+/// L4-08: another PC's expiry hold of the same work order received while this PC's own is unsent
+/// is settled without a person (same derived segment); a received work order that differs by more
+/// than its time, or a hold here that a person made, is left to a person.
+#[tokio::test]
+async fn the_same_expiry_hold_from_another_pc_is_settled_but_never_a_persons_hold() {
+    for case in ["same", "other_change", "person"] {
+        let db = setup().await;
+        let (wo_id, wp) = running_work(&db, &format!("EQ-L408-{case}")).await;
+        crate::sync::capture::install_capture(&db).await.expect("capture");
+        db.execute_unprepared(&format!(
+            "UPDATE work_permits SET expires_at = '{}' WHERE id = {}",
+            ago(5),
+            wp.id
+        ))
+        .await
+        .expect("set expiry");
+        assert_eq!(
+            crate::permit::ended_hold::hold_expired(&db, &ago(0)).await.expired_held,
+            1,
+            "{case}"
+        );
+        crate::sync::capture::drain_capture_journal(&db).await.expect("drain");
+        let wo_sync_id = wo_sync(&db, wo_id).await;
+        let (_, _, segment_sync) = open_hold(&db, wo_id).await;
+        if case == "person" {
+            // The same hold, but recorded here as a person's (a hold chosen on screen).
+            let admin = admin_id(&db).await;
+            for sql in [
+                format!("UPDATE wo_state_transition_log SET actor_id = {admin} WHERE wo_id = {wo_id} AND to_status = 'on_hold'"),
+                format!("UPDATE work_order_delay_segments SET entered_by_id = {admin} WHERE entity_sync_id = '{segment_sync}'"),
+            ] {
+                db.execute_unprepared(&sql).await.expect("a person's hold");
+            }
+        }
+
+        let mut theirs = with(
+            wire(&db, "work_orders", &wo_sync_id).await,
+            &[("updated_at", json!(ago(7)))],
+        );
+        if case == "other_change" {
+            theirs = with(theirs, &[("title", json!("Titre changé sur l'autre poste"))]);
+        }
+        receive_keeping_own(&db, "work_orders", &wo_sync_id, &theirs).await;
+
+        let concurrent = scalar_i64(
+            &db,
+            "SELECT COUNT(*) FROM sync_conflicts WHERE conflict_type = 'CONCURRENT_EDIT' AND status = 'new'",
+        )
+        .await;
+        if case == "same" {
+            assert_eq!(concurrent, 0, "settled without a person");
+            assert_eq!(
+                scalar_i64(
+                    &db,
+                    &format!(
+                        "SELECT COUNT(*) FROM sync_outbox WHERE entity_type = 'work_orders' AND status = 'superseded' \
+                         AND rejection_code = '{}'",
+                        crate::permit::ended_hold::CROSSED_HOLD_KEPT
+                    )
+                )
+                .await,
+                1
+            );
+        } else {
+            assert_eq!(concurrent, 1, "{case}: a person decides");
+        }
+    }
+}
+
 /// C1: a suspension received over running work holds it with the reason "permit_suspended".
 #[tokio::test]
 async fn a_suspension_received_over_running_work_puts_it_on_hold_with_the_suspension_reason() {

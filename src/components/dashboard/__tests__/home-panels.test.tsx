@@ -28,6 +28,9 @@ const svc = vi.hoisted(() => ({
 }));
 vi.mock("@/services/home-service", () => svc);
 
+const followUp = vi.hoisted(() => ({ listRepeatFailureAssets: vi.fn() }));
+vi.mock("@/services/asset-follow-up-service", () => followUp);
+
 const queues = vi.hoisted(() => ({ visible: ["all", "mine"] as string[] }));
 vi.mock("@/components/di/DiQueueBar", () => ({ useVisibleDiQueues: () => queues.visible }));
 vi.mock("@/components/common/urgency/use-urgency-scale", () => ({
@@ -195,6 +198,34 @@ const supervision: HomeSupervision = {
 describe("HomeSupervisionPanel", () => {
   beforeEach(() => {
     svc.getHomeSupervision.mockReset();
+    followUp.listRepeatFailureAssets.mockReset();
+    followUp.listRepeatFailureAssets.mockResolvedValue({
+      rule: { min_failures: 3, window_days: 90, since: "2026-08-13T00:00:00Z" },
+      assets: [
+        {
+          asset_id: 12,
+          asset_code: "CMP-02",
+          asset_name: "Compressor",
+          failure_count: 4,
+          last_failure_at: null,
+        },
+      ],
+    });
+  });
+
+  it("lists the equipment with repeat failures and opens it", async () => {
+    svc.getHomeSupervision.mockResolvedValue(supervision);
+    renderAt(<HomeSupervisionPanel />);
+    fireEvent.click(await screen.findByText("CMP-02 — Compressor"));
+    expect(screen.getByTestId("where").textContent).toBe("/equipment?assetId=12");
+  });
+
+  it("says the repeat failures could not be read, never zero", async () => {
+    svc.getHomeSupervision.mockResolvedValue(supervision);
+    followUp.listRepeatFailureAssets.mockReset();
+    followUp.listRepeatFailureAssets.mockRejectedValue(new Error("boom"));
+    renderAt(<HomeSupervisionPanel />);
+    expect(await screen.findByText("home.supervision.repeatFailures.error")).toBeTruthy();
   });
 
   it("loads the default period and reloads on a new one", async () => {

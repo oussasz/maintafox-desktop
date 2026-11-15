@@ -86,7 +86,7 @@
         "over_issue": "{{document}} : {{expected}} réservé(s), {{actual}} sorti(s) au total (sorties faites sur plusieurs postes, retours déduits), soit {{excess}} de trop. Actuellement {{onHand}} en stock. Vérifiez le stock et enregistrez un comptage sur un poste qui a reçu toutes ces sorties.",
         "over_receipt": "Commande {{document}} : {{expected}} commandé(s), {{actual}} réceptionné(s) au total (réceptions faites sur plusieurs postes), soit {{excess}} de trop. Actuellement {{onHand}} en stock. Vérifiez le stock et enregistrez un comptage sur un poste qui a reçu toutes ces réceptions."
       },
-      "documentWorkOrder": "Réservation pour l'OT {{code}}",
+      "documentWorkOrder": "Réservation pour {{code}}",
       "documentReservation": "Réservation {{ref}}",
       "documentNone": "Réservation sans OT",
       "receiptRejected": "Si ces réceptions ont été refusées en totalité au contrôle, aucun stock n'a bougé : le comptage confirme le stock tel qu'il est.",
@@ -196,7 +196,7 @@
     "workOrder": {
       "searchPlaceholder": "Rechercher un OT par numéro ou titre",
       "hint": "Une sortie vers un OT ou un retour d'OT doit indiquer l'ordre de travail.",
-      "selected": "OT {{code}} sélectionné",
+      "selected": "{{code}} sélectionné",
       "listLabel": "Ordres de travail ouverts",
       "loading": "Chargement des ordres de travail…",
       "empty": "Aucun OT ouvert ne correspond.",
@@ -211,9 +211,9 @@
       "unitCost": "Saisissez le coût unitaire (zéro ou plus)."
     },
     "cost": {
-      "entryHint": "Met à jour le coût unitaire moyen pondéré (CUMP) de cet emplacement (actuellement {{average}}). Vide : valorisé au CUMP actuel.",
-      "entryHintNoAverage": "Cet emplacement n'a pas encore de coût : le coût saisi devient son CUMP.",
-      "valuedAtAverage": "Valorisé au CUMP de {{average}} ({{value}}).",
+      "entryHint": "Met à jour le coût moyen pondéré de cet emplacement (actuellement {{average}}). Vide : valorisé au coût moyen actuel.",
+      "entryHintNoAverage": "Cet emplacement n'a pas encore de coût : le coût saisi devient son coût moyen.",
+      "valuedAtAverage": "Valorisé au coût moyen de {{average}} ({{value}}).",
       "notValued": "Cet emplacement n'a pas encore de coût : le mouvement n'est pas valorisé."
     },
     "lots": {
@@ -265,7 +265,7 @@
       "available": "Disponible",
       "locations": "Emplacements",
       "movements30d": "Mouvements (30j)",
-      "avgCost": "CUMP",
+      "avgCost": "Coût moyen",
       "stockValue": "Valeur du stock"
     },
     "sections": {
@@ -407,8 +407,8 @@
     "dashboard": {
       "title": "Vue d'ensemble achats",
       "openRequisitions": "Demandes ouvertes",
-      "openPos": "BCs ouverts",
-      "latePos": "BCs en retard",
+      "openPos": "Commandes ouvertes",
+      "latePos": "Commandes en retard",
       "receivingToday": "Réceptions du jour",
       "pendingApprovals": "En attente d'approbation",
       "pendingReceipts": "Réceptions en attente",
@@ -425,7 +425,7 @@
       "title": "Alertes",
       "kinds": {
         "CRITICAL_STOCK": "Stock critique",
-        "LATE_PO": "BC en retard",
+        "LATE_PO": "Commande en retard",
         "SUPPLIER_DELAY": "Risque fournisseur",
         "REPAIRABLE_OVERDUE": "Réparation en retard",
         "other": "Alerte"
@@ -441,12 +441,14 @@
       "title": "Recommandations de réapprovisionnement",
       "refresh": "Actualiser",
       "loading": "Chargement…",
+      "tabTitle": "À commander",
+      "store": "Magasin :",
       "transfer": "Transfert",
       "purchase": "Achat",
       "suggestedQty": "Qté suggérée",
       "available": "Disponible",
       "supplier": "Fournisseur préféré",
-      "lead": "ETA",
+      "lead": "Arrivée prévue",
       "cost": "Coût estimé",
       "surplusFrom": "Surplus depuis",
       "transferHint": "Préférer un transfert interne",
@@ -602,6 +604,7 @@
       "searchPlaceholder": "Rechercher un ordre, un article ou un numéro de série",
       "empty": "Aucun ordre de réparation.",
       "emptyDescription": "Envoyez une pièce réparable chez un prestataire pour suivre son cycle de réparation.",
+      "noRightHint": "La création d'un ordre de réparation demande le droit « Gérer les achats ». Demandez-le à votre administrateur.",
       "create": "Nouvel ordre de réparation",
       "columns": {
         "order": "Ordre",
@@ -705,8 +708,22 @@
           "received": "Réceptionné",
           "accepted": "Accepté",
           "rejected": "Refusé",
-          "reason": "Motif du refus"
+          "reason": "Motif du refus",
+          "returned": "Retourné",
+          "actions": "Actions"
         }
+      },
+      "return": {
+        "action": "Retourner au fournisseur",
+        "title": "Retourner des marchandises au fournisseur",
+        "description": "{{article}} — jusqu'à {{max}} peuvent encore être retournés (quantité acceptée pas encore retournée). La pièce sort du stock.",
+        "quantity": "Quantité retournée",
+        "quantityInvalid": "Saisissez une quantité entre 0 et {{max}}.",
+        "lot": "Lot ou numéro de série renvoyé",
+        "lotPlaceholder": "Choisissez le lot ou le numéro de série",
+        "reason": "Pourquoi retourne-t-elle ? (non-conformité)",
+        "cancel": "Annuler",
+        "confirm": "Retourner au fournisseur"
       }
     },
     "posting": {
@@ -757,8 +774,8 @@
         "avgLeadTime": "Délai moyen (j)",
         "deliveryAccuracy": "Précision livraison",
         "avgPrice": "Prix moyen",
-        "openPos": "BCs ouverts",
-        "completedPos": "BCs clôturés",
+        "openPos": "Commandes ouvertes",
+        "completedPos": "Commandes clôturées",
         "lastPurchase": "Dernier achat",
         "rejectedPct": "Quantité rejetée",
         "risk": "Niveau de risque",
@@ -982,6 +999,16 @@
       "inStockUnit": "En unité de stock : {{received}} {{unit}} reçus, dont {{rejected}} {{unit}} refusés.",
       "converting": "Conversion en unité de stock…"
     },
+    "approval": {
+      "approvers": "À approuver par : {{roles}}",
+      "approversNone": "Aucun rôle ne peut approuver ce montant. L'administrateur doit définir un plafond suffisant dans « Plafonds d'approbation ».",
+      "approversLoading": "Recherche des approbateurs…",
+      "approversUnavailable": "Les approbateurs n'ont pas pu être affichés.",
+      "amountUnknown": "Le montant n'est pas connu (prix manquant ou taux de change absent) : seul un rôle sans plafond peut approuver.",
+      "noRight": "Vous n'avez pas le droit « Approuver les achats ».",
+      "noProcure": "Vous n'avez pas le droit « Gérer les achats », nécessaire pour décider d'un achat.",
+      "ownDocument": "Vous avez créé ce document : une autre personne doit l'approuver."
+    },
     "poWorkspace": {
       "title": "Bon de commande",
       "loading": "Chargement du bon de commande…",
@@ -1159,6 +1186,20 @@
     },
     "loadError": "Les données d'achat n'ont pas pu être chargées",
     "sectionsLabel": "Rubriques achats",
+    "disabled": {
+      "saving": "Enregistrement en cours…",
+      "rejectReason": "Saisissez le motif du rejet.",
+      "poRequisition": "Choisissez une demande d'achat approuvée.",
+      "repairArticle": "Choisissez l'article à réparer.",
+      "repairSource": "Choisissez l'emplacement d'origine de l'article.",
+      "repairQty": "Saisissez une quantité supérieure à zéro.",
+      "supplierCode": "Renseignez le code du fournisseur.",
+      "supplierName": "Renseignez le nom du fournisseur.",
+      "priceArticle": "Choisissez l'article concerné par ce prix.",
+      "priceUnit": "Saisissez le prix unitaire.",
+      "docRef": "Renseignez la référence du document.",
+      "docPurpose": "Choisissez l'usage du document."
+    },
     "requisitionForm": {
       "title": "Nouvelle demande d'achat",
       "article": "Article",
@@ -1233,7 +1274,7 @@
     "current": "Stock actuel",
     "currentOnHand": "En stock",
     "available": "Disponible",
-    "incoming": "BC en cours",
+    "incoming": "En commande",
     "delta": "Cet écart",
     "projected": "Projeté"
   },
@@ -1259,6 +1300,7 @@
       "equivalents": "Équivalents",
       "repairableHistory": "Historique réparable",
       "purchaseHistory": "Historique d'achat",
+      "usedOn": "Utilisé sur",
       "documents": "Documents"
     },
     "consumption": {
@@ -1274,9 +1316,9 @@
     "fields": {
       "manufacturerName": "Fabricant",
       "manufacturerPartNumber": "Référence fabricant",
-      "oemPartNumber": "Référence OEM",
+      "oemPartNumber": "Référence constructeur",
       "replenishmentPolicy": "Politique de réapprovisionnement",
-      "eoq": "QEC",
+      "eoq": "Quantité économique de commande",
       "moq": "Qté min commande",
       "maxOrder": "Qté max commande",
       "orderMultiple": "Multiple de commande",
@@ -1298,6 +1340,16 @@
       "addEquivalent": "Ajouter un équivalent",
       "addDocumentLink": "Ajouter un lien documentaire",
       "createRequisitionForShortage": "Créer une demande d'achat"
+    },
+    "usedOn": {
+      "empty": "Cette pièce n'est dans la liste des pièces d'aucun équipement.",
+      "hint": "Équipements dont la liste de pièces contient cet article.",
+      "columns": {
+        "equipment": "Équipement",
+        "quantity": "Quantité par équipement",
+        "critical": "Pièce critique"
+      },
+      "critical": "Critique"
     },
     "equivalents": {
       "empty": "Aucun équivalent configuré.",
@@ -1405,6 +1457,25 @@
       "xyzDone_one": "Classe XYZ recalculée pour {{count}} article",
       "xyzDone_other": "Classe XYZ recalculée pour {{count}} articles",
       "noMovement": "Aucun mouvement sur les 12 derniers mois : aucune classe n'a changé."
+    },
+    "priceHistory": {
+      "title": "Historique des prix par fournisseur",
+      "supplier": "Fournisseur (dernier achat)",
+      "last": "Dernier prix",
+      "previous": "Prix précédent",
+      "change": "Évolution",
+      "range": "Plus bas – plus haut",
+      "purchases": "Achats",
+      "noSupplier": "Sans fournisseur"
+    },
+    "hints": {
+      "oemPartNumber": "Référence de la pièce chez le constructeur de la machine (souvent différente de celle du fabricant de la pièce).",
+      "eoq": "Quantité à commander en une fois qui minimise le coût total (commande + stockage). Laisser vide si inconnue.",
+      "moq": "Plus petite quantité que le fournisseur accepte de livrer.",
+      "orderMultiple": "La quantité commandée est arrondie à un multiple de ce nombre (ex. boîtes de 10).",
+      "reviewPeriodDays": "Tous les combien de jours le stock de cet article est revu pour décider d'une commande.",
+      "abcClass": "A : les quelques articles qui pèsent le plus dans la valeur consommée ; B : part moyenne ; C : nombreux articles de faible valeur. Calculée automatiquement à partir des sorties des 12 derniers mois.",
+      "xyzClass": "X : consommation régulière, facile à prévoir ; Y : consommation variable ; Z : consommation irrégulière, difficile à prévoir. Calculée automatiquement à partir des sorties des 12 derniers mois."
     }
   },
   "wo": {
@@ -1458,6 +1529,27 @@
       "locationCode": "ex. A-01-02",
       "locationName": "ex. Allée A, rayon 1, étagère 2"
     }
+  },
+  "nonStock": {
+    "tab": "Pièces non stockées",
+    "title": "Pièces non stockées",
+    "description": "Pièces achetées pour un OT, jamais en magasin : hors des listes de stock, des inventaires, du réapprovisionnement et de la valorisation. Celles créées depuis un OT sont à revoir.",
+    "toReviewOnly": "À revoir seulement",
+    "loading": "Chargement des pièces non stockées…",
+    "loadFailed": "Les pièces non stockées n’ont pas pu être chargées.",
+    "empty": "Aucune pièce non stockée à afficher.",
+    "fromWorkOrder": "Créée depuis {{code}}",
+    "state": {
+      "toReview": "À revoir",
+      "reviewed": "Revue",
+      "duplicate": "Doublon"
+    },
+    "keep": "Garder non stockée",
+    "promote": "Passer en stock",
+    "duplicateOf": "Doublon de…",
+    "markDuplicate": "Marquer doublon",
+    "chooseDuplicate": "Choisissez l’article que celle-ci double.",
+    "reviewFailed": "La revue n’a pas pu être enregistrée."
   },
   "unitConversions": {
     "loadError": "Les conversions d’unités n’ont pas pu être chargées",
@@ -1527,7 +1619,7 @@
       "available": "Disponible",
       "reorderPoint": "Point de commande",
       "status": "Statut",
-      "avgCost": "CUMP",
+      "avgCost": "Coût moyen",
       "stockValue": "Valeur du stock"
     },
     "belowReorder": "À commander",
@@ -1740,6 +1832,16 @@
       "unitRefused": "Cette unité ne se convertit pas dans l'unité de stock de l'article (aucune conversion, autre grandeur ou unité à revoir).",
       "converting": "Conversion en unité de stock…"
     },
+    "return": {
+      "title": "Retourner des pièces non utilisées à cet OT",
+      "hint": "Déjà sorties pour {{wo}} : {{qty}} {{unit}}. Saisissez la quantité à rendre : elle revient en stock à l'emplacement de la sortie.",
+      "select": "Sortie à rendre",
+      "option": "{{qty}} {{unit}} sorties depuis {{location}}",
+      "submit": "Retourner en stock",
+      "submitting": "Retour en cours…",
+      "tooMuch": "Vous ne pouvez rendre que {{qty}} {{unit}} (la quantité déjà sortie pour cet OT).",
+      "toast": "{{qty}} {{unit}} de {{code}} remis en stock (retour de {{wo}})"
+    },
     "outcome": {
       "title": "{{code}} sorti vers {{wo}}",
       "line": "{{qty}} {{unit}}{{lot}} à {{cost}} l'unité",
@@ -1766,6 +1868,50 @@
         "quantity": "Quantité",
         "expiry": "Expiration"
       }
+    },
+    "toIssue": {
+      "title": "Pièces à régulariser (à sortir du stock)",
+      "description": "Pièces prises au magasin sans magasinier (de nuit, le week-end ou par une personne sans le droit magasin) et enregistrées sur un OT. Rien n’a bougé dans le stock : régularisez-les dès le jour suivant en les sortant (en confirmant ou corrigeant la quantité) ou annulez-les avec un motif. Un OT ne peut pas être clôturé tant qu’il en reste.",
+      "empty": "Aucune pièce à sortir.",
+      "loadFailed": "La liste des pièces à sortir n’a pas pu être chargée.",
+      "workOrder": "OT",
+      "part": "Pièce",
+      "quantity": "À sortir",
+      "location": "Emplacement",
+      "noLocation": "À choisir",
+      "issue": "Sortir",
+      "cancel": "Annuler",
+      "close": "Fermer",
+      "issueTitle": "Sortir {{part}} pour {{wo}}",
+      "issueQuantity": "Quantité sortie",
+      "requested": "Demandé : {{qty}} {{unit}}",
+      "correctionReason": "Motif de la correction",
+      "correctionHint": "La quantité diffère de la quantité demandée : le motif est enregistré dans l’historique de l’OT. Une quantité plus faible devient la consommation de l’OT ; le reste n’est pas sorti.",
+      "chooseLocation": "Emplacement de sortie",
+      "locationPlaceholder": "Choisir l’emplacement",
+      "available": "{{location}} — disponible {{qty}}",
+      "confirmIssue": "Sortir du stock",
+      "cancelTitle": "Annuler la pièce à sortir {{part}}",
+      "cancelHint": "Aucune quantité ne sort du stock. La consommation enregistrée sur l’OT est retirée et le motif est enregistré dans l’historique de l’OT.",
+      "cancelReason": "Motif",
+      "confirmCancel": "Annuler la pièce",
+      "issued": "{{part}} sortie du stock pour {{wo}}.",
+      "cancelled": "Pièce à sortir annulée pour {{wo}}.",
+      "actionFailed": "L’action n’a pas abouti."
+    },
+    "slip": {
+      "print": "Imprimer le bon de sortie",
+      "title": "Bon de sortie magasin",
+      "workOrder": "Ordre de travail",
+      "location": "Emplacement",
+      "date": "Date",
+      "article": "Article",
+      "lot": "Lot / série",
+      "quantity": "Quantité",
+      "unitCost": "Coût unitaire",
+      "total": "Coût total",
+      "issuedBy": "Remis par (magasinier) — nom et signature",
+      "receivedBy": "Reçu par — nom et signature"
     }
   },
   "valuation": {
@@ -1875,15 +2021,15 @@
     },
     "limits": {
       "title": "Plafonds d'approbation",
-      "description": "Montant maximal (en {{currency}}) que chaque rôle peut approuver. Tant qu'aucun plafond n'est défini pour un type de document, tout utilisateur ayant le droit achats peut l'approuver. Dès qu'un plafond existe, seuls les rôles dotés d'un plafond peuvent approuver, dans sa limite.",
+      "description": "Montant maximal (en {{currency}}) que chaque rôle peut approuver. Seuls les rôles qui ont le droit « Approuver les achats » et un plafond peuvent approuver, dans la limite de ce plafond. Un rôle sans plafond ne peut pas approuver.",
+      "firstUse": "Aucun plafond n'est défini : seul l'administrateur peut approuver. Définissez les plafonds par rôle, en {{currency}}.",
       "sod": "Quels que soient les plafonds, l'auteur d'une demande d'achat ou d'une commande ne peut jamais l'approuver.",
       "loadError": "Les plafonds d'approbation n'ont pas pu être chargés",
       "rolesUnavailable": "La liste des rôles demande le droit d'administration des rôles ; seuls les rôles déjà dotés d'un plafond sont affichés.",
       "empty": "Aucun rôle à afficher.",
       "saved": "Plafond d'approbation enregistré.",
       "unlimited": "Sans plafond",
-      "notAllowed": "Non autorisé",
-      "noRule": "Aucun plafond",
+      "notAllowed": "Ne peut pas approuver",
       "edit": "Modifier",
       "editFor": "Modifier le plafond {{doc}} de {{role}}",
       "docTypes": {
@@ -1919,5 +2065,28 @@
     "COUNT_ALREADY_POSTED": "L'inventaire {{session}} a déjà mouvementé le stock de cet article à cet emplacement (passé en stock ou contre-passé sur un autre poste) : actualisez la session ; rien n'a été mouvementé deux fois.",
     "NEGATIVE_STOCK_COUNT_NOT_PENDING": "Ce comptage n'attend plus d'approbation (approuvé, remplacé par un nouveau comptage ou annulé) : actualisez la liste.",
     "NEGATIVE_STOCK_COUNT_STALE": "Le stock de cet emplacement a bougé depuis le comptage {{session}} : l'approuver ne donnerait plus la quantité comptée. Recomptez l'emplacement."
+  },
+  "dormant": {
+    "title": "Stock dormant",
+    "description": "Articles encore en stock sans aucune sortie depuis la période choisie (ou jamais sortis), les plus coûteux en premier. Cliquez une ligne pour ouvrir l'article.",
+    "period": {
+      "label": "Sans sortie depuis",
+      "months_one": "{{count}} mois",
+      "months_other": "{{count}} mois"
+    },
+    "columns": {
+      "code": "Code",
+      "name": "Article",
+      "quantity": "En stock",
+      "value": "Valeur",
+      "lastIssue": "Dernière sortie",
+      "lastMovement": "Dernier mouvement"
+    },
+    "neverIssued": "Jamais sorti",
+    "count": "Articles dormants",
+    "total": "Valeur immobilisée",
+    "empty_one": "Aucun article en stock sans sortie depuis {{count}} mois.",
+    "empty_other": "Aucun article en stock sans sortie depuis {{count}} mois.",
+    "loadError": "Impossible de charger le stock dormant"
   }
 }

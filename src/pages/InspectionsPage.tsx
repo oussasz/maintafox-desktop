@@ -6,9 +6,9 @@
  * Deep link: `/inspections?openRound=<id>` opens a round in the runner.
  */
 import { CalendarPlus, ClipboardCheck, Loader2, Plus, RefreshCcw } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { PermissionGate } from "@/components/PermissionGate";
 import { SmartFilterBar } from "@/components/filters/SmartFilterBar";
@@ -39,6 +39,7 @@ import {
 } from "@/components/inspections/inspection-rules";
 import { FilterToggleButton, RefreshButton } from "@/components/layout/ModuleHeaderControls";
 import { ModulePageShell } from "@/components/layout/ModulePageShell";
+import { hasScreenToReturnTo } from "@/components/ui/back-to-origin-button";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { mfLayout } from "@/design-system/tokens";
@@ -57,11 +58,60 @@ const TABS: Tab[] = ["rounds", "anomalies", "schedules", "templates", "signals"]
 
 const STATUS_GROUPS = ["todo", "toReview", "finished"] as const;
 
+const roundStatusPatch = (v: string | null) => ({ status: v === "todo" ? null : (v ?? "all") });
+const anomalyPatch = (v: string | null) => ({ anomaly: v === "open" ? null : (v ?? "all") });
+
 export function InspectionsPage() {
   const { t } = useTranslation("inspections");
   const { can } = usePermissions();
   const [searchParams, setSearchParams] = useSearchParams();
-  const [tab, setTab] = useState<Tab>("rounds");
+  const navigate = useNavigate();
+  // True when the open round came from a link on another screen: "Retour" goes back there.
+  const [openedFromLink, setOpenedFromLink] = useState(false);
+
+  // Tab and list filters live in the address (replace, so Retour is not polluted): coming back
+  // from a round restores them. "all" stands for an explicitly cleared status filter.
+  const tabParam = searchParams.get("tab");
+  const tab: Tab = (TABS as readonly string[]).includes(tabParam ?? "")
+    ? (tabParam as Tab)
+    : "rounds";
+  const statusParam = searchParams.get("status");
+  const roundStatus: string | null =
+    statusParam === "all" ? null : statusParam === null ? "todo" : statusParam;
+  const timingParam = searchParams.get("timing");
+  const roundTiming: RoundTiming | null =
+    timingParam === "overdue" || timingParam === "period" ? timingParam : null;
+  const anomalyParam = searchParams.get("anomaly");
+  const anomalyStatus: string | null =
+    anomalyParam === "all" ? null : anomalyParam === null ? "open" : anomalyParam;
+  // Memoised filter definitions keep older setters: always write through the latest one.
+  const setQueryRef = useRef<(patch: Record<string, string | null>) => void>(() => {});
+  const setQuery = useCallback(
+    (patch: Record<string, string | null>) => setQueryRef.current(patch),
+    [],
+  );
+  setQueryRef.current = (patch) =>
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        for (const [k, v] of Object.entries(patch)) {
+          if (v == null) next.delete(k);
+          else next.set(k, v);
+        }
+        return next;
+      },
+      { replace: true },
+    );
+  const setTab = (v: Tab) => setQuery({ tab: v === "rounds" ? null : v });
+  const setRoundStatus = useCallback(
+    (v: string | null) => setQuery(roundStatusPatch(v)),
+    [setQuery],
+  );
+  const setRoundTiming = useCallback(
+    (v: RoundTiming | null) => setQuery({ timing: v }),
+    [setQuery],
+  );
+  const setAnomalyStatus = useCallback((v: string | null) => setQuery(anomalyPatch(v)), [setQuery]);
   const [openRoundId, setOpenRoundId] = useState<number | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const bump = useCallback(() => setRefreshKey((k) => k + 1), []);
@@ -76,14 +126,12 @@ export function InspectionsPage() {
   const [showFilters, setShowFilters] = useState(true);
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
-  const [roundStatus, setRoundStatus] = useState<string | null>("todo");
-  const [roundTiming, setRoundTiming] = useState<RoundTiming | null>(null);
-  const [anomalyStatus, setAnomalyStatus] = useState<string | null>("open");
   const [count, setCount] = useState<number | null>(null);
 
   // Dialogs
   const [scheduleRoundOpen, setScheduleRoundOpen] = useState(false);
   const [templateTarget, setTemplateTarget] = useState<InspectionTemplate | "new" | null>(null);
+  const [scheduleTemplateId, setScheduleTemplateId] = useState<number | null>(null);
   const [scheduleTarget, setScheduleTarget] = useState<InspectionScheduleSummary | "new" | null>(
     null,
   );
@@ -94,7 +142,10 @@ export function InspectionsPage() {
     const raw = searchParams.get("openRound");
     if (!raw) return;
     const id = Number.parseInt(raw, 10);
-    if (!Number.isNaN(id)) setOpenRoundId(id);
+    if (!Number.isNaN(id)) {
+      setOpenRoundId(id);
+      setOpenedFromLink(hasScreenToReturnTo());
+    }
     setSearchParams(
       (prev) => {
         const p = new URLSearchParams(prev);
@@ -133,15 +184,18 @@ export function InspectionsPage() {
     const target = kpiDrillDown(key);
     setOpenRoundId(null);
     setShowFilters(true);
+    // One address update (several successive updates would overwrite each other).
     if (target.tab === "anomalies") {
-      setAnomalyStatus(target.anomalyStatus);
+      setQuery({ tab: "anomalies", ...anomalyPatch(target.anomalyStatus) });
     } else {
-      setRoundStatus(target.status);
-      setRoundTiming(target.timing);
+      setQuery({
+        tab: target.tab === "rounds" ? null : target.tab,
+        ...roundStatusPatch(target.status),
+        timing: target.timing,
+      });
       setSearch("");
       setSearchInput("");
     }
-    setTab(target.tab);
   };
 
   const generate = async () => {
@@ -199,7 +253,18 @@ export function InspectionsPage() {
         onChange: (v) => setRoundTiming(v === "overdue" || v === "period" ? v : null),
       },
     ];
-  }, [anomalyStatus, periodDays, roundStatus, roundTiming, statusOptions, t, tab]);
+  }, [
+    anomalyStatus,
+    periodDays,
+    roundStatus,
+    roundTiming,
+    setAnomalyStatus,
+    setRoundStatus,
+    setRoundTiming,
+    statusOptions,
+    t,
+    tab,
+  ]);
 
   const listTab = tab === "rounds" || tab === "anomalies";
   const activeFilterCount =
@@ -214,8 +279,7 @@ export function InspectionsPage() {
       setAnomalyStatus(null);
       return;
     }
-    setRoundStatus(null);
-    setRoundTiming(null);
+    setQuery({ ...roundStatusPatch(null), timing: null });
     setSearch("");
     setSearchInput("");
   };
@@ -234,7 +298,13 @@ export function InspectionsPage() {
     if (tab === "schedules")
       return (
         <PermissionGate permission={P.INS_ADMIN}>
-          <Button className={mfLayout.primaryAction} onClick={() => setScheduleTarget("new")}>
+          <Button
+            className={mfLayout.primaryAction}
+            onClick={() => {
+              setScheduleTemplateId(null);
+              setScheduleTarget("new");
+            }}
+          >
             <Plus className="h-4 w-4" aria-hidden />
             {t("schedules.new")}
           </Button>
@@ -303,9 +373,14 @@ export function InspectionsPage() {
       {openRoundId != null ? (
         <InspectionRunner
           roundId={openRoundId}
+          backToOrigin={openedFromLink}
           onClose={() => {
             setOpenRoundId(null);
             bump();
+            if (openedFromLink) {
+              setOpenedFromLink(false);
+              void navigate(-1);
+            }
           }}
           onChanged={bump}
         />
@@ -408,13 +483,20 @@ export function InspectionsPage() {
           <TemplateBuilderDialog
             target={templateTarget}
             onClose={() => setTemplateTarget(null)}
-            onSaved={() => {
+            onSaved={(createdTemplateId) => {
               setTemplateTarget(null);
               bump();
+              // Guided flow: a new checklist leads straight to its schedule.
+              if (createdTemplateId != null) {
+                setScheduleTemplateId(createdTemplateId);
+                setTab("schedules");
+                setScheduleTarget("new");
+              }
             }}
           />
           <InspectionScheduleDialog
             target={scheduleTarget}
+            initialTemplateId={scheduleTemplateId}
             onClose={() => setScheduleTarget(null)}
             onSaved={() => {
               setScheduleTarget(null);

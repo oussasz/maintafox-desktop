@@ -117,6 +117,10 @@ pub enum AgeReplacementRejection {
     FailureNotCostlier,
     /// The best interval does not beat running to failure by a meaningful margin (< 1 %).
     NoBenefit,
+    /// β > 1 but its lower confidence bound is ≤ 1: the data do not show wear-out, so no
+    /// age-replacement interval is recommended (set by the study life analysis, which holds the
+    /// bounds; the cost curve is still drawn for reading).
+    WearOutNotProven,
 }
 
 /// Minimum relative saving against run-to-failure for an interval to be recommended.

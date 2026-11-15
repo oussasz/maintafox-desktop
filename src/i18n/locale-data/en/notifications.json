@@ -1,10 +1,26 @@
 {
   "bell": {
     "title": "Notifications",
-    "aria": "Notifications ({{count}} unread)",
+    "aria": "Notifications ({{count}} to see)",
     "unread": "{{count}} unread",
     "toAcknowledge": "{{count}} to acknowledge",
-    "openInbox": "Open the inbox"
+    "openInbox": "Open the inbox",
+    "alerts": {
+      "aria": "Things to watch",
+      "heading": "To watch",
+      "lateWorkOrders": {
+        "title_one": "{{count}} late work order",
+        "title_other": "{{count}} late work orders",
+        "body": "Their planned end has passed and they are not finished.",
+        "action": "Open the late work orders"
+      },
+      "overdueRequests": {
+        "title_one": "{{count}} request past its deadline",
+        "title_other": "{{count}} requests past their deadline",
+        "body": "The time to take it on or to deal with it has passed.",
+        "action": "Open the late or at-risk requests"
+      }
+    }
   },
   "page": {
     "title": "Notifications",
@@ -18,6 +34,9 @@
     "summaryBody_other": "{{first}} and {{rest}} more"
   },
   "preferences": {
+    "digestHelpToggle": "How do \"Instant\", \"Daily digest\" and \"Mute until\" work?",
+    "groupAllOff": "Turn all off",
+    "groupAllOn": "Turn all on",
     "loadError": "Your notification preferences could not be loaded",
     "title": "Notification preferences",
     "intro": "Choose what you receive and how. Your notifications are in the",
@@ -84,6 +103,12 @@
     "ackRequired": "To acknowledge",
     "snoozedUntil": "Snoozed until {{when}}",
     "groupByObject": "Group by record",
+    "syncGroup": {
+      "title_one": "{{count}} synchronisation conflict to review",
+      "title_other": "{{count}} synchronisation conflicts to review",
+      "body": "Two PCs changed the same information: choose the right version.",
+      "action": "Open synchronisation"
+    },
     "groupCount_one": "({{count}} notification)",
     "groupCount_other": "({{count}} notifications)",
     "actions": {
@@ -172,6 +197,7 @@
     "integration_failure": "Integration failure",
     "personnel_critical_block": "Critical staffing gap",
     "planning": {
+      "week_unapproved": "Planning week frozen without approval",
       "schedule": "Planning schedule"
     },
     "pm_deferred": "PM deferred",
@@ -192,17 +218,38 @@
     "permit_ended_under_work": "Permit ended on another PC during or before the work",
     "wo_permit_rule_missing": "Work order received started without its plant permit rule",
     "insp_anomaly_origin_cancelled": "Originating inspection anomaly cancelled",
+    "di_safety_alert": "Safety report on a request",
     "rel_decision_refused_wo_kept": "Reliability decision refused at synchronisation, work order or plan version kept",
+    "mobile_phone_enrolled": "Phone enrolled",
     "stock_to_reconcile": "Stock to reconcile after sync",
     "stock_count_recount": "Count to do again",
     "stock_count_second_approval": "Stock count held for a second approval",
     "retired_equipment_work": "Work order on retired equipment",
-    "retired_equipment_request": "Request on retired equipment"
+    "retired_equipment_request": "Request on retired equipment",
+    "wo_part_to_issue": "Work-order part to issue from the store",
+    "wo_depannage_started": "Breakdown work order started or waiting for its permit",
+    "wo_depannage_permit_needed": "Permit to issue — breakdown"
   },
   "messages": {
     "wo_assigned": {
       "title": "Work order {{code}} assigned",
       "body": "{{title}} · responsible: {{assignee}}"
+    },
+    "wo_joined": {
+      "title": "{{who}} joined work order {{code}}",
+      "body": "{{title}} · their labour has started"
+    },
+    "wo_depannage_started": {
+      "title": "Breakdown work order started — {{code}}",
+      "body": "{{title}} · equipment {{asset}} · breakdown found {{breakdown_at}}"
+    },
+    "wo_depannage_waiting_permit": {
+      "title": "Breakdown work order waiting for its permit — {{code}}",
+      "body": "{{title}} · equipment {{asset}} · breakdown found {{breakdown_at}} · permit: {{permit_types}}"
+    },
+    "wo_depannage_permit_needed": {
+      "title": "Permit to issue — breakdown {{code}}",
+      "body": "{{title}} · equipment {{asset}} · permit: {{permit_types}} · draft: {{drafts}}. Create the permit so the work can start."
     },
     "wo_overdue": {
       "title": "Work order {{code}} overdue",
@@ -226,7 +273,7 @@
     },
     "sync_conflict": {
       "title": "Synchronisation conflict to review",
-      "body": "{{entity_type}} · {{conflict_type}} · since {{created_at}}"
+      "body": "Two PCs changed the same information: open synchronisation to choose the right version. Since {{created_at}}."
     },
     "di_pending_review": {
       "title": "Request {{code}} to review",
@@ -243,6 +290,10 @@
     "di_closed": {
       "title": "Request {{code}} closed",
       "body": "{{title}}"
+    },
+    "di_work_done": {
+      "title": "Work done for your request {{code}}",
+      "body": "{{title}}: work order {{wo_code}} is closed."
     },
     "di_converted": {
       "title": "Request {{code}} converted to work order {{wo_code}}",
@@ -311,6 +362,10 @@
       "title": "Forced lock removal: {{point}} (permit {{permit}})",
       "body": "{{authorised_by}} authorised {{removed_by}} to take off the lock of {{worker}}, who was absent, on {{removed_at}} — reason: {{reason}}. The worker must be told (Work permits › forced removals to follow up)."
     },
+    "di_safety_alert": {
+      "title": "Safety report: {{code}}",
+      "body": "Request {{code}} “{{title}}” ({{equipment}}, {{site}}) reports a safety hazard. Handle it first."
+    },
     "insp_anomaly_origin_cancelled": {
       "title": "Originating anomaly cancelled: {{code}}",
       "body": "The inspection anomaly {{code}} was raised from was cancelled: its condition is no longer detected ({{anomaly}}). {{code}} is not changed: check whether it is still needed. A required permit review stays in place."
@@ -319,9 +374,17 @@
       "title": "Reliability decision refused: {{code}} kept",
       "body": "The decision “{{decision}}” was refused at synchronisation (its approval is not valid on a PC). Work order {{code}} created from it is kept: check whether it is still needed."
     },
+    "mobile_phone_enrolled": {
+      "title": "Phone enrolled: {{person}}",
+      "body": "A phone was enrolled for {{person}} at site {{site}}."
+    },
     "rel_decision_refused_pm_kept": {
       "title": "Reliability decision refused: plan {{plan}} v{{version}} published, to review",
       "body": "The decision “{{decision}}” was refused at synchronisation (its approval is not valid on a PC). Version {{version}} of plan {{plan}}, published from it, stays in force: review it and publish another version if it does not fit."
+    },
+    "wo_permit_types_added": {
+      "title": "Work order {{code}}: permit now also required: {{permit_types}}",
+      "body": "The plant's permit rules ({{rules}}) also require a {{permit_types}} permit for work order {{code}}, besides {{previous_permit_types}}. An active permit of each type is needed to start or resume this work."
     },
     "wo_permit_rule_type_changed": {
       "title": "Work order {{code}}: required permit changed from {{previous_permit_type}} to {{permit_type}}",
@@ -418,6 +481,10 @@
     "retired_equipment_di": {
       "title": "Request {{code}} on retired equipment {{asset}}",
       "body": "{{title}}: request open while equipment {{asset}} ({{asset_name}}) is retired (crossed in synchronisation). Reject the request with a reason, or return the equipment to service."
+    },
+    "wo_part_to_issue": {
+      "title": "To issue for {{wo}}: {{part}}",
+      "body": "{{quantity}} {{unit}} of {{part}} used on work order {{wo}} without the stock right: issue the part at the issue desk, or cancel it with a reason."
     }
   },
   "audience": {
@@ -481,8 +548,11 @@
       "permit_suspended_work_held": "Always the responsible of the permit’s work order; when it has none, the people holding the permit close right at the permit’s site.",
       "permit_ended_under_work": "Always the responsible of the permit’s work order and the people holding the permit close right at the permit’s site.",
       "wo_permit_rule_missing": "Always the people holding the permit issue right at the work order’s site (and plant-wide); when nobody holds it, the settings administrators.",
+      "di_safety_alert": "Always the holders of the request review right (di.review) and of the permit-issue right (ptw.issue) at the request’s site (and plant-wide); when nobody holds them, the responsibles of the request’s node.",
       "insp_anomaly_origin_cancelled": "Always the responsible of the work order raised from the anomaly (or from its request); when there is none, the work order’s planner and the request’s reviewer (else the responsibles of its node).",
-      "rel_decision_refused_wo_kept": "Always the planner of the work order created from the decision (else its responsible), or the holders of the PM planning right (pm.edit) for a published plan version, and the person who proposed the decision; when nobody is active here, the holders of the right to approve reliability decisions (ram.manage)."
+      "rel_decision_refused_wo_kept": "Always the planner of the work order created from the decision (else its responsible), or the holders of the PM planning right (pm.edit) for a published plan version, and the person who proposed the decision; when nobody is active here, the holders of the right to approve reliability decisions (ram.manage).",
+      "mobile_phone_enrolled": "Always the holders of the right to manage users (adm.users).",
+      "wo_depannage_permit_needed": "Always the people holding the permit issue right at the work order’s site (and plant-wide); when nobody holds it, the settings administrators."
     },
     "minutes": "min",
     "minutesAfterAlert": "min after the alert",

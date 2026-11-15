@@ -1,6 +1,6 @@
 {
   "$comment": "Generated from src-tauri/src/sync/registry.rs by the test `registry_export_matches_shared_file`. Do not edit by hand.",
-  "registry_version": 1,
+  "registry_version": 2,
   "entities": [
     {
       "entity_type": "activity_events",
@@ -11,7 +11,13 @@
         "user_accounts",
         "org_nodes"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "actor_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "admin_change_events",
@@ -22,7 +28,13 @@
         "roles",
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "actor_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "admin_recovery_acknowledgements",
@@ -33,7 +45,15 @@
         "admin_recovery_notices",
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "acknowledged_by_sync_id",
+          "guards": [
+            "acknowledged_at"
+          ]
+        }
+      ]
     },
     {
       "entity_type": "admin_recovery_notices",
@@ -64,7 +84,16 @@
         "user_accounts"
       ],
       "sync_status": "synced",
-      "note": "Mixes device and tenant settings (setting_scope); step 2.4 must sync only tenant-scoped keys."
+      "note": "Mixes device and tenant settings (setting_scope); step 2.4 must sync only tenant-scoped keys.",
+      "author_fields": [
+        {
+          "field": "last_modified_by_sync_id",
+          "guards": [],
+          "vouches": [
+            "setting_value_json"
+          ]
+        }
+      ]
     },
     {
       "entity_type": "article_cost_profiles",
@@ -101,6 +130,35 @@
       "sync_status": "synced"
     },
     {
+      "entity_type": "asset_corrective_actions",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 6,
+      "parents": [
+        "equipment",
+        "personnel",
+        "user_accounts"
+      ],
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "created_by_sync_id",
+          "guards": []
+        },
+        {
+          "field": "updated_by_sync_id",
+          "guards": [],
+          "vouches": [
+            "action_text",
+            "owner_personnel_sync_id",
+            "due_date",
+            "status",
+            "completed_at"
+          ]
+        }
+      ]
+    },
+    {
       "entity_type": "asset_document_links",
       "scope": "tenant",
       "conflict_policy": "operator_review",
@@ -109,7 +167,13 @@
         "equipment",
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "created_by_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "asset_external_ids",
@@ -122,6 +186,36 @@
       "sync_status": "synced"
     },
     {
+      "entity_type": "asset_five_why_analyses",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 5,
+      "parents": [
+        "equipment",
+        "user_accounts"
+      ],
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "created_by_sync_id",
+          "guards": []
+        },
+        {
+          "field": "updated_by_sync_id",
+          "guards": [],
+          "vouches": [
+            "problem_statement",
+            "why_1",
+            "why_2",
+            "why_3",
+            "why_4",
+            "why_5",
+            "root_cause"
+          ]
+        }
+      ]
+    },
+    {
       "entity_type": "asset_meter_readings",
       "scope": "tenant",
       "conflict_policy": "append_only",
@@ -130,7 +224,13 @@
         "equipment_meters",
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "created_by_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "asset_photos",
@@ -141,7 +241,13 @@
         "user_accounts",
         "equipment"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "created_by_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "audit_events",
@@ -152,7 +258,13 @@
         "user_accounts"
       ],
       "sync_status": "synced",
-      "note": "Device audit trail; step 2.4 decides between append-only sync and a dedicated audit channel."
+      "note": "Device audit trail; step 2.4 decides between append-only sync and a dedicated audit channel.",
+      "author_fields": [
+        {
+          "field": "actor_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "audit_chain_stubs",
@@ -177,7 +289,15 @@
         "cost_centers",
         "budget_versions"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "posted_by_sync_id",
+          "guards": [
+            "posted_at"
+          ]
+        }
+      ]
     },
     {
       "entity_type": "budget_alert_configs",
@@ -205,7 +325,16 @@
         "budget_versions",
         "budget_alert_configs"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "acknowledged_by_sync_id",
+          "guards": [
+            "acknowledged_at",
+            "acknowledgement_note"
+          ]
+        }
+      ]
     },
     {
       "entity_type": "budget_commitments",
@@ -239,7 +368,15 @@
         "user_accounts",
         "budget_versions"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "generated_by_sync_id",
+          "guards": [
+            "generated_at"
+          ]
+        }
+      ]
     },
     {
       "entity_type": "budget_forecasts",
@@ -285,7 +422,25 @@
       "parents": [
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "created_by_sync_id",
+          "guards": []
+        },
+        {
+          "field": "approved_by_sync_id",
+          "guards": [
+            "approved_at"
+          ]
+        },
+        {
+          "field": "frozen_by_sync_id",
+          "guards": [
+            "frozen_at"
+          ]
+        }
+      ]
     },
     {
       "entity_type": "capacity_rules",
@@ -324,7 +479,13 @@
       "parents": [
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "created_by_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "cost_centers",
@@ -348,7 +509,15 @@
         "work_order_downtime_segments",
         "work_orders"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "waiver_approver_sync_id",
+          "guards": [
+            "waiver_reason"
+          ]
+        }
+      ]
     },
     {
       "entity_type": "data_integrity_repair_actions",
@@ -359,7 +528,13 @@
         "user_accounts",
         "data_integrity_findings"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "actor_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "delay_reason_codes",
@@ -380,7 +555,20 @@
         "teams",
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "authority": "adm.users",
+      "author_fields": [
+        {
+          "field": "changed_by_sync_id",
+          "guards": [
+            "admin_role_sync_id",
+            "managed_scope_type",
+            "managed_scope_reference_sync_id",
+            "allowed_domains_json",
+            "requires_step_up_for_publish"
+          ]
+        }
+      ]
     },
     {
       "entity_type": "di_attachments",
@@ -391,7 +579,13 @@
         "intervention_requests",
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "uploaded_by_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "di_change_events",
@@ -399,7 +593,13 @@
       "conflict_policy": "append_only",
       "apply_priority": 0,
       "parents": [],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "actor_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "di_review_events",
@@ -409,7 +609,13 @@
       "parents": [
         "intervention_requests"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "actor_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "di_sla_rules",
@@ -425,7 +631,13 @@
       "conflict_policy": "append_only",
       "apply_priority": 0,
       "parents": [],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "actor_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "document_acknowledgements",
@@ -467,7 +679,15 @@
         "equipment",
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "assessed_by_sync_id",
+          "guards": [
+            "assessed_at"
+          ]
+        }
+      ]
     },
     {
       "entity_type": "equipment_hierarchy",
@@ -480,12 +700,33 @@
       "sync_status": "synced"
     },
     {
+      "entity_type": "equipment_isolation_points",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 5,
+      "parents": [
+        "equipment",
+        "reference_values"
+      ],
+      "sync_status": "synced"
+    },
+    {
       "entity_type": "equipment_lifecycle_events",
       "scope": "tenant",
       "conflict_policy": "append_only",
       "apply_priority": 0,
       "parents": [],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "performed_by_sync_id",
+          "guards": []
+        },
+        {
+          "field": "approved_by_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "equipment_meters",
@@ -508,7 +749,13 @@
         "articles",
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "created_by_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "event_tree_models",
@@ -519,7 +766,13 @@
         "equipment",
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "created_by_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "external_companies",
@@ -559,9 +812,16 @@
         "reference_values",
         "equipment",
         "work_orders",
+        "wo_history_records",
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "recorded_by_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "failure_hierarchies",
@@ -580,7 +840,13 @@
         "equipment",
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "created_by_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "fmeca_item_parts",
@@ -617,7 +883,13 @@
         "equipment",
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "created_by_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "goods_receipt_lines",
@@ -642,7 +914,15 @@
         "purchase_orders",
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "received_by_sync_id",
+          "guards": [
+            "received_at"
+          ]
+        }
+      ]
     },
     {
       "entity_type": "inspection_anomalies",
@@ -702,7 +982,16 @@
         "inspection_schedules",
         "teams"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "reviewed_by_sync_id",
+          "guards": [
+            "reviewed_at",
+            "review_note"
+          ]
+        }
+      ]
     },
     {
       "entity_type": "inspection_schedules",
@@ -760,9 +1049,37 @@
         "org_nodes",
         "user_accounts",
         "reference_values",
-        "di_sla_rules"
+        "di_sla_rules",
+        "asset_meter_readings"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "submitter_sync_id",
+          "guards": []
+        },
+        {
+          "field": "reviewer_sync_id",
+          "guards": [
+            "screened_at"
+          ]
+        },
+        {
+          "field": "closed_by_sync_id",
+          "guards": [
+            "closed_at",
+            "disposition_code",
+            "disposition_notes"
+          ]
+        },
+        {
+          "field": "site_assigned_by_sync_id",
+          "guards": [
+            "site_assigned_at",
+            "site_assign_reason"
+          ]
+        }
+      ]
     },
     {
       "entity_type": "inventory_article_equivalents",
@@ -787,7 +1104,32 @@
         "inventory_count_sessions",
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "counted_by_sync_id",
+          "guards": [
+            "counted_qty"
+          ]
+        },
+        {
+          "field": "approved_by_sync_id",
+          "guards": [
+            "approved_at",
+            "approval_note"
+          ],
+          "vouches": [
+            "self_approved"
+          ]
+        },
+        {
+          "field": "second_approved_by_sync_id",
+          "guards": [
+            "second_approved_at",
+            "second_approval_note"
+          ]
+        }
+      ]
     },
     {
       "entity_type": "inventory_count_sessions",
@@ -799,7 +1141,32 @@
         "warehouses",
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "opened_by_sync_id",
+          "guards": []
+        },
+        {
+          "field": "submitted_by_sync_id",
+          "guards": [
+            "submitted_at"
+          ]
+        },
+        {
+          "field": "posted_by_sync_id",
+          "guards": [
+            "posted_at"
+          ]
+        },
+        {
+          "field": "reversed_by_sync_id",
+          "guards": [
+            "reversed_at",
+            "reversal_reason"
+          ]
+        }
+      ]
     },
     {
       "entity_type": "inventory_document_links",
@@ -813,7 +1180,13 @@
         "articles",
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "created_by_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "inventory_lots",
@@ -825,7 +1198,13 @@
         "goods_receipt_lines",
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "created_by_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "inventory_mutation_audit_links",
@@ -837,7 +1216,15 @@
         "inventory_count_lines",
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "reviewer_sync_id",
+          "guards": [
+            "reviewer_evidence"
+          ]
+        }
+      ]
     },
     {
       "entity_type": "inventory_reconciliation_findings",
@@ -860,7 +1247,13 @@
       "parents": [
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "checked_by_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "inventory_state_events",
@@ -868,7 +1261,13 @@
       "conflict_policy": "append_only",
       "apply_priority": 0,
       "parents": [],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "actor_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "inventory_supplier_article_sources",
@@ -936,7 +1335,13 @@
         "user_accounts"
       ],
       "sync_status": "synced",
-      "note": "Materializer inserts movements but does not update stock_balances (derived); step 2.4 must rebuild balances on apply."
+      "note": "Materializer inserts movements but does not update stock_balances (derived); step 2.4 must rebuild balances on apply.",
+      "author_fields": [
+        {
+          "field": "performed_by_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "inventory_valuation_policies",
@@ -959,7 +1364,15 @@
       "parents": [
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "closed_by_sync_id",
+          "guards": [
+            "closed_at"
+          ]
+        }
+      ]
     },
     {
       "entity_type": "inventory_valuation_snapshot_lines",
@@ -982,7 +1395,13 @@
         "equipment",
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "uploaded_by_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "lookup_domains",
@@ -992,7 +1411,15 @@
       "parents": [
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "published_by_sync_id",
+          "guards": [
+            "published_at"
+          ]
+        }
+      ]
     },
     {
       "entity_type": "lookup_value_aliases",
@@ -1024,7 +1451,13 @@
         "permit_isolations",
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "printed_by_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "markov_models",
@@ -1035,7 +1468,13 @@
         "equipment",
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "created_by_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "mc_models",
@@ -1046,7 +1485,13 @@
         "equipment",
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "created_by_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "media_attachments",
@@ -1069,7 +1514,13 @@
         "user_accounts",
         "notifications"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "acknowledged_by_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "notification_categories",
@@ -1148,7 +1599,13 @@
       "conflict_policy": "append_only",
       "apply_priority": 0,
       "parents": [],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "changed_by_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "org_entity_bindings",
@@ -1180,7 +1637,8 @@
       "parents": [
         "org_structure_models"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "authority": "org.admin"
     },
     {
       "entity_type": "org_nodes",
@@ -1191,7 +1649,8 @@
         "org_structure_models",
         "org_node_types"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "authority": "org.admin"
     },
     {
       "entity_type": "org_structure_models",
@@ -1201,7 +1660,16 @@
       "parents": [
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "authority": "org.admin",
+      "author_fields": [
+        {
+          "field": "activated_by_sync_id",
+          "guards": [
+            "activated_at"
+          ]
+        }
+      ]
     },
     {
       "entity_type": "org_type_relationship_rules",
@@ -1212,7 +1680,25 @@
         "org_structure_models",
         "org_node_types"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "authority": "org.admin"
+    },
+    {
+      "entity_type": "permit_gas_tests",
+      "scope": "tenant",
+      "conflict_policy": "append_only",
+      "apply_priority": 13,
+      "parents": [
+        "work_permits",
+        "user_accounts"
+      ],
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "measured_by_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "permit_handover_logs",
@@ -1223,7 +1709,15 @@
         "work_permits",
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "signed_by_sync_id",
+          "guards": [
+            "signed_at"
+          ]
+        }
+      ]
     },
     {
       "entity_type": "permit_isolations",
@@ -1235,7 +1729,93 @@
         "user_accounts",
         "reference_values"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "applied_by_sync_id",
+          "guards": [
+            "applied_at"
+          ]
+        },
+        {
+          "field": "verified_by_sync_id",
+          "guards": [
+            "verified_at"
+          ]
+        },
+        {
+          "field": "removal_verified_by_sync_id",
+          "guards": [
+            "removal_verified_at"
+          ]
+        },
+        {
+          "field": "cancelled_by_sync_id",
+          "guards": [
+            "cancelled_at"
+          ]
+        },
+        {
+          "field": "removed_by_sync_id",
+          "guards": [
+            "removed_at"
+          ]
+        },
+        {
+          "field": "forced_authorized_by_sync_id",
+          "guards": [
+            "forced_reason",
+            "forced_contact_attempts_json"
+          ]
+        },
+        {
+          "field": "informed_by_sync_id",
+          "guards": [
+            "informed_at",
+            "informed_method"
+          ]
+        }
+      ]
+    },
+    {
+      "entity_type": "permit_personal_locks",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 14,
+      "parents": [
+        "work_permits",
+        "permit_workers",
+        "user_accounts"
+      ],
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "placed_by_sync_id",
+          "guards": [
+            "placed_at"
+          ]
+        },
+        {
+          "field": "removed_by_sync_id",
+          "guards": [
+            "removed_at"
+          ]
+        },
+        {
+          "field": "forced_authorized_by_sync_id",
+          "guards": [
+            "forced_reason",
+            "forced_contact_attempts_json"
+          ]
+        },
+        {
+          "field": "informed_by_sync_id",
+          "guards": [
+            "informed_at",
+            "informed_method"
+          ]
+        }
+      ]
     },
     {
       "entity_type": "permit_suspensions",
@@ -1246,7 +1826,21 @@
         "work_permits",
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "suspended_by_sync_id",
+          "guards": [
+            "suspended_at"
+          ]
+        },
+        {
+          "field": "reinstated_by_sync_id",
+          "guards": [
+            "reinstated_at"
+          ]
+        }
+      ]
     },
     {
       "entity_type": "permit_types",
@@ -1256,7 +1850,58 @@
       "parents": [
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "three_person_changed_by_sync_id",
+          "guards": [
+            "requires_three_person_removal",
+            "three_person_changed_at",
+            "three_person_change_reason"
+          ]
+        },
+        {
+          "field": "isolation_changed_by_sync_id",
+          "guards": [
+            "requires_energy_isolation",
+            "isolation_changed_at",
+            "isolation_change_reason"
+          ]
+        }
+      ]
+    },
+    {
+      "entity_type": "permit_workers",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 13,
+      "parents": [
+        "work_permits",
+        "personnel",
+        "external_companies",
+        "user_accounts"
+      ],
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "added_by_sync_id",
+          "guards": [
+            "added_at"
+          ]
+        },
+        {
+          "field": "induction_by_sync_id",
+          "guards": [
+            "induction_at"
+          ]
+        },
+        {
+          "field": "withdrawn_by_sync_id",
+          "guards": [
+            "withdrawn_at"
+          ]
+        }
+      ]
     },
     {
       "entity_type": "personnel",
@@ -1284,7 +1929,13 @@
         "teams",
         "org_nodes"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "changed_by_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "personnel_authorizations",
@@ -1306,7 +1957,13 @@
         "user_accounts",
         "personnel"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "created_by_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "personnel_certifications",
@@ -1362,7 +2019,16 @@
         "equipment",
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "site_assigned_by_sync_id",
+          "guards": [
+            "site_assigned_at",
+            "site_assign_reason"
+          ]
+        }
+      ]
     },
     {
       "entity_type": "pm_executions",
@@ -1374,7 +2040,17 @@
         "work_orders",
         "pm_occurrences"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "completed_by_sync_id",
+          "guards": []
+        },
+        {
+          "field": "actor_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "pm_findings",
@@ -1397,7 +2073,13 @@
         "user_accounts",
         "pm_occurrences"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "actor_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "pm_occurrences",
@@ -1457,7 +2139,15 @@
       "parents": [
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "activated_by_sync_id",
+          "guards": [
+            "activated_at"
+          ]
+        }
+      ]
     },
     {
       "entity_type": "position_change_events",
@@ -1467,7 +2157,13 @@
       "parents": [
         "positions"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "changed_by_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "positions",
@@ -1496,7 +2192,13 @@
         "roles",
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "created_by_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "procurement_requisition_lines",
@@ -1520,7 +2222,13 @@
       "parents": [
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "requested_by_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "purchase_order_lines",
@@ -1546,7 +2254,21 @@
         "procurement_requisitions",
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "ordered_by_sync_id",
+          "guards": [
+            "ordered_at"
+          ]
+        },
+        {
+          "field": "approved_by_sync_id",
+          "guards": [
+            "approved_at"
+          ]
+        }
+      ]
     },
     {
       "entity_type": "qualification_profile_skills",
@@ -1586,7 +2308,13 @@
         "equipment",
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "created_by_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "ram_ishikawa_diagrams",
@@ -1604,7 +2332,8 @@
       "conflict_policy": "operator_review",
       "apply_priority": 0,
       "parents": [],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "authority": "adm.settings"
     },
     {
       "entity_type": "rbd_models",
@@ -1615,7 +2344,13 @@
         "equipment",
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "created_by_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "rcm_decisions",
@@ -1641,7 +2376,13 @@
         "equipment",
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "created_by_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "reference_aliases",
@@ -1670,7 +2411,13 @@
         "reference_domains",
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "created_by_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "reference_validation_reports",
@@ -1681,7 +2428,15 @@
         "reference_sets",
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "validated_by_sync_id",
+          "guards": [
+            "validated_at"
+          ]
+        }
+      ]
     },
     {
       "entity_type": "reference_value_migrations",
@@ -1689,7 +2444,15 @@
       "conflict_policy": "operator_review",
       "apply_priority": 0,
       "parents": [],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "migrated_by_sync_id",
+          "guards": [
+            "migrated_at"
+          ]
+        }
+      ]
     },
     {
       "entity_type": "reference_values",
@@ -1719,7 +2482,18 @@
         "equipment_classes",
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "updated_by_sync_id",
+          "guards": [],
+          "vouches": [
+            "planned_cost",
+            "failure_cost",
+            "currency_code"
+          ]
+        }
+      ]
     },
     {
       "entity_type": "reliability_dashboard_policies",
@@ -1743,7 +2517,13 @@
         "rbd_models",
         "fta_models"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "created_by_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "reliability_study_assets",
@@ -1773,7 +2553,28 @@
         "rcm_decisions",
         "org_nodes"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "proposed_by_sync_id",
+          "guards": [
+            "proposed_at"
+          ]
+        },
+        {
+          "field": "decided_by_sync_id",
+          "guards": [
+            "decided_at",
+            "decision_note"
+          ]
+        },
+        {
+          "field": "applied_by_sync_id",
+          "guards": [
+            "applied_at"
+          ]
+        }
+      ]
     },
     {
       "entity_type": "reliability_study_record_events",
@@ -1787,7 +2588,13 @@
         "equipment",
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "actor_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "repairable_orders",
@@ -1802,7 +2609,13 @@
         "articles",
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "created_by_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "report_schedules",
@@ -1840,7 +2653,16 @@
         "roles",
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "authority": "adm.roles",
+      "author_fields": [
+        {
+          "field": "granted_by_sync_id",
+          "guards": [
+            "granted_at"
+          ]
+        }
+      ]
     },
     {
       "entity_type": "role_templates",
@@ -1848,7 +2670,8 @@
       "conflict_policy": "operator_review",
       "apply_priority": 0,
       "parents": [],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "authority": "adm.roles"
     },
     {
       "entity_type": "roles",
@@ -1857,7 +2680,8 @@
       "apply_priority": 0,
       "parents": [],
       "sync_status": "synced",
-      "note": "System roles are seeded on every replica; seeded rows must use identity::seeded_entity_sync_id."
+      "note": "System roles are seeded on every replica; seeded rows must use identity::seeded_entity_sync_id.",
+      "authority": "adm.roles"
     },
     {
       "entity_type": "runtime_exposure_logs",
@@ -1890,7 +2714,19 @@
         "teams",
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "created_by_sync_id",
+          "guards": []
+        },
+        {
+          "field": "approved_by_user_sync_id",
+          "guards": [
+            "approver_signed_at"
+          ]
+        }
+      ]
     },
     {
       "entity_type": "schedule_candidates",
@@ -1916,7 +2752,13 @@
         "schedule_commitments",
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "actor_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "schedule_commitments",
@@ -1932,7 +2774,19 @@
         "intervention_requests",
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "committed_by_sync_id",
+          "guards": []
+        },
+        {
+          "field": "status_changed_by_sync_id",
+          "guards": [
+            "status_changed_at"
+          ]
+        }
+      ]
     },
     {
       "entity_type": "weekly_schedules",
@@ -1943,7 +2797,34 @@
         "org_nodes",
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "approved_by_sync_id",
+          "guards": [
+            "approved_at"
+          ]
+        },
+        {
+          "field": "frozen_by_sync_id",
+          "guards": [
+            "frozen_at"
+          ]
+        },
+        {
+          "field": "published_by_sync_id",
+          "guards": [
+            "published_at"
+          ]
+        },
+        {
+          "field": "unfreeze_requested_by_sync_id",
+          "guards": [
+            "unfreeze_requested_at",
+            "unfreeze_reason"
+          ]
+        }
+      ]
     },
     {
       "entity_type": "weekly_schedule_events",
@@ -1954,7 +2835,13 @@
         "weekly_schedules",
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "approver_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "weekly_schedule_baseline_items",
@@ -1985,7 +2872,13 @@
       "conflict_policy": "append_only",
       "apply_priority": 0,
       "parents": [],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "changed_by_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "site_setting_events",
@@ -1996,7 +2889,13 @@
         "org_nodes",
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "changed_by_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "site_settings",
@@ -2008,7 +2907,16 @@
         "user_accounts"
       ],
       "sync_status": "synced",
-      "note": "Per-site rules (settings::site); no row = the rule's strict default."
+      "note": "Per-site rules (settings::site); no row = the rule's strict default.",
+      "author_fields": [
+        {
+          "field": "updated_by_sync_id",
+          "guards": [
+            "setting_key",
+            "value_json"
+          ]
+        }
+      ]
     },
     {
       "entity_type": "skill_categories",
@@ -2051,7 +2959,13 @@
         "user_accounts"
       ],
       "sync_status": "synced",
-      "note": "Work order link is resolved by sync id; the row is deferred until that work order is present."
+      "note": "Work order link is resolved by sync id; the row is deferred until that work order is present.",
+      "author_fields": [
+        {
+          "field": "created_by_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "team_skill_requirements",
@@ -2106,7 +3020,13 @@
         "articles",
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "created_by_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "user_accounts",
@@ -2114,7 +3034,32 @@
       "conflict_policy": "operator_review",
       "apply_priority": 0,
       "parents": [],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "authority": "adm.users",
+      "author_fields": [
+        {
+          "field": "password_changed_by_sync_id",
+          "guards": [
+            "password_hash",
+            "password_changed_at",
+            "password_set_by_sync_id",
+            "password_set_at"
+          ]
+        },
+        {
+          "field": "password_set_by_sync_id",
+          "guards": [
+            "password_set_at"
+          ]
+        },
+        {
+          "field": "status_changed_by_sync_id",
+          "guards": [
+            "is_active",
+            "deleted_at"
+          ]
+        }
+      ]
     },
     {
       "entity_type": "user_analytics_dashboard_layouts",
@@ -2158,7 +3103,14 @@
         "org_nodes",
         "teams"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "authority": "adm.users",
+      "author_fields": [
+        {
+          "field": "assigned_by_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "warehouses",
@@ -2178,7 +3130,13 @@
         "failure_codes",
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "created_by_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "wo_action_events",
@@ -2188,7 +3146,13 @@
       "parents": [
         "work_orders"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "actor_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "wo_change_events",
@@ -2196,7 +3160,37 @@
       "conflict_policy": "append_only",
       "apply_priority": 0,
       "parents": [],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "actor_sync_id",
+          "guards": []
+        }
+      ]
+    },
+    {
+      "entity_type": "wo_history_records",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 5,
+      "parents": [
+        "equipment",
+        "reference_values",
+        "user_accounts"
+      ],
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "imported_by_sync_id",
+          "guards": []
+        },
+        {
+          "field": "coded_by_sync_id",
+          "guards": [
+            "coded_at"
+          ]
+        }
+      ]
     },
     {
       "entity_type": "wo_state_transition_log",
@@ -2204,7 +3198,13 @@
       "conflict_policy": "append_only",
       "apply_priority": 0,
       "parents": [],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "actor_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "work_order_attachments",
@@ -2215,7 +3215,13 @@
         "user_accounts",
         "work_orders"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "uploaded_by_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "work_order_delay_segments",
@@ -2227,7 +3233,13 @@
         "reference_values",
         "work_orders"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "entered_by_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "work_order_downtime_segments",
@@ -2248,7 +3260,13 @@
         "user_accounts",
         "work_orders"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "actor_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "work_order_failure_details",
@@ -2286,7 +3304,8 @@
         "stock_reservations",
         "work_orders",
         "articles",
-        "stock_locations"
+        "stock_locations",
+        "personnel"
       ],
       "sync_status": "synced"
     },
@@ -2307,7 +3326,16 @@
         "user_accounts",
         "work_orders"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "completed_by_sync_id",
+          "guards": [
+            "completed_at",
+            "result_code"
+          ]
+        }
+      ]
     },
     {
       "entity_type": "work_order_tools",
@@ -2328,7 +3356,15 @@
         "user_accounts",
         "work_orders"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "verified_by_sync_id",
+          "guards": [
+            "verified_at"
+          ]
+        }
+      ]
     },
     {
       "entity_type": "work_orders",
@@ -2346,9 +3382,44 @@
         "reference_values",
         "work_order_statuses",
         "org_nodes",
-        "schedule_class_versions"
+        "schedule_class_versions",
+        "external_companies"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "planning_approved_by_sync_id",
+          "guards": [
+            "planning_approved_at"
+          ]
+        },
+        {
+          "field": "permit_rule_cleared_by_sync_id",
+          "guards": [
+            "permit_rule_cleared_at",
+            "permit_rule_clear_reason"
+          ]
+        },
+        {
+          "field": "site_assigned_by_sync_id",
+          "guards": [
+            "site_assigned_at",
+            "site_assign_reason"
+          ]
+        },
+        {
+          "field": "validated_by_sync_id",
+          "guards": [
+            "validated_at"
+          ]
+        },
+        {
+          "field": "fmeca_parts_override_signed_by_sync_id",
+          "guards": [
+            "fmeca_parts_override_reason"
+          ]
+        }
+      ]
     },
     {
       "entity_type": "work_permits",
@@ -2362,7 +3433,46 @@
         "org_nodes",
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "created_by_sync_id",
+          "guards": []
+        },
+        {
+          "field": "submitted_by_sync_id",
+          "guards": [
+            "submitted_at"
+          ]
+        },
+        {
+          "field": "approved_by_sync_id",
+          "guards": [
+            "approved_at",
+            "self_approved"
+          ]
+        },
+        {
+          "field": "cancelled_by_sync_id",
+          "guards": [
+            "cancelled_at"
+          ]
+        },
+        {
+          "field": "hse_approved_by_sync_id",
+          "guards": [
+            "hse_approved_at",
+            "hse_approval_note",
+            "hse_self_approved"
+          ],
+          "vouches": [
+            "work_description",
+            "risk_assessment",
+            "preventive_measures",
+            "ppe_required"
+          ]
+        }
+      ]
     },
     {
       "entity_type": "wo_cost_estimates",
@@ -2374,7 +3484,22 @@
         "cost_centers",
         "work_orders"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "updated_by_sync_id",
+          "guards": [],
+          "vouches": [
+            "cost_center_sync_id",
+            "estimated_labor",
+            "estimated_parts",
+            "estimated_services",
+            "estimated_other",
+            "currency_code",
+            "notes"
+          ]
+        }
+      ]
     },
     {
       "entity_type": "wo_cost_settlements",
@@ -2387,7 +3512,22 @@
         "cost_centers",
         "work_orders"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "posted_by_sync_id",
+          "guards": [
+            "posted_at"
+          ]
+        },
+        {
+          "field": "reversed_by_sync_id",
+          "guards": [
+            "reversed_at",
+            "reversal_reason"
+          ]
+        }
+      ]
     },
     {
       "entity_type": "budget_periods",
@@ -2397,7 +3537,21 @@
       "parents": [
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "closed_by_sync_id",
+          "guards": [
+            "closed_at"
+          ]
+        },
+        {
+          "field": "reopened_by_sync_id",
+          "guards": [
+            "reopened_at"
+          ]
+        }
+      ]
     },
     {
       "entity_type": "qualification_overrides",
@@ -2410,7 +3564,15 @@
         "work_permits",
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "approved_by_sync_id",
+          "guards": [
+            "approved_at"
+          ]
+        }
+      ]
     },
     {
       "entity_type": "qualification_requirements",
@@ -2424,7 +3586,13 @@
         "reference_values",
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "created_by_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "work_calendar_holidays",
@@ -2435,7 +3603,13 @@
         "org_nodes",
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "created_by_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "site_work_weeks",
@@ -2446,7 +3620,13 @@
         "org_nodes",
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "created_by_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "schedule_class_versions",
@@ -2457,7 +3637,13 @@
         "reference_values",
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "created_by_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "team_schedule_assignments",
@@ -2469,7 +3655,13 @@
         "reference_values",
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "created_by_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "personnel_schedule_exceptions",
@@ -2481,7 +3673,13 @@
         "reference_values",
         "user_accounts"
       ],
-      "sync_status": "synced"
+      "sync_status": "synced",
+      "author_fields": [
+        {
+          "field": "created_by_sync_id",
+          "guards": []
+        }
+      ]
     }
   ],
   "local_only_tables": {
@@ -2495,6 +3693,8 @@
     "asset_import_staging": "import_staging",
     "backup_policies": "backup",
     "backup_runs": "backup",
+    "bulk_import_batches": "import_staging",
+    "bulk_import_rows": "import_staging",
     "computation_jobs": "job_queue",
     "connection_profiles": "secrets",
     "entitlement_cache_state": "licensing",
@@ -2532,6 +3732,7 @@
     "stock_balances": "derived_projection",
     "stock_negative_reviews": "derived_projection",
     "stock_reserved_dirty": "job_queue",
+    "sync_capture_actor": "sync_control",
     "sync_capture_baseline": "sync_control",
     "sync_capture_journal": "sync_control",
     "sync_capture_suppression": "sync_control",
@@ -2552,6 +3753,13 @@
     "system_config": "session_or_device",
     "training_expiry_alert_events": "derived_projection",
     "trusted_devices": "session_or_device",
+    "user_signing_keys_local": "secrets",
     "users": "legacy"
-  }
+  },
+  "server_only_types": [
+    {
+      "entity_type": "user_signing_keys",
+      "scope": "tenant"
+    }
+  ]
 }

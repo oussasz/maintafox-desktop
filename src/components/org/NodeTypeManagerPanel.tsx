@@ -98,11 +98,19 @@ function resolveIcon(key: string | null | undefined): LucideIcon {
 // ─── Capability flag definitions ─────────────────────────────────────────────
 
 const CAPABILITY_FLAGS = [
-  { key: "can_host_assets", labelKey: "capabilities.asset" },
-  { key: "can_own_work", labelKey: "capabilities.work" },
-  { key: "can_carry_cost_center", labelKey: "capabilities.cost" },
-  { key: "can_aggregate_kpis", labelKey: "capabilities.kpi" },
-  { key: "can_receive_permits", labelKey: "capabilities.permit" },
+  { key: "can_host_assets", labelKey: "capabilities.asset", longKey: "capabilities.long.asset" },
+  { key: "can_own_work", labelKey: "capabilities.work", longKey: "capabilities.long.work" },
+  {
+    key: "can_carry_cost_center",
+    labelKey: "capabilities.cost",
+    longKey: "capabilities.long.cost",
+  },
+  { key: "can_aggregate_kpis", labelKey: "capabilities.kpi", longKey: "capabilities.long.kpi" },
+  {
+    key: "can_receive_permits",
+    labelKey: "capabilities.permit",
+    longKey: "capabilities.long.permit",
+  },
 ] as const;
 
 type CapFlag = (typeof CAPABILITY_FLAGS)[number]["key"];
@@ -282,6 +290,7 @@ export function NodeTypeManagerPanel({
 
         {/* ── Scrollable body ── */}
         <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+          {!isFormMode && <p className="text-xs text-text-muted">{t("nodeTypes.structureHint")}</p>}
           {/* Type list */}
           {!isFormMode &&
             (loading ? (
@@ -314,7 +323,12 @@ export function NodeTypeManagerPanel({
                         </div>
                         <div className="flex flex-wrap gap-1 mt-0.5">
                           {CAPABILITY_FLAGS.filter((f) => nt[f.key]).map((f) => (
-                            <Badge key={f.key} variant="secondary" className="text-[10px]">
+                            <Badge
+                              key={f.key}
+                              variant="secondary"
+                              className="text-[10px]"
+                              title={t(f.longKey)}
+                            >
                               {t(f.labelKey)}
                             </Badge>
                           ))}
@@ -437,7 +451,10 @@ export function NodeTypeManagerPanel({
                         checked={form.capabilities[f.key]}
                         onCheckedChange={(checked) => setCapability(f.key, checked)}
                       />
-                      <span className="text-sm">{t(f.labelKey)}</span>
+                      <span className="text-sm">
+                        {t(f.labelKey)}
+                        <span className="text-xs text-text-muted"> : {t(f.longKey)}</span>
+                      </span>
                     </label>
                   ))}
                 </div>

@@ -40,6 +40,8 @@ interface AssetStoreState {
   showEditForm: boolean;
   editingAsset: Asset | null;
   parentPreFill: Asset | null;
+  /** Asset whose "Transférer" dialog was asked for from another screen (the edit form). */
+  transferRequestAssetId: number | null;
 
   // Tree state
   treeMode: boolean;
@@ -77,6 +79,9 @@ interface AssetStoreState {
   closeCreateForm: () => void;
   openEditForm: (asset: Asset) => void;
   closeEditForm: () => void;
+  /** Ask the asset's detail view to open "Transférer" (the location is changed only there). */
+  requestTransfer: (assetId: number) => void;
+  clearTransferRequest: () => void;
 
   // Tree actions
   setTreeMode: (enabled: boolean) => void;
@@ -99,6 +104,7 @@ export const useAssetStore = create<AssetStoreState>()((set, get) => ({
   showEditForm: false,
   editingAsset: null,
   parentPreFill: null,
+  transferRequestAssetId: null,
 
   // Tree state
   treeMode: false,
@@ -256,6 +262,14 @@ export const useAssetStore = create<AssetStoreState>()((set, get) => ({
 
   closeEditForm: () => {
     set({ showEditForm: false, editingAsset: null });
+  },
+
+  requestTransfer: (assetId) => {
+    set({ transferRequestAssetId: assetId });
+  },
+
+  clearTransferRequest: () => {
+    set({ transferRequestAssetId: null });
   },
 
   // ── Tree actions ──────────────────────────────────────────────────────────

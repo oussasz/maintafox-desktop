@@ -9,12 +9,15 @@ import { usePermissions } from "@/hooks/use-permissions";
 import { cn } from "@/lib/utils";
 import { saveDashboardLayout, saveOverviewKpiLayout } from "@/services/dashboard-service";
 import {
+  DASHBOARD_ROLE_PRESETS,
   DASHBOARD_WIDGET_IDS,
   DASHBOARD_WIDGET_PERMISSIONS,
   type DashboardLayoutV1,
+  type DashboardRolePreset,
   DEFAULT_DASHBOARD_LAYOUT,
   isDashboardWidgetId,
   mergeWithDefaultLayout,
+  widgetsForRolePreset,
 } from "@shared/dashboard-layout";
 import {
   OVERVIEW_KPI_ACCENT_OPTIONS,
@@ -240,6 +243,22 @@ export function DashboardCustomizeDialog({
         />
       }
     >
+      <EntityFormSection title={t("layout.presets.heading")}>
+        <p className="text-xs text-text-muted">{t("layout.presets.hint")}</p>
+        <div className="flex flex-wrap gap-2" data-testid="dashboard-role-presets">
+          {(Object.keys(DASHBOARD_ROLE_PRESETS) as DashboardRolePreset[]).map((preset) => (
+            <Button
+              key={preset}
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setDraft((d) => ({ ...d, widgets: widgetsForRolePreset(preset) }))}
+            >
+              {t(`layout.presets.${preset}`)}
+            </Button>
+          ))}
+        </div>
+      </EntityFormSection>
       <EntityFormSection title={t("layout.pageSectionsHeading")}>
         {orderedWidgets.map((w, index) => (
           <div key={w.id} className="flex items-center gap-2">

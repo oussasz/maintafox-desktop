@@ -7,6 +7,7 @@ import { useTranslation } from "react-i18next";
 import { diStatusToI18nKey } from "@/components/di/status-meta";
 import { formatPersonLabel } from "@/lib/display";
 import { intlLocaleForLanguage } from "@/utils/format-date";
+import { formatDateTime as formatLocalDateTime } from "@/utils/formatters";
 import type { DiTransitionRow } from "@shared/ipc-types";
 
 interface DiStateTransitionListProps {
@@ -44,7 +45,7 @@ export function DiStateTransitionList({ transitions }: DiStateTransitionListProp
             return (
               <tr key={row.id} className="hover:bg-muted/30">
                 <td className="px-3 py-2 whitespace-nowrap font-mono text-[11px]">
-                  {new Date(row.acted_at).toLocaleString(locale)}
+                  {formatLocalDateTime(row.acted_at, locale)}
                 </td>
                 <td className="px-3 py-2">
                   {row.from_status === "none"

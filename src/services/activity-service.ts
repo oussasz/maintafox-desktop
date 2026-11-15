@@ -56,12 +56,21 @@ const AuditEventSummarySchema = z.object({
   target_id: z.string().nullable(),
   actor_id: z.number().nullable(),
   actor_username: z.string().nullable(),
+  /** Display name of the actor (else the account name). */
+  actor_display_name: z.string().nullable().optional(),
+  /** The object as it reads on screen ("OT-2026-0042 — Fuite pompe"), when known here. */
+  target_label: z.string().nullable().optional(),
   auth_context: z.string(),
   result: z.string(),
   happened_at: z.string(),
   retention_class: z.string(),
   /** Received from another device before history ids travelled as sync ids: ids in it are that device's. */
   from_other_device: z.boolean().default(false),
+});
+
+const AuditFilterOptionsSchema = z.object({
+  actions: z.array(z.string()),
+  actors: z.array(z.object({ id: z.number(), label: z.string() })),
 });
 
 const AuditEventDetailSchema = z.object({
@@ -94,6 +103,7 @@ export type SavedActivityFilter = z.infer<typeof SavedActivityFilterSchema>;
 export type EventChain = z.infer<typeof EventChainSchema>;
 export type AuditEventSummary = z.infer<typeof AuditEventSummarySchema>;
 export type AuditEventDetail = z.infer<typeof AuditEventDetailSchema>;
+export type AuditFilterOptions = z.infer<typeof AuditFilterOptionsSchema>;
 export type ExportResult = z.infer<typeof ExportResultSchema>;
 
 export interface ActivityFilter {
@@ -119,7 +129,12 @@ export interface SaveFilterInput {
 }
 
 export interface AuditFilter {
+  /** Start of the action code (older callers). */
   action_code?: string;
+  /** One action code exactly, chosen from the list of actions. */
+  action?: string;
+  /** OT number, equipment code or permit number (part of it), resolved by the backend. */
+  object_search?: string;
   actor_id?: number;
   target_type?: string;
   result?: string;
@@ -167,6 +182,12 @@ export async function getEventChain(
 export async function listAuditEvents(filter?: AuditFilter): Promise<AuditEventSummary[]> {
   const raw = await invoke<AuditEventSummary[]>("list_audit_events", { filter });
   return z.array(AuditEventSummarySchema).parse(raw);
+}
+
+/** The actions and people present in the audit trail (the reader's own events without adm.audit). */
+export async function listAuditFilterOptions(): Promise<AuditFilterOptions> {
+  const raw = await invoke<AuditFilterOptions>("list_audit_filter_options");
+  return AuditFilterOptionsSchema.parse(raw);
 }
 
 export async function getAuditEvent(event_id: number): Promise<AuditEventDetail> {

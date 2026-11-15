@@ -199,6 +199,23 @@ describe("InspectionRunner", () => {
     expect(screen.queryByText(/res-9|cp-1|r-42/)).not.toBeInTheDocument();
   });
 
+  it("says Retour and goes back to the origin screen when opened from another screen", async () => {
+    svc.getInspectionRoundRunner.mockResolvedValue(runner("in_progress", [runnerRow(temperature)]));
+    const onClose = vi.fn();
+    render(<InspectionRunner roundId={42} onClose={onClose} backToOrigin />);
+    fireEvent.click(await screen.findByRole("button", { name: "action.back" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("button", { name: enInspections.runner.back })).toBeNull();
+  });
+
+  it("keeps 'Back to rounds' when the round was opened from the rounds list", async () => {
+    svc.getInspectionRoundRunner.mockResolvedValue(runner("in_progress", [runnerRow(temperature)]));
+    render(<InspectionRunner roundId={42} onClose={vi.fn()} />);
+    expect(
+      await screen.findByRole("button", { name: enInspections.runner.back }),
+    ).toBeInTheDocument();
+  });
+
   it("previews the status of a reading and requires a comment out of tolerance", async () => {
     svc.getInspectionRoundRunner.mockResolvedValue(
       runner("in_progress", [runnerRow(temperature), runnerRow(leak)]),
@@ -260,6 +277,10 @@ describe("InspectionRunner", () => {
     const complete = await screen.findByRole("button", { name: "Complete the round" });
     expect(complete).toBeEnabled();
     fireEvent.click(complete);
+    // L1-32: finishing is final, so it is confirmed first.
+    expect(svc.completeInspectionRound).not.toHaveBeenCalled();
+    const confirm = await screen.findByRole("dialog", { name: "Finish the round?" });
+    fireEvent.click(within(confirm).getByRole("button", { name: "Complete the round" }));
     await waitFor(() =>
       expect(svc.completeInspectionRound).toHaveBeenCalledWith({
         round_id: 42,

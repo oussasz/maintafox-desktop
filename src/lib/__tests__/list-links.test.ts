@@ -15,6 +15,9 @@ import {
 describe("list links", () => {
   it("builds explicit, readable list filters", () => {
     expect(listLinks.workOrders({ scope: "open" })).toBe("/work-orders?scope=open");
+    expect(listLinks.workOrder(42)).toBe("/work-orders?openWo=42");
+    expect(listLinks.ramsAsset(7)).toBe("/reliability?equipment=7");
+    expect(listLinks.asset(7)).toBe("/equipment?assetId=7");
     expect(listLinks.workOrders({ status: "in_progress", equipmentId: 12 })).toBe(
       "/work-orders?status=in_progress&equipment=12",
     );

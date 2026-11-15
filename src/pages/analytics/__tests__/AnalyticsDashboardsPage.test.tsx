@@ -8,6 +8,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PermissionContext, type PermissionContextValue } from "@/contexts/PermissionContext";
 import { AnalyticsDashboardsPage } from "@/pages/analytics/AnalyticsDashboardsPage";
 import type { AnalyticsExecutiveDashboardWithSmrp } from "@/services/analytics-dashboard-service";
+import type { FleetKpis } from "@/services/reliability-study-service";
 import { useSessionStore } from "@/store/session-store";
 import type { AnalyticsKpiValue } from "@shared/ipc-types";
 import { P, type PermissionName } from "@shared/rbac/permissions.generated";
@@ -48,8 +49,39 @@ function kpi(key: string, value: number, previous: number, available = true): An
   return { key, value, previous_value: previous, available, quality_badge: null, catalog_id: null };
 }
 
+/** Live fleet figures of the horizon (`study::fleet_kpis`), mixed hours basis. */
+const RELIABILITY: FleetKpis = {
+  period_start: "2025-11-06T00:00:00Z",
+  period_end: "2026-11-06T00:00:00Z",
+  window_too_short: false,
+  equipment_count: 5,
+  failure_count: 9,
+  downtime_hours: 40,
+  exposure_hours: 3690,
+  availability_operational: 0.962,
+  mtbf_hours: 410,
+  eligible_failure_count: 9,
+  mtbf_excluded_missing_date: 0,
+  mtbf_excluded_outside_service: 2,
+  mttr_hours: 3.5,
+  restore_count: 8,
+  restore_excluded_missing_failed_at: 0,
+  restore_excluded_missing_restored_at: 1,
+  restore_excluded_inconsistent: 0,
+  mean_active_repair_hours: 2,
+  active_repair_count: 9,
+  repair_excluded_missing_hours: 0,
+  data_quality: 0.875,
+  records_complete: 7,
+  records_missing_mode: 1,
+  records_missing_cause: 1,
+  records_missing_mechanism: 2,
+  operating_basis_count: 3,
+  calendar_basis_count: 2,
+};
+
 const DATA: AnalyticsExecutiveDashboardWithSmrp = {
-  horizon_days: 30,
+  horizon_days: 365,
   org_node_id: null,
   open_dis: kpi("open_dis", 12, 4),
   open_wos: kpi("open_wos", 7, 7),
@@ -63,6 +95,8 @@ const DATA: AnalyticsExecutiveDashboardWithSmrp = {
   avg_mttr_hours: kpi("avg_mttr_hours", 3.5, 4),
   avg_availability: kpi("avg_availability", 0.962, 0.95),
   avg_data_quality: kpi("avg_data_quality", 0.875, 0.8),
+  sample_size_score: kpi("sample_size_score", 0.6, 0.6),
+  reliability: RELIABILITY,
   maintenance_cost: kpi("maintenance_cost", 12000, 10000),
   maintenance_cost_pending: 0,
   reliability_snapshot_count: 30,
@@ -139,14 +173,14 @@ describe("AnalyticsDashboardsPage", () => {
         </PermissionContext.Provider>
       </MemoryRouter>,
     );
-    expect(await screen.findByText("hub.dashboards.kpi.dataQuality")).toBeInTheDocument();
+    expect(await screen.findByText("rams.kpi.dataQuality")).toBeInTheDocument();
     expect(orgSvc.listOrgTree).not.toHaveBeenCalled();
     expect(screen.queryByText("hub.dashboards.filters.orgScope")).not.toBeInTheDocument();
   });
 
   it("shows ratios as percentages and trends only where a previous period exists", async () => {
     renderPage();
-    expect(await screen.findByText("hub.dashboards.kpi.dataQuality")).toBeInTheDocument();
+    expect(await screen.findByText("rams.kpi.dataQuality")).toBeInTheDocument();
     // 0.875 → 87.5 %, not "0.88"
     expect(screen.getByText(/87[.,]5\s?%/)).toBeInTheDocument();
     expect(screen.queryByText("0.88")).not.toBeInTheDocument();
@@ -193,13 +227,13 @@ describe("AnalyticsDashboardsPage", () => {
   });
 
   it("opens /reliability from the reliability tiles only with the reliability view right", async () => {
-    const mtbf = "hub.dashboards.kpi.mtbf";
+    const mtbf = "rams.kpi.mtbf";
     // rep.view only: the widget shows, no tile or evidence button leads to /reliability.
     rights.can = (p) => p !== P.RAM_VIEW;
     const first = renderPage();
     expect(await screen.findByText(mtbf)).toBeInTheDocument();
     expect(screen.getByText(mtbf).closest("button")).toBeNull();
-    expect(screen.getByText("hub.dashboards.kpi.failureEvents").closest("button")).toBeNull();
+    expect(screen.getByText("rams.kpi.failures").closest("button")).toBeNull();
     expect(screen.queryByText("widgets.reliability.openEvidence")).not.toBeInTheDocument();
     first.unmount();
     // ram.view held: the same tile is a link.
@@ -227,6 +261,77 @@ describe("AnalyticsDashboardsPage", () => {
     expect(await isRed("hub.dashboards.kpi.pmDueToday")).toBe(false);
     expect(await isRed("hub.dashboards.kpi.pmDueNext7d")).toBe(false);
     expect(await isRed("hub.dashboards.kpi.pmOverdue")).toBe(true);
+  });
+
+  it("opens on 12 months and offers 7 / 30 / 90 days and 12 months", async () => {
+    renderPage();
+    expect(await screen.findByText("rams.kpi.mtbf")).toBeInTheDocument();
+    expect(svc.getAnalyticsExecutiveDashboard).toHaveBeenCalledWith({
+      horizon_days: 365,
+      org_node_id: null,
+    });
+  });
+
+  it("labels the reliability cards like the RAMS home and states window and hours basis", async () => {
+    renderPage();
+    for (const key of [
+      "rams.kpi.mtbf",
+      "rams.kpi.mttr",
+      "rams.kpi.availability",
+      "rams.kpi.failures",
+      "rams.kpi.dataQuality",
+    ]) {
+      expect(await screen.findByText(key)).toBeInTheDocument();
+    }
+    for (const old of ["mtbf", "mttr", "availability", "dataQuality", "failureEvents"]) {
+      expect(screen.queryByText(`hub.dashboards.kpi.${old}`)).not.toBeInTheDocument();
+    }
+    // MTBF context: its definition (window + basis), then "N exclus : …".
+    const mtbfCard = screen.getByText("rams.kpi.mtbf").closest("button") as HTMLElement;
+    expect(mtbfCard).toHaveTextContent("rams.kpi.mtbfHint · rams.kpi.excluded.outsideService:2");
+    expect(screen.queryByText(/rams\.kpi\.tooShort/)).not.toBeInTheDocument();
+  });
+
+  it("shows counts only and says the period is too short under 90 days", async () => {
+    svc.getAnalyticsExecutiveDashboard.mockResolvedValue({
+      ...DATA,
+      horizon_days: 30,
+      avg_mtbf_hours: kpi("avg_mtbf_hours", 0, 0, false),
+      avg_mttr_hours: kpi("avg_mttr_hours", 0, 0, false),
+      avg_availability: kpi("avg_availability", 0, 0, false),
+      reliability: { ...RELIABILITY, window_too_short: true, mtbf_hours: null, mttr_hours: null },
+      reliability_total_events: 2,
+    });
+    renderPage();
+    expect(await screen.findByText("rams.kpi.mtbf")).toBeInTheDocument();
+    // MTBF, MTTR and Aₒ: "—" and the reason.
+    expect(screen.getAllByText(/rams\.kpi\.tooShort/)).toHaveLength(3);
+    const failures = screen.getByText("rams.kpi.failures").closest("button") as HTMLElement;
+    expect(failures).toHaveTextContent("2");
+  });
+
+  it('names the sample-size score "Taille d\'échantillon" and says it comes from the snapshots', async () => {
+    renderPage();
+    const title = await screen.findByText("hub.dashboards.kpi.sampleSize");
+    const card = title.parentElement as HTMLElement;
+    expect(card).toHaveTextContent("hub.dashboards.context.snapshots");
+    expect(card).toHaveTextContent(/60\s?%/);
+    expect(card).not.toHaveTextContent(/quality/i);
+    // The snapshot count says the same.
+    expect(screen.getAllByText("hub.dashboards.context.snapshots")).toHaveLength(2);
+  });
+
+  it("shows no trend on data quality when the window before had no record", async () => {
+    svc.getAnalyticsExecutiveDashboard.mockResolvedValue({
+      ...DATA,
+      avg_data_quality: {
+        ...kpi("avg_data_quality", 0.5, 0),
+        quality_badge: "insufficient_baseline",
+      },
+    });
+    renderPage();
+    const card = (await screen.findByText("rams.kpi.dataQuality")).closest("button") as HTMLElement;
+    expect(card).not.toHaveTextContent(/hub\.dashboards\.trend\./);
   });
 
   it("takes every trend sense from the KPI registry: no sense literal in the page source", () => {

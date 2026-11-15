@@ -139,7 +139,7 @@ pub async fn snooze(
         pool,
         notification_id,
         user_id,
-        Utc::now() + Duration::minutes(snooze_minutes),
+        crate::clock::now() + Duration::minutes(snooze_minutes),
     )
     .await
 }
@@ -154,7 +154,7 @@ pub async fn snooze_until(
 ) -> Result<()> {
     ensure_recipient(pool, notification_id, user_id).await?;
     refuse_hiding_unacknowledged_notice(pool, notification_id).await?;
-    let now = Utc::now();
+    let now = crate::clock::now();
     if until <= now || until > now + Duration::days(MAX_SNOOZE_DAYS) {
         return Err(AppError::ValidationFailed(vec![format!(
             "GATE_NOTIFICATION_SNOOZE_INVALID: a notification can be snoozed until a time within the next {MAX_SNOOZE_DAYS} days."

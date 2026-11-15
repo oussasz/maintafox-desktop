@@ -5,7 +5,6 @@
 //! be held in stock. Lines are deactivated, not deleted, so a removal replicates to the other
 //! devices like any edit. Stock figures are read live from `stock_balances` across all locations.
 
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
@@ -255,7 +254,7 @@ pub async fn add_asset_spare_part(
             issue_params(&[("code", article_code)]),
         ));
     }
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
     let entity_sync_id = crate::sync::identity::new_entity_sync_id();
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -312,7 +311,7 @@ pub async fn update_asset_spare_part(
                 line.position_label.into(),
                 i64::from(line.is_critical_spare).into(),
                 line.notes.into(),
-                Utc::now().to_rfc3339().into(),
+                crate::clock::now().to_rfc3339().into(),
                 id.into(),
                 expected_row_version.into(),
             ],
@@ -334,7 +333,11 @@ pub async fn remove_asset_spare_part(db: &DatabaseConnection, id: i64, expected_
             DbBackend::Sqlite,
             "UPDATE equipment_spare_parts SET is_active = 0, updated_at = ?, row_version = row_version + 1 \
              WHERE id = ? AND row_version = ? AND is_active = 1",
-            [Utc::now().to_rfc3339().into(), id.into(), expected_row_version.into()],
+            [
+                crate::clock::now().to_rfc3339().into(),
+                id.into(),
+                expected_row_version.into(),
+            ],
         ))
         .await?;
     if result.rows_affected() == 0 {

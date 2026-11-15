@@ -1062,27 +1062,42 @@ pub async fn list_articles(
     db: &DatabaseConnection,
     filter: InventoryArticleFilter,
 ) -> AppResult<Vec<InventoryArticle>> {
+    match filter.search {
+        Some(search) => {
+            let q = format!("%{}%", search.trim().to_lowercase());
+            articles_where(
+                db,
+                "WHERE LOWER(a.article_code) LIKE ? OR LOWER(a.article_name) LIKE ?",
+                vec![q.clone().into(), q.into()],
+            )
+            .await
+        }
+        None => articles_where(db, "", Vec::new()).await,
+    }
+}
+
+/// One article by id. Saving reads the article back by id, not through the text search: SQLite's
+/// LOWER only folds ASCII letters, so the search misses codes with an accented capital (ÉCROU).
+pub async fn get_article_by_id(db: &DatabaseConnection, article_id: i64) -> AppResult<Option<InventoryArticle>> {
+    Ok(articles_where(db, "WHERE a.id = ?", vec![article_id.into()])
+        .await?
+        .pop())
+}
+
+async fn articles_where(
+    db: &DatabaseConnection,
+    where_sql: &str,
+    values: Vec<Value>,
+) -> AppResult<Vec<InventoryArticle>> {
     let article_list_select = article_list_select();
     let triggers = reorder_triggers_by_article(db).await?;
-    let rows = if let Some(search) = filter.search {
-        let q = format!("%{}%", search.trim().to_lowercase());
-        db.query_all(Statement::from_sql_and_values(
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            format!(
-                "{article_list_select} \
-                 WHERE LOWER(a.article_code) LIKE ? OR LOWER(a.article_name) LIKE ? \
-                 ORDER BY a.article_code ASC"
-            ),
-            [q.clone().into(), q.into()],
+            format!("{article_list_select} {where_sql} ORDER BY a.article_code ASC"),
+            values,
         ))
-        .await?
-    } else {
-        db.query_all(Statement::from_string(
-            DbBackend::Sqlite,
-            format!("{article_list_select} ORDER BY a.article_code ASC"),
-        ))
-        .await?
-    };
+        .await?;
 
     rows.into_iter()
         .map(|row| {
@@ -1322,17 +1337,8 @@ pub async fn create_article(db: &DatabaseConnection, input: InventoryArticleInpu
 
     tx.commit().await?;
 
-    let mut rows = list_articles(
-        db,
-        InventoryArticleFilter {
-            search: Some(code.clone()),
-        },
-    )
-    .await?;
-
-    rows.retain(|r| r.id == article_id);
-    rows.into_iter()
-        .next()
+    get_article_by_id(db, article_id)
+        .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("created article not found")))
 }
 
@@ -1370,6 +1376,26 @@ pub async fn update_article(
         "stocking_type_value_id",
     )
     .await?;
+    // Hors-stock is not switched by hand in either direction: a part bought for a work order has
+    // its own review (`non_stock::review_non_stock_article`, which checks the open purchases), and
+    // a stocked part with shelves, counts or orders behind it must not be locked out of them.
+    let was_non_stock = crate::inventory::non_stock::is_non_stock_article(db, article_id).await?;
+    let becomes_non_stock = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT 1 AS hit FROM lookup_values WHERE id = ? AND code = ?",
+            [
+                input.stocking_type_value_id.into(),
+                crate::inventory::non_stock::NON_STOCK_CODE.into(),
+            ],
+        ))
+        .await?
+        .is_some();
+    if was_non_stock != becomes_non_stock {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_INV_NON_STOCK_TYPE_LOCKED: The hors-stock status of an item is not changed here.".to_string(),
+        ]));
+    }
     ensure_lookup_value_in_domain(
         db,
         input.tax_category_value_id,
@@ -1401,31 +1427,12 @@ pub async fn update_article(
     }
     let is_active = parse_bool_to_i64(input.is_active, true);
 
-    let before_code_row = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT article_code FROM articles WHERE id = ?",
-            [article_id.into()],
-        ))
+    let before = get_article_by_id(db, article_id)
         .await?
         .ok_or_else(|| AppError::NotFound {
             entity: "InventoryArticle".to_string(),
             id: article_id.to_string(),
         })?;
-    let before_code: String = before_code_row.try_get("", "article_code")?;
-    let before = list_articles(
-        db,
-        InventoryArticleFilter {
-            search: Some(before_code.clone()),
-        },
-    )
-    .await?
-    .into_iter()
-    .find(|a| a.id == article_id)
-    .ok_or_else(|| AppError::NotFound {
-        entity: "InventoryArticle".to_string(),
-        id: article_id.to_string(),
-    })?;
 
     let conflicting = db
         .query_one(Statement::from_sql_and_values(
@@ -1539,16 +1546,8 @@ pub async fn update_article(
 
     tx.commit().await?;
 
-    let rows = list_articles(
-        db,
-        InventoryArticleFilter {
-            search: Some(code.clone()),
-        },
-    )
-    .await?;
-
-    rows.into_iter()
-        .find(|r| r.id == article_id)
+    get_article_by_id(db, article_id)
+        .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("updated article not found")))
 }
 
@@ -1913,6 +1912,32 @@ pub struct AdjustStockOptions {
     pub new_lot: Option<crate::inventory::domain::NewLotInput>,
     pub posting_date: Option<String>,
     pub actor_id: Option<i64>,
+    /// Refuse the entry when the article already has any movement, or stock, at the location
+    /// (an opening stock is posted once). Checked inside the posting's transaction.
+    pub first_entry_only: bool,
+    /// Audit event written in the posting's transaction: recorded with the movement, or neither.
+    pub audit: Option<crate::audit::writer::AuditEventInput>,
+    /// Statements run in the posting's transaction, after the movement (the caller's own record of
+    /// the posting, e.g. the quantity returned on a receipt line): committed with it, or neither.
+    pub extra_statements: Vec<Statement>,
+}
+
+/// Whether the article has stock history at the location: any movement (entries, exits,
+/// reservations) or a balance that is not zero.
+pub async fn stock_history_exists<C: ConnectionTrait>(db: &C, article_id: i64, location_id: i64) -> AppResult<bool> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT (EXISTS(SELECT 1 FROM inventory_transactions WHERE article_id = ? AND location_id = ?)                  OR EXISTS(SELECT 1 FROM stock_balances WHERE article_id = ? AND location_id = ?                            AND (on_hand_qty <> 0 OR reserved_qty <> 0))) AS used",
+            [
+                article_id.into(),
+                location_id.into(),
+                article_id.into(),
+                location_id.into(),
+            ],
+        ))
+        .await?;
+    Ok(row.map(|r| r.try_get::<i64>("", "used")).transpose()?.unwrap_or(0) != 0)
 }
 
 pub async fn adjust_stock_full(
@@ -1920,6 +1945,7 @@ pub async fn adjust_stock_full(
     input: InventoryStockAdjustInput,
     options: AdjustStockOptions,
 ) -> AppResult<InventoryStockBalance> {
+    crate::inventory::non_stock::ensure_store_article(db, input.article_id).await?;
     let unit_cost = options.unit_cost;
     let posting_date = crate::inventory::periods::resolve_posting_date(db, options.posting_date.as_deref()).await?;
     let tracking = crate::inventory::lots::article_tracking(db, input.article_id).await?;
@@ -1941,6 +1967,11 @@ pub async fn adjust_stock_full(
 
     let tx = db.begin().await?;
     let warehouse_id = ensure_active_mutation_context(&tx, input.article_id, input.location_id).await?;
+    if options.first_entry_only && stock_history_exists(&tx, input.article_id, input.location_id).await? {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_INV_FIRST_ENTRY_HAS_HISTORY: This article already has stock movements at this location.".to_string(),
+        ]));
+    }
     let (on_hand, reserved) = get_balance_snapshot(&tx, input.article_id, input.location_id).await?;
     let next_on_hand = on_hand + input.delta_qty;
     // An exit never takes stock below zero; an entry at a location already below zero is accepted
@@ -2106,6 +2137,20 @@ pub async fn adjust_stock_full(
         .await?;
     }
 
+    for statement in options.extra_statements {
+        let done = tx.execute(statement).await?;
+        if done.rows_affected() == 0 {
+            return Err(AppError::ValidationFailed(vec![
+                "GATE_GR_RETURN_EXCEEDS:max=0: The quantity returned changed meanwhile; reload the reception."
+                    .to_string(),
+            ]));
+        }
+    }
+
+    if let Some(audit) = options.audit {
+        crate::audit::writer::write_audit_event_in(&tx, audit).await?;
+    }
+
     tx.commit().await?;
     load_balance(db, input.article_id, input.location_id).await
 }
@@ -2267,37 +2312,31 @@ async fn insert_inventory_transaction<C: ConnectionTrait>(
     // today; back-dated postings are checked by their command before they reach the ledger).
     crate::inventory::periods::ensure_posting_date_open(db, &crate::inventory::fx::today()).await?;
     let entity_sync_id = entity_sync_id.unwrap_or_else(uuid::Uuid::new_v4).to_string();
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO inventory_transactions (
+    let inserted = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO inventory_transactions (
              entity_sync_id, article_id, warehouse_id, location_id, reservation_id, movement_type, quantity,
              source_type, source_id, source_ref, reason_code, reason, performed_by_id, performed_at,
              row_version
          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, strftime('%Y-%m-%dT%H:%M:%SZ','now'), 1)",
-        [
-            entity_sync_id.into(),
-            article_id.into(),
-            warehouse_id.into(),
-            location_id.into(),
-            reservation_id.into(),
-            movement_type.to_string().into(),
-            quantity.into(),
-            source_type.to_string().into(),
-            source_id.into(),
-            source_ref.map(|v| v.to_string()).into(),
-            reason_code.map(|v| v.to_string()).into(),
-            notes.map(|v| v.to_string()).into(),
-        ],
-    ))
-    .await?;
-    let id_row = db
-        .query_one(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT last_insert_rowid() AS id".to_string(),
+            [
+                entity_sync_id.into(),
+                article_id.into(),
+                warehouse_id.into(),
+                location_id.into(),
+                reservation_id.into(),
+                movement_type.to_string().into(),
+                quantity.into(),
+                source_type.to_string().into(),
+                source_id.into(),
+                source_ref.map(|v| v.to_string()).into(),
+                reason_code.map(|v| v.to_string()).into(),
+                notes.map(|v| v.to_string()).into(),
+            ],
         ))
-        .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("failed to read inventory transaction id")))?;
-    Ok(id_row.try_get("", "id")?)
+        .await?;
+    crate::db::inserted_id(&inserted)
 }
 
 async fn load_balance(db: &DatabaseConnection, article_id: i64, location_id: i64) -> AppResult<InventoryStockBalance> {
@@ -2400,6 +2439,7 @@ pub async fn reserve_stock<C: ConnectionTrait + TransactionTrait>(
 
 /// Reserves stock inside the caller's transaction and returns the reservation id.
 pub(crate) async fn reserve_stock_in<C: ConnectionTrait>(tx: &C, input: &InventoryReserveInput) -> AppResult<i64> {
+    crate::inventory::non_stock::ensure_store_article(tx, input.article_id).await?;
     if input.quantity <= 0.0 {
         return Err(AppError::ValidationFailed(vec![
             "GATE_INV_QTY_POSITIVE: quantity must be greater than 0.".to_string(),
@@ -2429,34 +2469,28 @@ pub(crate) async fn reserve_stock_in<C: ConnectionTrait>(tx: &C, input: &Invento
     )
     .await?;
 
-    tx.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO stock_reservations (
+    let insert_result = tx
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO stock_reservations (
              entity_sync_id, article_id, warehouse_id, location_id, source_type, source_id, source_ref,
              quantity_reserved, quantity_issued, status, notes, created_by_id, row_version
          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 'active', ?, NULL, 1)",
-        [
-            uuid::Uuid::new_v4().to_string().into(),
-            input.article_id.into(),
-            warehouse_id.into(),
-            input.location_id.into(),
-            input.source_type.clone().into(),
-            input.source_id.into(),
-            input.source_ref.clone().into(),
-            input.quantity.into(),
-            input.notes.clone().into(),
-        ],
-    ))
-    .await?;
-
-    let reservation_id_row = tx
-        .query_one(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT last_insert_rowid() AS id".to_string(),
+            [
+                uuid::Uuid::new_v4().to_string().into(),
+                input.article_id.into(),
+                warehouse_id.into(),
+                input.location_id.into(),
+                input.source_type.clone().into(),
+                input.source_id.into(),
+                input.source_ref.clone().into(),
+                input.quantity.into(),
+                input.notes.clone().into(),
+            ],
         ))
-        .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("failed to load reservation id")))?;
-    let reservation_id: i64 = reservation_id_row.try_get("", "id")?;
+        .await?;
+
+    let reservation_id = crate::db::inserted_id(&insert_result)?;
 
     insert_inventory_transaction(
         tx,
@@ -2476,6 +2510,74 @@ pub(crate) async fn reserve_stock_in<C: ConnectionTrait>(tx: &C, input: &Invento
     .await?;
     crate::inventory::reservations::recompute_reserved_in(tx, input.article_id, input.location_id).await?;
     Ok(reservation_id)
+}
+
+/// Add `quantity` to an open reservation, at its own location (a work-order part used above its
+/// planned quantity, L3-21): the same availability check and RESERVE movement as a new
+/// reservation, so the work-order line keeps one reservation for everything it took and a later
+/// return finds it there.
+pub(crate) async fn top_up_reservation_in<C: ConnectionTrait>(
+    tx: &C,
+    reservation_id: i64,
+    quantity: f64,
+    notes: Option<&str>,
+) -> AppResult<()> {
+    if quantity <= 0.0 {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_INV_QTY_POSITIVE: quantity must be greater than 0.".to_string(),
+        ]));
+    }
+    let reservation = load_reservation_by_id(tx, reservation_id).await?;
+    if reservation.status == "released" {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_INV_RESERVATION_RELEASED: Reservation already released.".to_string(),
+        ]));
+    }
+    let warehouse_id = ensure_active_mutation_context(tx, reservation.article_id, reservation.location_id).await?;
+    let (on_hand, reserved) = get_balance_snapshot(tx, reservation.article_id, reservation.location_id).await?;
+    let available = on_hand - reserved;
+    if available < quantity {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "GATE_INV_INSUFFICIENT_STOCK:available={available}: Insufficient available stock for reservation (available: {available})."
+        )]));
+    }
+    upsert_balance(
+        tx,
+        reservation.article_id,
+        warehouse_id,
+        reservation.location_id,
+        on_hand,
+        reserved + quantity,
+    )
+    .await?;
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE stock_reservations
+         SET quantity_reserved = quantity_reserved + ?,
+             status = CASE WHEN quantity_issued > 0 THEN 'partial' ELSE 'active' END,
+             updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+         WHERE id = ?",
+        [quantity.into(), reservation.id.into()],
+    ))
+    .await?;
+    insert_inventory_transaction(
+        tx,
+        reservation.article_id,
+        warehouse_id,
+        reservation.location_id,
+        Some(reservation.id),
+        "RESERVE",
+        quantity,
+        &reservation.source_type,
+        reservation.source_id,
+        reservation.source_ref.as_deref(),
+        None,
+        notes,
+        None,
+    )
+    .await?;
+    crate::inventory::reservations::recompute_reserved_in(tx, reservation.article_id, reservation.location_id).await?;
+    Ok(())
 }
 
 /// Issue against an existing reservation (WO planned / used parts). Kept for the WO module; it
@@ -3133,6 +3235,7 @@ pub async fn transfer_stock(
             &[],
         ));
     }
+    crate::inventory::non_stock::ensure_store_article(db, input.article_id).await?;
     let note = input.notes.as_deref().map(str::trim).unwrap_or_default().to_string();
     if note.chars().count() < TRANSFER_NOTE_MIN_CHARS {
         return Err(transfer_refusal(
@@ -3519,7 +3622,7 @@ pub async fn evaluate_reorder(
 ) -> AppResult<Vec<InventoryReorderRecommendation>> {
     let mut sql = String::from(
         "SELECT a.id AS article_id, a.article_code, a.article_name,
-                w.id AS warehouse_id, w.code AS warehouse_code,
+                w.id AS warehouse_id, w.code AS warehouse_code, w.name AS warehouse_name,
                 a.min_stock, a.reorder_point, a.max_stock,
                 COALESCE(SUM(sb.on_hand_qty), 0.0) AS on_hand_qty,
                 COALESCE(SUM(sb.reserved_qty), 0.0) AS reserved_qty,
@@ -3527,7 +3630,29 @@ pub async fn evaluate_reorder(
          FROM articles a
          JOIN warehouses w ON w.is_active = 1
          LEFT JOIN stock_balances sb ON sb.article_id = a.id AND sb.warehouse_id = w.id
-         WHERE a.is_active = 1",
+         WHERE a.is_active = 1
+           -- A hors-stock article (L3-04) is bought for a work order, never reordered.
+           AND NOT EXISTS (SELECT 1 FROM lookup_values nslv
+                            WHERE nslv.id = a.stocking_type_value_id AND nslv.code = 'NON_STOCK')
+           AND (
+             -- An article is judged in the stores that stock it (a balance row), so an empty
+             -- extra store does not flag every article.
+             EXISTS (SELECT 1 FROM stock_balances x WHERE x.article_id = a.id AND x.warehouse_id = w.id)
+             -- A never-stocked article is judged once, in the main store (the active store that
+             -- holds the most stock lines, else the oldest active store).
+             OR (
+               NOT EXISTS (
+                 SELECT 1 FROM stock_balances y JOIN warehouses wy ON wy.id = y.warehouse_id AND wy.is_active = 1
+                 WHERE y.article_id = a.id
+               )
+               AND w.id = (
+                 SELECT wm.id FROM warehouses wm
+                 WHERE wm.is_active = 1
+                 ORDER BY (SELECT COUNT(*) FROM stock_balances z WHERE z.warehouse_id = wm.id) DESC, wm.id ASC
+                 LIMIT 1
+               )
+             )
+           )",
     );
     let mut values: Vec<sea_orm::Value> = Vec::new();
     if let Some(warehouse_id) = warehouse_id {
@@ -3535,7 +3660,7 @@ pub async fn evaluate_reorder(
         values.push(warehouse_id.into());
     }
     sql.push_str(
-        " GROUP BY a.id, a.article_code, a.article_name, w.id, w.code,
+        " GROUP BY a.id, a.article_code, a.article_name, w.id, w.code, w.name,
                   a.min_stock, a.reorder_point, a.max_stock
           ORDER BY a.article_code ASC, w.code ASC, a.id ASC",
     );
@@ -3577,6 +3702,7 @@ pub async fn evaluate_reorder(
             article_name: row.try_get("", "article_name")?,
             warehouse_id: row.try_get("", "warehouse_id")?,
             warehouse_code: row.try_get("", "warehouse_code")?,
+            warehouse_name: row.try_get("", "warehouse_name")?,
             min_stock,
             reorder_point,
             max_stock,
@@ -3642,7 +3768,7 @@ pub async fn evaluate_replenishment(
                 let lt_days: Option<i64> = row.try_get("", "lead_time_days").ok().flatten();
                 let cost = price.map(|p| p * r.suggested_reorder_qty);
                 let arrival = lt_days.map(|d| {
-                    let dt = chrono::Utc::now() + chrono::Duration::days(d);
+                    let dt = crate::clock::now() + chrono::Duration::days(d);
                     dt.format("%Y-%m-%dT%H:%M:%SZ").to_string()
                 });
                 (sid, sname, cost, arrival)
@@ -3656,6 +3782,7 @@ pub async fn evaluate_replenishment(
             article_name: r.article_name,
             warehouse_id: r.warehouse_id,
             warehouse_code: r.warehouse_code,
+            warehouse_name: r.warehouse_name,
             min_stock: r.min_stock,
             reorder_point: r.reorder_point,
             max_stock: r.max_stock,
@@ -4103,6 +4230,7 @@ pub async fn get_procurement_alerts(
             params: alert_params(&[
                 ("name", r.article_name.clone()),
                 ("warehouse_code", r.warehouse_code.clone()),
+                ("warehouse_name", r.warehouse_name.clone()),
                 ("available_qty", r.available_qty.to_string()),
                 ("threshold_qty", threshold.to_string()),
                 ("trigger", r.trigger_type.clone()),
@@ -4370,8 +4498,9 @@ pub async fn upsert_inventory_document_link(
     let valid_from = input
         .valid_from
         .clone()
-        .unwrap_or_else(|| chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string());
-    db.execute(Statement::from_sql_and_values(
+        .unwrap_or_else(|| crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string());
+    let inserted = db
+        .execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO inventory_document_links
             (entity_type, entity_id, document_ref, link_purpose, is_primary, valid_from, valid_to, created_by_id, created_at)
@@ -4388,16 +4517,7 @@ pub async fn upsert_inventory_document_link(
         ],
     ))
     .await?;
-    let id: i64 = db
-        .query_one(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT last_insert_rowid() AS id".to_string(),
-        ))
-        .await?
-        .ok_or_else(|| {
-            AppError::ValidationFailed(vec!["GATE_INV_SAVE_FAILED: Failed to create document link.".to_string()])
-        })?
-        .try_get("", "id")?;
+    let id = crate::db::inserted_id(&inserted)?;
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,

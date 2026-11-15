@@ -534,6 +534,7 @@ async fn a_close_received_while_a_permit_is_open_here_is_a_conflict() {
             id: permit.id,
             status: "cancelled".into(),
             expected_row_version: permit.row_version,
+            reason: Some("Essai : permis annulé".into()),
         },
         admin_id(&db).await,
     )

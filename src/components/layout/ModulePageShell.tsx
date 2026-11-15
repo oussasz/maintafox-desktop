@@ -12,6 +12,8 @@ export interface ModulePageShellProps {
   title?: ReactNode;
   /** Total number of records behind the page (rendered as a count badge next to the title). */
   count?: number | null;
+  /** What the count is, shown after it ("56 Ã©quipements") when the number alone is unclear. */
+  countLabel?: string;
   description?: ReactNode;
   actions?: ReactNode;
   /** Second row under header (search/filters) — uses `mfLayout.moduleFilterBar` */
@@ -35,6 +37,7 @@ export function ModulePageShell({
   icon: Icon,
   title,
   count,
+  countLabel,
   description,
   actions,
   filterBar,
@@ -53,6 +56,7 @@ export function ModulePageShell({
             {count != null ? (
               <Badge variant="secondary" className={mfLayout.moduleCount}>
                 {count}
+                {countLabel ? ` ${countLabel}` : null}
               </Badge>
             ) : null}
           </div>

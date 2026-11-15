@@ -10,7 +10,9 @@
 use tauri::{AppHandle, Manager, State};
 
 use crate::assets::{
-    bindings, criticality,
+    bindings,
+    characteristics::{self, SaveAssetCharacteristicsPayload},
+    criticality,
     decommission::{self, DecommissionAssetPayload},
     documents::{self, UpsertDocumentLinkPayload},
     health,
@@ -20,8 +22,9 @@ use crate::assets::{
     import::{self, ApplyPolicy},
     lifecycle::{self, RecordLifecycleEventPayload},
     maintenance_profile,
-    meters::{self, CreateAssetMeterPayload, RecordMeterReadingPayload},
+    meters::{self, CreateAssetMeterPayload, RecordMeterReadingPayload, SetMeterThresholdsPayload},
     photos, registry_metrics,
+    repeat_failures::{self, SaveCorrectiveActionPayload, SaveFiveWhyPayload},
     search::{self, AssetPickerSuggestFilters, AssetSearchFilters},
     spare_parts, taxonomy_reference, EquipmentTaxonomyCatalog,
 };
@@ -249,6 +252,66 @@ pub async fn move_asset_org_node(
     hierarchy::move_asset_org_node(&state.db, asset_id, new_org_node_id, expected_row_version, user.user_id).await
 }
 
+/// "Déplacer le composant" (L2-03): the component goes under another parent (or to stock), from
+/// an effective date. `eq.manage` where it is held: the component, its current parent and its new
+/// parent must each be in a site the person can act on (checked in the move's transaction).
+#[tauri::command]
+pub async fn move_asset_component(
+    payload: hierarchy::MoveAssetComponentPayload,
+    state: State<'_, AppState>,
+) -> AppResult<hierarchy::MoveAssetComponentResult> {
+    let user = require_session!(state);
+    let permission = crate::rbac::permissions::EQ_MANAGE;
+    let scope = crate::auth::scope::access_map_cached(&state.db, &state.permission_cache, user.user_id)
+        .await?
+        .scope_of(permission);
+    if !scope.is_anywhere() {
+        return Err(AppError::PermissionDenied(format!("Permission requise : {permission}")));
+    }
+    crate::entitlements::queries::enforce_capability_for_permission(&state.db, permission).await?;
+    crate::license::queries::enforce_permission_matrix(&state.db, user.user_id, permission).await?;
+    hierarchy::move_asset_component(&state.db, payload, &scope, user.user_id).await
+}
+
+/// Where the person holds the transfer right (`eq.manage`), refused when held nowhere, with the
+/// entitlement and licence checks of `require_permission!`.
+async fn transfer_scope(state: &AppState, user_id: i32) -> AppResult<crate::auth::scope::AccessScope> {
+    let permission = crate::assets::transfer::TRANSFER_PERMISSION;
+    let scope = crate::auth::scope::access_map_cached(&state.db, &state.permission_cache, user_id)
+        .await?
+        .scope_of(permission);
+    if !scope.is_anywhere() {
+        return Err(AppError::PermissionDenied(format!("Permission requise : {permission}")));
+    }
+    crate::entitlements::queries::enforce_capability_for_permission(&state.db, permission).await?;
+    crate::license::queries::enforce_permission_matrix(&state.db, user_id, permission).await?;
+    Ok(scope)
+}
+
+/// "Transférer" (L2-04), before confirming: what stays attached to the asset and the nodes the
+/// person may transfer it to (`eq.manage` where the asset is now).
+#[tauri::command]
+pub async fn preview_asset_transfer(
+    asset_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<crate::assets::transfer::AssetTransferPreview> {
+    let user = require_session!(state);
+    let scope = transfer_scope(&state, user.user_id).await?;
+    crate::assets::transfer::preview_asset_transfer(&state.db, asset_id, &scope).await
+}
+
+/// "Transférer" (L2-04): moves the asset to another org node with reason and effective date.
+/// `eq.manage` on both the source and the destination node, checked in the transfer's transaction.
+#[tauri::command]
+pub async fn transfer_asset(
+    payload: crate::assets::transfer::TransferAssetPayload,
+    state: State<'_, AppState>,
+) -> AppResult<crate::assets::transfer::TransferAssetResult> {
+    let user = require_session!(state);
+    let scope = transfer_scope(&state, user.user_id).await?;
+    crate::assets::transfer::transfer_asset(&state.db, payload, &scope, user.user_id).await
+}
+
 // ─── Lifecycle events (eq.view / eq.manage) ───────────────────────────────────
 
 #[tauri::command]
@@ -319,6 +382,9 @@ pub async fn create_asset_meter(
 #[tauri::command]
 pub async fn record_meter_reading(
     payload: RecordMeterReadingPayload,
+    confirm_jump: Option<bool>,
+    // `replacement` when a new physical meter was fitted (UX L2-25); `None` = normal reading.
+    reading_kind: Option<meters::MeterReadingKind>,
     state: State<'_, AppState>,
 ) -> AppResult<meters::MeterReading> {
     let user = require_session!(state);
@@ -328,7 +394,164 @@ pub async fn record_meter_reading(
         crate::rbac::permissions::EQ_MANAGE,
         PermissionScope::Global
     );
-    meters::record_meter_reading(&state.db, payload, user.user_id).await
+    meters::record_meter_reading_of_kind_checked(
+        &state.db,
+        payload,
+        reading_kind,
+        confirm_jump.unwrap_or(false),
+        user.user_id,
+    )
+    .await
+}
+
+/// Set or clear the alarm thresholds of a meter (L2-08): a reading that crosses one raises an
+/// intervention request.
+#[tauri::command]
+pub async fn set_meter_thresholds(
+    payload: SetMeterThresholdsPayload,
+    state: State<'_, AppState>,
+) -> AppResult<meters::AssetMeter> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::EQ_MANAGE,
+        PermissionScope::Global
+    );
+    meters::set_meter_thresholds(&state.db, payload, user.user_id).await
+}
+
+// ─── Technical characteristics (eq.view / eq.manage, L2-07) ──────────────────
+
+#[tauri::command]
+pub async fn get_asset_characteristics(
+    asset_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<characteristics::AssetCharacteristicSheet> {
+    let user = require_session!(state);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_VIEW, PermissionScope::Global);
+    characteristics::get_asset_characteristics(&state.db, asset_id).await
+}
+
+#[tauri::command]
+pub async fn save_asset_characteristics(
+    payload: SaveAssetCharacteristicsPayload,
+    state: State<'_, AppState>,
+) -> AppResult<characteristics::AssetCharacteristicSheet> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::EQ_MANAGE,
+        PermissionScope::Global
+    );
+    characteristics::save_asset_characteristics(&state.db, payload, user.user_id).await
+}
+
+// ─── Repeat failures (eq.view / eq.manage, L2-09) ─────────────────────────────
+
+#[tauri::command]
+pub async fn list_repeat_failure_assets(
+    state: State<'_, AppState>,
+) -> AppResult<repeat_failures::RepeatFailureOverview> {
+    let user = require_session!(state);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_VIEW, PermissionScope::Global);
+    repeat_failures::list_repeat_failure_assets(&state.db).await
+}
+
+#[tauri::command]
+pub async fn get_asset_repeat_failure_status(
+    asset_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<repeat_failures::AssetRepeatFailureStatus> {
+    let user = require_session!(state);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_VIEW, PermissionScope::Global);
+    repeat_failures::asset_repeat_failure_status(&state.db, asset_id).await
+}
+
+#[tauri::command]
+pub async fn list_asset_five_whys(
+    asset_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<repeat_failures::FiveWhyAnalysis>> {
+    let user = require_session!(state);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_VIEW, PermissionScope::Global);
+    repeat_failures::list_five_whys(&state.db, asset_id).await
+}
+
+#[tauri::command]
+pub async fn save_asset_five_why(
+    payload: SaveFiveWhyPayload,
+    state: State<'_, AppState>,
+) -> AppResult<repeat_failures::FiveWhyAnalysis> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::EQ_MANAGE,
+        PermissionScope::Global
+    );
+    repeat_failures::save_five_why(&state.db, payload, user.user_id).await
+}
+
+#[tauri::command]
+pub async fn list_asset_corrective_actions(
+    asset_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<repeat_failures::CorrectiveAction>> {
+    let user = require_session!(state);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_VIEW, PermissionScope::Global);
+    repeat_failures::list_corrective_actions(&state.db, asset_id).await
+}
+
+#[tauri::command]
+pub async fn save_asset_corrective_action(
+    payload: SaveCorrectiveActionPayload,
+    state: State<'_, AppState>,
+) -> AppResult<repeat_failures::CorrectiveAction> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::EQ_MANAGE,
+        PermissionScope::Global
+    );
+    repeat_failures::save_corrective_action(&state.db, payload, user.user_id).await
+}
+
+/// Warning a reading would raise (far above the usual use), asked before saving it.
+#[tauri::command]
+pub async fn assess_meter_reading(
+    meter_id: i64,
+    reading_value: f64,
+    reading_at: Option<String>,
+    state: State<'_, AppState>,
+) -> AppResult<Option<meters::MeterReadingWarning>> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::EQ_MANAGE,
+        PermissionScope::Global
+    );
+    meters::assess_meter_reading(&state.db, meter_id, reading_value, reading_at).await
+}
+
+/// Cancel the latest reading of a meter with a reason (the history keeps it, marked cancelled).
+#[tauri::command]
+pub async fn cancel_meter_reading(
+    reading_id: i64,
+    reason: String,
+    state: State<'_, AppState>,
+) -> AppResult<meters::MeterReading> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::EQ_MANAGE,
+        PermissionScope::Global
+    );
+    meters::cancel_meter_reading(&state.db, reading_id, &reason, user.user_id).await
 }
 
 #[tauri::command]
@@ -711,4 +934,65 @@ pub async fn assess_asset_criticality(
     let (assessment, asset) =
         criticality::assess_asset_criticality(&state.db, payload, i64::from(user.user_id)).await?;
     Ok(AssessCriticalityResult { assessment, asset })
+}
+
+// ─── Isolation points (eq.view / eq.manage, L4-12) ───────────────────────────
+
+/// The isolation points of an equipment (deactivated ones too when asked).
+#[tauri::command]
+pub async fn list_equipment_isolation_points(
+    equipment_id: i64,
+    include_inactive: Option<bool>,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::assets::isolation_points::EquipmentIsolationPoint>> {
+    let user = require_session!(state);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_VIEW, PermissionScope::Global);
+    crate::assets::isolation_points::list_equipment_isolation_points(
+        &state.db,
+        equipment_id,
+        include_inactive.unwrap_or(false),
+    )
+    .await
+}
+
+/// Choices of the isolation-point form: the energy types and the plant's isolation methods
+/// (Données de référence), read with the equipment view right.
+#[tauri::command]
+pub async fn list_equipment_isolation_point_options(
+    state: State<'_, AppState>,
+) -> AppResult<crate::permit::energy_reference::IsolationOptions> {
+    let user = require_session!(state);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_VIEW, PermissionScope::Global);
+    crate::permit::energy_reference::list_isolation_options(&state.db).await
+}
+
+#[tauri::command]
+pub async fn upsert_equipment_isolation_point(
+    input: crate::assets::isolation_points::EquipmentIsolationPointUpsertInput,
+    state: State<'_, AppState>,
+) -> AppResult<crate::assets::isolation_points::EquipmentIsolationPoint> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::EQ_MANAGE,
+        PermissionScope::Global
+    );
+    crate::assets::isolation_points::upsert_equipment_isolation_point(&state.db, input).await
+}
+
+/// Deactivates or reactivates a point (never deleted).
+#[tauri::command]
+pub async fn set_equipment_isolation_point_active(
+    input: crate::assets::isolation_points::EquipmentIsolationPointActiveInput,
+    state: State<'_, AppState>,
+) -> AppResult<crate::assets::isolation_points::EquipmentIsolationPoint> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::EQ_MANAGE,
+        PermissionScope::Global
+    );
+    crate::assets::isolation_points::set_equipment_isolation_point_active(&state.db, input).await
 }

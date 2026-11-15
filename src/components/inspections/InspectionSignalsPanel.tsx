@@ -6,6 +6,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { Loader2, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useNavigate } from "react-router-dom";
 
 import { LinkedEntityBadge } from "@/components/common/LinkedEntityBadge";
 import { DataTable } from "@/components/data/DataTable";
@@ -18,6 +19,7 @@ import {
   listInspectionReliabilitySignals,
   refreshInspectionReliabilitySignals,
 } from "@/services/inspection-service";
+import { pushAppToast } from "@/store/app-toast-store";
 import type { InspectionReliabilitySignal } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
@@ -28,6 +30,7 @@ export function InspectionSignalsPanel({ refreshKey }: { refreshKey: number }) {
   const { t } = useTranslation("inspections");
   const { can } = usePermissions();
   const { formatDate, formatNumber } = useFormatters();
+  const navigate = useNavigate();
   const [signals, setSignals] = useState<InspectionReliabilitySignal[]>([]);
   const [windowDays, setWindowDays] = useState("30");
   const [loading, setLoading] = useState(true);
@@ -62,12 +65,26 @@ export function InspectionSignalsPanel({ refreshKey }: { refreshKey: number }) {
     try {
       await refreshInspectionReliabilitySignals({ window_days: days });
       await load();
+      pushAppToast({
+        title: t("signals.refreshed", { days }),
+        variant: "success",
+      });
     } catch {
       // Reported by the global IPC toast.
     } finally {
       setBusy(false);
     }
   };
+
+  /** The most recent window end of the stored signals: when they were last calculated. */
+  const lastCalculated = useMemo(
+    () =>
+      signals.reduce<string | null>(
+        (m, x) => (m == null || x.period_end > m ? x.period_end : m),
+        null,
+      ),
+    [signals],
+  );
 
   const columns = useMemo<ColumnDef<InspectionReliabilitySignal>[]>(
     () => [
@@ -119,6 +136,22 @@ export function InspectionSignalsPanel({ refreshKey }: { refreshKey: number }) {
   return (
     <div className="space-y-4" data-testid="inspection-signals">
       <p className="text-sm text-text-muted">{t("signals.description")}</p>
+      <p className="text-xs text-text-muted" data-testid="signals-calculated-at">
+        {lastCalculated
+          ? t("signals.calculatedAt", { date: formatDate(lastCalculated) })
+          : t("signals.neverCalculated")}
+      </p>
+      {can(P.RAM_VIEW) ? (
+        <p className="text-xs">
+          <Button
+            variant="link"
+            className="h-auto min-h-[36px] p-0 text-xs"
+            onClick={() => void navigate("/reliability")}
+          >
+            {t("signals.openRams")}
+          </Button>
+        </p>
+      ) : null}
       {can(P.INS_ADMIN) ? (
         <div className="flex flex-wrap items-end gap-3">
           <div className="space-y-1">

@@ -44,8 +44,10 @@ const CORE: ModuleKey[] = [
   "reference",
 ];
 
-const PROFESSIONAL_EXTRA: ModuleKey[] = ["planning", "pm", "permits", "inspections"];
-const ENTERPRISE_EXTRA: ModuleKey[] = ["training", "reports", "rams", "finance", "sync", "erp"];
+// Training sits with permits: a permit checks each role's certifications, so the edition that
+// has permits must let people record and renew them (owner decision 2026-11-02).
+const PROFESSIONAL_EXTRA: ModuleKey[] = ["planning", "pm", "permits", "inspections", "training"];
+const ENTERPRISE_EXTRA: ModuleKey[] = ["reports", "rams", "finance", "sync", "erp"];
 
 export function isSystemEditionId(value: unknown): value is EditionId {
   if (typeof value !== "string") return false;

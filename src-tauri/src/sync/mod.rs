@@ -22,6 +22,8 @@ pub(crate) mod row_layout;
 pub mod row_spec;
 pub mod row_state;
 pub mod seeded_identity;
+pub mod signing;
+pub mod signing_rules;
 pub mod transport;
 pub mod username_clash;
 pub mod waiting;
@@ -43,9 +45,15 @@ mod history_ids_tests;
 #[cfg(test)]
 mod hook_round_trip_tests;
 #[cfg(test)]
+mod mobile_proof_tests;
+#[cfg(test)]
 mod registry_tests;
 #[cfg(test)]
 mod row_sync_tests;
+#[cfg(test)]
+mod signing_capture_tests;
+#[cfg(test)]
+mod signing_rules_tests;
 #[cfg(test)]
 pub(crate) mod test_support;
 #[cfg(test)]

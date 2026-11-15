@@ -6,6 +6,9 @@ use sea_orm::{ConnectionTrait, DbBackend, Statement, TransactionTrait};
 
 use crate::auth::rbac::PermissionScope;
 use crate::errors::AppResult;
+use crate::qualification::bulk_validation::{
+    self, PendingQualificationList, QualificationValidationItem, QualificationValidationResult,
+};
 use crate::qualification::domain::{
     CertificationExpiryDrilldownRow, CertificationType, CertificationTypeUpsertInput, CrewPermitSkillGapInput,
     CrewPermitSkillGapResult, DocumentAcknowledgement, DocumentAcknowledgementListFilter,
@@ -68,7 +71,7 @@ pub(crate) async fn first_held_permission<'p>(
 /// Training or personnel view: who holds what.
 pub(crate) const PEOPLE_VIEW: &[&str] = &[crate::rbac::permissions::TRN_VIEW, crate::rbac::permissions::PER_VIEW];
 
-async fn linked_personnel_id(state: &State<'_, AppState>, user_id: i32) -> AppResult<Option<i64>> {
+pub(crate) async fn linked_personnel_id(state: &State<'_, AppState>, user_id: i32) -> AppResult<Option<i64>> {
     let row = state
         .db
         .query_one(Statement::from_sql_and_values(
@@ -169,6 +172,65 @@ pub async fn upsert_personnel_certification(
         require_step_up!(state);
     }
     queries::upsert_personnel_certification(&state.db, input).await
+}
+
+/// The validation list: unvalidated skills and certificates waiting for verification (names
+/// people, so it needs the training view right).
+#[tauri::command]
+pub async fn list_pending_qualifications(state: State<'_, AppState>) -> AppResult<PendingQualificationList> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::TRN_VIEW,
+        PermissionScope::Global
+    );
+    let lines = bulk_validation::list_pending_qualifications(&state.db).await?;
+    let validator_linked = crate::commands::personnel::linked_personnel_id_in(&state.db, user.user_id)
+        .await?
+        .is_some();
+    Ok(PendingQualificationList {
+        lines,
+        validator_linked,
+    })
+}
+
+/// Validates a selection from the validation list, line by line (each audited). Validating is a
+/// certification act (`trn.certify`); validating skills also records them on the personnel
+/// sheet (`per.manage`, as on the sheet), and verifying a certificate needs a recent step-up.
+#[tauri::command]
+pub async fn validate_pending_qualifications(
+    items: Vec<QualificationValidationItem>,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<QualificationValidationResult>> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::TRN_CERTIFY,
+        PermissionScope::Global
+    );
+    if items.iter().any(|i| i.kind == bulk_validation::KIND_SKILL) {
+        require_permission!(
+            state,
+            &user,
+            crate::rbac::permissions::PER_MANAGE,
+            PermissionScope::Global
+        );
+    }
+    if items.iter().any(|i| i.kind == bulk_validation::KIND_CERTIFICATION) {
+        require_step_up!(state);
+    }
+    let validator_personnel = crate::commands::personnel::linked_personnel_id_in(&state.db, user.user_id).await?;
+    bulk_validation::validate_qualifications(
+        &state.db,
+        &items,
+        bulk_validation::Validator {
+            user_id: i64::from(user.user_id),
+            personnel_id: validator_personnel,
+        },
+    )
+    .await
 }
 
 #[tauri::command]
@@ -488,7 +550,10 @@ pub async fn check_person_for_work_order(
 ) -> AppResult<PersonQualificationCheck> {
     let user = require_session!(state);
     require_permission!(state, &user, crate::rbac::permissions::OT_VIEW, PermissionScope::Global);
-    require_any_permission(&state, &user, PEOPLE_VIEW).await?;
+    // Anyone may check himself (a technician booking his own hours); others need a people view right.
+    if linked_personnel_id(&state, user.user_id).await? != Some(personnel_id) {
+        require_any_permission(&state, &user, PEOPLE_VIEW).await?;
+    }
     gate::check_person_for_work_order(&state.db, personnel_id, wo_id).await
 }
 

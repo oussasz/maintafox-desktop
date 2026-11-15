@@ -281,8 +281,8 @@ async fn retire_critical_variance<C: ConnectionTrait + TransactionTrait>(db: &C)
             [
                 crate::sync::identity::seeded_entity_sync_id("settings_retirement", RETIRED_SETTING).into(),
                 RETIRED_SETTING.into(),
-                "Retired (migration 259): a count variance is critical when it is above the four-eyes tolerance \
-                 (inventory.count_four_eyes_value_threshold / inventory.count_four_eyes_percent_threshold)"
+                "Paramètre retiré : un écart d’inventaire est désormais critique au-delà de la tolérance du \
+                 double contrôle (seuil en valeur ou en pourcentage, Paramètres › Stock)"
                     .into(),
                 crate::settings::sha256_hex(&value).into(),
                 now.into(),

@@ -31,9 +31,6 @@ const WP_STATUSES: &[&str] = &[
 /// open-permits report and the "permit expiring / expired" notification checks share it.
 pub const OPEN_PERMIT_STATUSES_SQL: &str = "('issued', 'active', 'suspended', 'revalidation_required')";
 
-/// Statuses after which a permit no longer protects work (no further lifecycle edits).
-const WP_TERMINAL_STATUSES: &[&str] = &["closed", "handed_back", "cancelled", "expired"];
-
 /// Statuses in which isolation points may be defined, applied and verified. An `active`
 /// permit must be suspended first so new energy sources are never added under live work.
 const ISOLATION_SETUP_STATUSES: &[&str] = &[
@@ -79,20 +76,23 @@ const WORK_PERMIT_SELECT: &str = "SELECT wp.id, wp.entity_sync_id, wp.code, wp.l
      COALESCE(wp.self_approved, 0) AS self_approved, \
      COALESCE(ucr.display_name, ucr.username) AS created_by_name, \
      COALESCE(usu.display_name, usu.username) AS submitted_by_name, \
-     COALESCE(uap.display_name, uap.username) AS approved_by_name \
+     COALESCE(uap.display_name, uap.username) AS approved_by_name, \
+     wp.cancel_reason, wp.cancelled_by_id, wp.cancelled_at, \
+     COALESCE(ucn.display_name, ucn.username) AS cancelled_by_name \
      FROM work_permits wp \
      LEFT JOIN permit_types pt ON pt.id = wp.permit_type_id \
      LEFT JOIN equipment e ON e.id = wp.asset_id \
      LEFT JOIN work_orders wo ON wo.id = wp.linked_work_order_id \
      LEFT JOIN user_accounts ucr ON ucr.id = wp.created_by_id \
      LEFT JOIN user_accounts usu ON usu.id = wp.submitted_by_id \
-     LEFT JOIN user_accounts uap ON uap.id = wp.approved_by_id";
+     LEFT JOIN user_accounts uap ON uap.id = wp.approved_by_id \
+     LEFT JOIN user_accounts ucn ON ucn.id = wp.cancelled_by_id";
 
 const PERMIT_ISOLATION_SELECT: &str = "SELECT pi.id, pi.entity_sync_id, pi.permit_id, pi.isolation_point, \
      pi.energy_type, pi.isolation_method, pi.energy_type_id, et.code AS energy_type_code, \
      et.label AS energy_type_label, pi.isolation_method_id, im.label AS isolation_method_label, \
      pi.mapping_review_required, pi.lock_number, pi.applied_by_id, pi.verified_by_id, \
-     pi.applied_at, pi.verified_at, pi.removal_verified_at, pi.removal_verified_by_id, pi.row_version, \
+     pi.applied_at, pi.verified_at, pi.zero_energy_note, pi.removal_verified_at, pi.removal_verified_by_id, pi.row_version, \
      pi.cancelled_at, pi.cancelled_by_id, \
      COALESCE(ua.display_name, ua.username) AS applied_by_name, \
      COALESCE(uv.display_name, uv.username) AS verified_by_name, \
@@ -156,12 +156,12 @@ const fn i64_to_bool(v: i64) -> bool {
 }
 
 fn now_ts() -> String {
-    Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
+    crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
 
 /// Parses an RFC 3339 timestamp and returns it in the canonical stored form
 /// (`%Y-%m-%dT%H:%M:%SZ`, UTC) so lexical comparisons against `now_ts()` are valid.
-fn normalize_ts(field: &str, value: &str) -> AppResult<String> {
+pub(crate) fn normalize_ts(field: &str, value: &str) -> AppResult<String> {
     chrono::DateTime::parse_from_rfc3339(value.trim())
         .map(|dt| dt.with_timezone(&Utc).format("%Y-%m-%dT%H:%M:%SZ").to_string())
         .map_err(|_| {
@@ -212,7 +212,7 @@ async fn checked_expiry(db: &impl ConnectionTrait, permit_type_id: i64, value: O
     if let Some(hours) = max_hours.filter(|h| *h > 0.0) {
         // Whole seconds: the stored form has no fractions.
         #[allow(clippy::cast_possible_truncation)]
-        let limit = (Utc::now() + chrono::Duration::seconds((hours * 3600.0).round() as i64))
+        let limit = (crate::clock::now() + chrono::Duration::seconds((hours * 3600.0).round() as i64))
             .format("%Y-%m-%dT%H:%M:%SZ")
             .to_string();
         if ts > limit {
@@ -349,6 +349,18 @@ fn map_work_permit(row: &sea_orm::QueryResult) -> AppResult<WorkPermit> {
             row.try_get::<i64>("", "self_approved")
                 .map_err(|e| decode_err("self_approved", e))?,
         ),
+        cancel_reason: row
+            .try_get("", "cancel_reason")
+            .map_err(|e| decode_err("cancel_reason", e))?,
+        cancelled_by_id: row
+            .try_get("", "cancelled_by_id")
+            .map_err(|e| decode_err("cancelled_by_id", e))?,
+        cancelled_by_name: row
+            .try_get("", "cancelled_by_name")
+            .map_err(|e| decode_err("cancelled_by_name", e))?,
+        cancelled_at: row
+            .try_get("", "cancelled_at")
+            .map_err(|e| decode_err("cancelled_at", e))?,
     })
 }
 
@@ -382,6 +394,7 @@ fn map_permit_isolation(row: &sea_orm::QueryResult) -> AppResult<PermitIsolation
         verified_by_id: row.try_get("", "verified_by_id").ok(),
         applied_at: row.try_get("", "applied_at").ok(),
         verified_at: row.try_get("", "verified_at").ok(),
+        zero_energy_note: row.try_get("", "zero_energy_note").ok().flatten(),
         removal_verified_at: row.try_get("", "removal_verified_at").ok(),
         removal_verified_by_id: row.try_get("", "removal_verified_by_id").ok(),
         row_version: row
@@ -763,12 +776,18 @@ pub(crate) async fn activation_ready(db: &impl ConnectionTrait, wp: &WorkPermit)
             ));
         }
     }
+    // L4-04 (CMMS Advisor 2026-11-11): a permit needing a gas test is used (activated, reinstated,
+    // its work started or resumed) only on a valid reading: within the limits and younger than the
+    // re-test interval; a break longer than the interval needs a new test.
+    crate::permit::safety_content::gas_ready(db, wp.id).await?;
     Ok(())
 }
 
 /// Close gate (P0-8): every isolation must have its lock removal verified (a cancelled planned line
 /// was never fitted: nothing to remove).
 async fn close_ready(db: &impl ConnectionTrait, permit_id: i64) -> AppResult<()> {
+    // Group lockout (L4-18): every worker's padlock is off the box.
+    crate::permit::workers::ensure_no_personal_lock_on(db, permit_id).await?;
     let pending = count_isolations_where(
         db,
         permit_id,
@@ -1220,7 +1239,7 @@ async fn guard_change_clock(db: &impl ConnectionTrait, current: &PermitType, clo
         return Ok(());
     };
     // `now_ts()` has whole seconds: the record written would be `now` truncated.
-    let now = crate::settings::site::instant(&now_ts()).unwrap_or_else(Utc::now);
+    let now = crate::settings::site::instant(&now_ts()).unwrap_or_else(crate::clock::now);
     if last >= now {
         return Err(crate::errors::org_validation_failed(
             clock.code,
@@ -1382,41 +1401,35 @@ async fn upsert_permit_type_in(
     }
 
     let sync_id = Uuid::new_v4().to_string();
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO permit_types (entity_sync_id, code, name, description, \
+    let insert_result = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO permit_types (entity_sync_id, code, name, description, \
          requires_hse_approval, requires_operations_approval, requires_atmospheric_test, \
          max_duration_hours, mandatory_ppe_ids_json, mandatory_control_rules_json, \
          requires_energy_isolation, requires_three_person_removal, three_person_changed_by_id, \
          three_person_changed_at, three_person_change_reason, row_version) \
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
-        [
-            sync_id.into(),
-            input.code.into(),
-            input.name.into(),
-            desc.into(),
-            i64::from(input.requires_hse_approval).into(),
-            i64::from(input.requires_operations_approval).into(),
-            i64::from(input.requires_atmospheric_test).into(),
-            opt_f64(input.max_duration_hours),
-            ppe.into(),
-            rules.into(),
-            i64::from(input.requires_energy_isolation.unwrap_or(false)).into(),
-            i64::from(input.requires_three_person_removal.unwrap_or(false)).into(),
-            trace.by.into(),
-            trace.at.clone().into(),
-            trace.reason.clone().into(),
-        ],
-    ))
-    .await?;
-    let id_row = db
-        .query_one(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT last_insert_rowid() AS id".to_string(),
+            [
+                sync_id.into(),
+                input.code.into(),
+                input.name.into(),
+                desc.into(),
+                i64::from(input.requires_hse_approval).into(),
+                i64::from(input.requires_operations_approval).into(),
+                i64::from(input.requires_atmospheric_test).into(),
+                opt_f64(input.max_duration_hours),
+                ppe.into(),
+                rules.into(),
+                i64::from(input.requires_energy_isolation.unwrap_or(false)).into(),
+                i64::from(input.requires_three_person_removal.unwrap_or(false)).into(),
+                trace.by.into(),
+                trace.at.clone().into(),
+                trace.reason.clone().into(),
+            ],
         ))
-        .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("last_insert_rowid")))?;
-    let new_id: i64 = id_row.try_get("", "id").map_err(|e| decode_err("id", e))?;
+        .await?;
+    let new_id = crate::db::inserted_id(&insert_result)?;
     let created = get_permit_type(db, new_id).await?.expect("row");
     if let Some(reason) = three_person_reason {
         audit_three_person_change(db, &created, None, reason, writer).await?;
@@ -1709,32 +1722,78 @@ pub async fn create_work_permit(
     Ok(out)
 }
 
-async fn create_work_permit_in(
+/// [`create_work_permit`] in the caller's transaction (also the permit drafts of a dépannage,
+/// `wo::depannage`, written with the dépannage itself). The rights are the caller's to check.
+pub(crate) async fn create_work_permit_in(
     db: &impl ConnectionTrait,
     input: WorkPermitCreateInput,
     actor_id: i64,
 ) -> AppResult<WorkPermit> {
+    let checked = check_work_permit_create(db, &input).await?;
+    insert_work_permit(db, &input, checked, actor_id).await
+}
+
+/// What the checks of a new permit settled: its equipment, its org node and its expiry.
+#[derive(Debug, Clone)]
+pub(crate) struct CheckedPermitCreate {
+    asset_id: i64,
+    entity_id: i64,
+    expires_at: String,
+}
+
+/// The rules of a new permit, before anything is written: the type exists, the equipment and node
+/// (and the linked work order's equipment) agree, the expiry is accepted for the type, and the
+/// linked work order has no open permit of that type. A refusal here writes nothing.
+pub(crate) async fn check_work_permit_create(
+    db: &impl ConnectionTrait,
+    input: &WorkPermitCreateInput,
+) -> AppResult<CheckedPermitCreate> {
     // The type must exist (NotFound otherwise).
     let _ = permit_type_requires_energy_isolation(db, input.permit_type_id).await?;
-    let (asset_id, entity_id) = resolve_permit_scope(db, &input).await?;
+    let (asset_id, entity_id) = resolve_permit_scope(db, input).await?;
     ensure_wo_asset_aligned(db, input.linked_work_order_id, asset_id).await?;
-    let expires_at = Some(checked_expiry(db, input.permit_type_id, input.expires_at.as_deref()).await?);
+    let expires_at = checked_expiry(db, input.permit_type_id, input.expires_at.as_deref()).await?;
 
+    // A work order has at most one open permit of each type: the plant's rules can require several
+    // types of it, and its start needs a live permit of each (`permit::required_set`, CMMS Advisor
+    // 2026-11-04); a second open permit of the same type is refused.
     if let Some(wo_id) = input.linked_work_order_id {
-        if let Some(existing) = get_work_permit_linked_to_work_order(db, wo_id).await? {
-            if !WP_TERMINAL_STATUSES.contains(&existing.status.as_str()) {
-                return Err(refused(
-                    "PERMIT_WO_ALREADY_HAS_OPEN",
-                    format!("Work order already has an open permit ({}).", existing.code),
-                    &[("permit", existing.code.clone())],
-                ));
-            }
+        let open = list_live_permits_linked_to_work_order(db, wo_id).await?;
+        if let Some(existing) = open.iter().find(|p| p.permit_type_id == input.permit_type_id) {
+            return Err(refused(
+                "PERMIT_WO_ALREADY_HAS_OPEN",
+                format!(
+                    "Work order already has an open permit of this type ({}).",
+                    existing.code
+                ),
+                &[("permit", existing.code.clone())],
+            ));
         }
     }
+    Ok(CheckedPermitCreate {
+        asset_id,
+        entity_id,
+        expires_at,
+    })
+}
 
+/// Writes the permit draft [`check_work_permit_create`] accepted. Any error here is a failure of
+/// the write itself (the caller's transaction must not be committed), never a refusal.
+pub(crate) async fn insert_work_permit(
+    db: &impl ConnectionTrait,
+    input: &WorkPermitCreateInput,
+    checked: CheckedPermitCreate,
+    actor_id: i64,
+) -> AppResult<WorkPermit> {
+    let CheckedPermitCreate {
+        asset_id,
+        entity_id,
+        expires_at,
+    } = checked;
+    let expires_at = Some(expires_at);
     let entity_sync_id = Uuid::new_v4().to_string();
     let requested = now_ts();
-    db.execute(Statement::from_sql_and_values(
+    let insert_result = db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO work_permits (entity_sync_id, code, linked_work_order_id, permit_type_id,          asset_id, entity_id, status, requested_at, expires_at, row_version, created_by_id)          VALUES (?, '', ?, ?, ?, ?, 'draft', ?, ?, 1, ?)",
         [
@@ -1749,14 +1808,7 @@ async fn create_work_permit_in(
         ],
     ))
     .await?;
-    let id_row = db
-        .query_one(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT last_insert_rowid() AS id".to_string(),
-        ))
-        .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("last_insert_rowid")))?;
-    let new_id: i64 = id_row.try_get("", "id").map_err(|e| decode_err("id", e))?;
+    let new_id = crate::db::inserted_id(&insert_result)?;
     // `PTW-<year>-<device>-NNNNNN`: unique across devices (`sync::device_code`).
     let code = crate::sync::code_clash::WORK_PERMITS.next_number(db).await?;
     db.execute(Statement::from_sql_and_values(
@@ -2041,13 +2093,19 @@ async fn update_work_permit_in(
     };
     let asset_id = target.asset_id;
     let linked = target.linked_work_order_id;
-    // Same rule as creation: a work order has at most one open permit.
+    // Same rule as creation: a work order has at most one open permit of each type.
     if let Some(wo_id) = linked.filter(|w| Some(*w) != current.linked_work_order_id) {
         let others = list_live_permits_linked_to_work_order(db, wo_id).await?;
-        if let Some(existing) = others.iter().find(|p| p.id != current.id) {
+        if let Some(existing) = others
+            .iter()
+            .find(|p| p.id != current.id && p.permit_type_id == current.permit_type_id)
+        {
             return Err(refused(
                 "PERMIT_WO_ALREADY_HAS_OPEN",
-                format!("Work order already has an open permit ({}).", existing.code),
+                format!(
+                    "Work order already has an open permit of this type ({}).",
+                    existing.code
+                ),
                 &[("permit", existing.code.clone())],
             ));
         }
@@ -2097,6 +2155,10 @@ async fn update_work_permit_in(
     if back_to_draft {
         clear_review_record(db, input.id).await?;
     }
+    // The HSE approval and the gas tests judged the former equipment or site (review of L4-03/04).
+    if target.equipment_changes || target.site_changes {
+        reset_safety_record(db, input.id).await?;
+    }
     let updated = require_work_permit(db, input.id).await?;
     if target.equipment_changes || target.site_changes {
         audit_equipment_change(db, &current, &updated, actor_id).await?;
@@ -2106,12 +2168,25 @@ async fn update_work_permit_in(
 
 /// A permit back to draft is submitted again (four-eyes, migration 244): who submitted it and any
 /// approval are cleared, in the transaction that sends it back.
-async fn clear_review_record(db: &impl ConnectionTrait, permit_id: i64) -> AppResult<()> {
+pub(crate) async fn clear_review_record(db: &impl ConnectionTrait, permit_id: i64) -> AppResult<()> {
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE work_permits SET submitted_by_id = NULL, submitted_at = NULL, approved_by_id = NULL, \
          approved_at = NULL, self_approved = NULL WHERE id = ? AND status = 'draft'",
         [permit_id.into()],
+    ))
+    .await?;
+    reset_safety_record(db, permit_id).await
+}
+
+/// The permit's HSE approval is cleared and its gas tests taken until now stop counting
+/// (`safety_reset_at`, `permit::safety_content::safety_content_since`): after a return to draft or a
+/// change of equipment or site, they judged another permit. The readings stay as history.
+pub(crate) async fn reset_safety_record(db: &impl ConnectionTrait, permit_id: i64) -> AppResult<()> {
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE work_permits SET hse_approved_by_id = NULL, hse_approved_at = NULL, hse_approval_note = NULL, hse_self_approved = NULL, safety_reset_at = ? WHERE id = ?",
+        [now_ts().into(), permit_id.into()],
     ))
     .await?;
     Ok(())
@@ -2189,6 +2264,15 @@ async fn four_eyes_approval(db: &impl ConnectionTrait, permit: &WorkPermit, acto
     })
 }
 
+/// Whether `actor_id` may approve the permit now under four-eyes: the same rule as the approval
+/// itself ([`four_eyes_approval`]), read only (nothing is written). The screen uses it to grey the
+/// approve step with the server's own reason instead of letting the click fail (L4-14); the
+/// approval is still checked again when it is made.
+pub async fn check_work_permit_approval(db: &DatabaseConnection, permit_id: i64, actor_id: i64) -> AppResult<()> {
+    let permit = require_work_permit(db, permit_id).await?;
+    four_eyes_approval(db, &permit, actor_id).await.map(|_| ())
+}
+
 /// `actor_id` is the session user; it is recorded as the reinstating person when a
 /// suspended permit returns to `active`.
 pub async fn set_work_permit_status(
@@ -2218,6 +2302,21 @@ async fn set_work_permit_status_in(
     let from = current.status.as_str();
     let to = input.status.as_str();
     assert_transition_set_status(from, to)?;
+
+    // L4-15: a permit, possibly with padlocks still on, is never cancelled without a reason; the
+    // reason, who and when are kept on the permit (migration 272) and audited.
+    let cancel_reason = if to == "cancelled" {
+        match input.reason.as_deref().map(str::trim) {
+            Some(reason) if !reason.is_empty() => Some(reason.to_string()),
+            _ => {
+                return Err(AppError::ValidationFailed(vec![
+                    "GATE_PERMIT_CANCEL_REASON_REQUIRED: Cancellation reason is required.".into(),
+                ]))
+            }
+        }
+    } else {
+        None
+    };
 
     // AU-03 (owner decision D5): a permit is neither closed nor cancelled while its work order is
     // being executed: the work is paused or completed first (a suspension puts it on hold itself).
@@ -2254,6 +2353,12 @@ async fn set_work_permit_status_in(
         }
         ("pending_review", "approved") => {
             self_approved = Some(four_eyes_approval(db, &current, actor_id).await?);
+        }
+        // L4-03 / L4-04 (migration 290): the only way into `issued`. The permit says what work is
+        // done, its risks, preventive measures and PPE; its HSE approval is recorded when its type
+        // requires one; a permit needing a gas test has one, its latest reading within the limits.
+        ("approved", "issued") => {
+            crate::permit::safety_content::issue_ready(db, current.id).await?;
         }
         ("issued", "active") => {
             // No open-ended permit is activated (permits created before expiry was required).
@@ -2294,11 +2399,13 @@ async fn set_work_permit_status_in(
         ("pending_review", "approved") => approved = (Some(actor_id), Some(now.clone())),
         _ => {}
     }
+    let mut cancelled = (current.cancelled_by_id, current.cancelled_at.clone());
     match to {
         "issued" => issued_at = issued_at.or(Some(now)),
         "active" => activated_at = activated_at.or(Some(now)),
         "closed" => closed_at = Some(now),
         "handed_back" => handed_back_at = Some(now),
+        "cancelled" => cancelled = (Some(actor_id), Some(now)),
         _ => {}
     }
 
@@ -2307,7 +2414,8 @@ async fn set_work_permit_status_in(
             DbBackend::Sqlite,
             "UPDATE work_permits SET status = ?, issued_at = ?, activated_at = ?, closed_at = ?, \
              handed_back_at = ?, submitted_by_id = ?, submitted_at = ?, approved_by_id = ?, approved_at = ?, \
-             self_approved = COALESCE(?, self_approved), row_version = ? \
+             self_approved = COALESCE(?, self_approved), cancel_reason = COALESCE(?, cancel_reason), \
+             cancelled_by_id = ?, cancelled_at = ?, row_version = ? \
              WHERE id = ? AND row_version = ?",
             [
                 input.status.into(),
@@ -2320,6 +2428,9 @@ async fn set_work_permit_status_in(
                 opt_i64(approved.0),
                 opt_string(approved.1),
                 opt_i64(self_approved.map(i64::from)),
+                opt_string(cancel_reason),
+                opt_i64(cancelled.0),
+                opt_string(cancelled.1),
                 new_rv.into(),
                 input.id.into(),
                 current.row_version.into(),
@@ -2338,7 +2449,8 @@ async fn set_work_permit_status_in(
 
 /// Audits a submission for review (`permit.submitted`) and an approval (`permit.approved`, with
 /// `self_approved` and the site's four-eyes rule: a self-approval on a site that opted out is
-/// recorded as such), in the transaction of the status change.
+/// recorded as such), and a cancellation with its reason (`permit.cancelled`, L4-15), in the
+/// transaction of the status change.
 async fn audit_review_step(
     db: &impl ConnectionTrait,
     before: &WorkPermit,
@@ -2366,6 +2478,16 @@ async fn audit_review_step(
                 "approved_at": after.approved_at,
                 "self_approved": after.self_approved,
                 "site_rule": if after.self_approved { "four_eyes_opted_out" } else { "four_eyes" },
+                "status_before": before.status,
+                "status_after": after.status,
+            }),
+        ),
+        (_, "cancelled") => (
+            "permit.cancelled",
+            serde_json::json!({
+                "code": after.code,
+                "reason": after.cancel_reason,
+                "cancelled_at": after.cancelled_at,
                 "status_before": before.status,
                 "status_after": after.status,
             }),
@@ -2425,28 +2547,22 @@ async fn suspend_work_permit_in(
     let suspended_at = now_ts();
     let react = input.reactivation_conditions.unwrap_or_default();
 
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO permit_suspensions (entity_sync_id, permit_id, reason, suspended_by_id, suspended_at, \
-         reactivation_conditions, row_version) VALUES (?, ?, ?, ?, ?, ?, 1)",
-        [
-            sync_id.into(),
-            input.permit_id.into(),
-            input.reason.into(),
-            actor_id.into(),
-            suspended_at.clone().into(),
-            react.into(),
-        ],
-    ))
-    .await?;
-    let id_row = db
-        .query_one(Statement::from_string(
+    let insert_result = db
+        .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT last_insert_rowid() AS id".to_string(),
+            "INSERT INTO permit_suspensions (entity_sync_id, permit_id, reason, suspended_by_id, suspended_at, \
+         reactivation_conditions, row_version) VALUES (?, ?, ?, ?, ?, ?, 1)",
+            [
+                sync_id.into(),
+                input.permit_id.into(),
+                input.reason.into(),
+                actor_id.into(),
+                suspended_at.clone().into(),
+                react.into(),
+            ],
         ))
-        .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("last_insert_rowid")))?;
-    let sid: i64 = id_row.try_get("", "id").map_err(|e| decode_err("id", e))?;
+        .await?;
+    let sid = crate::db::inserted_id(&insert_result)?;
     let new_wp_rv = current.row_version + 1;
     let aff = db
         .execute(Statement::from_sql_and_values(
@@ -2549,31 +2665,25 @@ async fn append_permit_handover_log_in(
     }
     let signed = now_ts();
     let sync_id = Uuid::new_v4().to_string();
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO permit_handover_logs (entity_sync_id, permit_id, handed_from_role, handed_to_role, \
+    let insert_result = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO permit_handover_logs (entity_sync_id, permit_id, handed_from_role, handed_to_role, \
          confirmation_note, signed_at, signed_by_id, received_by_id, row_version) \
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)",
-        [
-            sync_id.into(),
-            input.permit_id.into(),
-            from_role.into(),
-            to_role.into(),
-            note.into(),
-            signed.into(),
-            signer_id.into(),
-            opt_i64(input.received_by_id),
-        ],
-    ))
-    .await?;
-    let id_row = db
-        .query_one(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT last_insert_rowid() AS id".to_string(),
+            [
+                sync_id.into(),
+                input.permit_id.into(),
+                from_role.into(),
+                to_role.into(),
+                note.into(),
+                signed.into(),
+                signer_id.into(),
+                opt_i64(input.received_by_id),
+            ],
         ))
-        .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("last_insert_rowid")))?;
-    let new_id: i64 = id_row.try_get("", "id").map_err(|e| decode_err("id", e))?;
+        .await?;
+    let new_id = crate::db::inserted_id(&insert_result)?;
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -2684,6 +2794,20 @@ pub async fn list_lock_removers(
     offset: Option<u64>,
 ) -> AppResult<HandoverReceiverPage> {
     let iso = get_permit_isolation(db, isolation_id).await?;
+    lock_removers_except(db, actor_id, iso.applied_by_id, search, limit, offset).await
+}
+
+/// Who may be named to take off a lock (an isolation lock, or a personal padlock of the group lock
+/// box, `permit::workers`) in a forced removal: active accounts other than the person asking and
+/// the lock's owner (`owner`), by name, paged with the total.
+pub(crate) async fn lock_removers_except(
+    db: &impl ConnectionTrait,
+    actor_id: i64,
+    owner: Option<i64>,
+    search: Option<String>,
+    limit: Option<u64>,
+    offset: Option<u64>,
+) -> AppResult<HandoverReceiverPage> {
     let name = handover_person_name_sql("ua");
     let rows = db
         .query_all(Statement::from_sql_and_values(
@@ -2692,7 +2816,7 @@ pub async fn list_lock_removers(
                 "SELECT ua.id, {name} AS display_name FROM user_accounts ua \
                  WHERE ua.is_active = 1 AND ua.deleted_at IS NULL AND ua.id <> ? AND ua.id IS NOT ?"
             ),
-            [actor_id.into(), opt_i64(iso.applied_by_id)],
+            [actor_id.into(), opt_i64(owner)],
         ))
         .await?;
     people_page(&rows, search, limit, offset)
@@ -2895,31 +3019,25 @@ async fn upsert_permit_isolation_in(
     }
 
     let sync_id = Uuid::new_v4().to_string();
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        // `energy_type` / `isolation_method` are the pre-225 texts (NOT NULL): empty = recorded on
-        // the lists, no original entry.
-        "INSERT INTO permit_isolations (entity_sync_id, permit_id, isolation_point, energy_type, \
+    let insert_result = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            // `energy_type` / `isolation_method` are the pre-225 texts (NOT NULL): empty = recorded on
+            // the lists, no original entry.
+            "INSERT INTO permit_isolations (entity_sync_id, permit_id, isolation_point, energy_type, \
          isolation_method, energy_type_id, isolation_method_id, lock_number, row_version) \
          VALUES (?, ?, ?, '', '', ?, ?, ?, 1)",
-        [
-            sync_id.into(),
-            input.permit_id.into(),
-            point.into(),
-            energy_id.into(),
-            method_id.into(),
-            opt_string(lock_number),
-        ],
-    ))
-    .await?;
-    let id_row = db
-        .query_one(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT last_insert_rowid() AS id".to_string(),
+            [
+                sync_id.into(),
+                input.permit_id.into(),
+                point.into(),
+                energy_id.into(),
+                method_id.into(),
+                opt_string(lock_number),
+            ],
         ))
-        .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("last_insert_rowid")))?;
-    let new_id: i64 = id_row.try_get("", "id").map_err(|e| decode_err("id", e))?;
+        .await?;
+    let new_id = crate::db::inserted_id(&insert_result)?;
     let created = get_permit_isolation(db, new_id).await?;
     Ok(created)
 }
@@ -3210,7 +3328,9 @@ async fn apply_permit_isolation_in(
 pub const CODE_WORKER_NOT_INFORMED: &str = "PERMIT_WORKER_NOT_INFORMED";
 
 /// A forced removal of `worker`'s lock that they were not told of yet, other than the isolation
-/// `except`: `(permit code, isolation point)`, the oldest first.
+/// `except`: `(permit code, isolation point)`, the oldest first. A personal padlock of a group lock
+/// box removed by force (`permit::workers`, L4-18) counts the same way (its padlock number as the
+/// point): the worker fits no lock and places no padlock until told.
 pub(crate) async fn open_forced_removal_of(
     db: &impl ConnectionTrait,
     worker: i64,
@@ -3219,12 +3339,8 @@ pub(crate) async fn open_forced_removal_of(
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT wp.code AS code, pi.isolation_point AS point FROM permit_isolations pi \
-               JOIN work_permits wp ON wp.id = pi.permit_id \
-              WHERE pi.applied_by_id = ? AND pi.forced_removal = 1 AND pi.informed_at IS NULL \
-                AND pi.id IS NOT ? \
-              ORDER BY pi.removed_at, pi.id LIMIT 1",
-            [worker.into(), opt_i64(except)],
+            "SELECT code, point FROM (SELECT wp.code AS code, pi.isolation_point AS point, pi.removed_at AS removed_at, 0 AS kind, pi.id AS id FROM permit_isolations pi JOIN work_permits wp ON wp.id = pi.permit_id WHERE pi.applied_by_id = ? AND pi.forced_removal = 1 AND pi.informed_at IS NULL AND pi.id IS NOT ? UNION ALL SELECT wp.code AS code, pl.lock_number AS point, pl.removed_at AS removed_at, 1 AS kind, pl.id AS id FROM permit_personal_locks pl JOIN work_permits wp ON wp.id = pl.permit_id WHERE pl.placed_by_id = ? AND pl.forced_removal = 1 AND pl.informed_at IS NULL) ORDER BY removed_at, kind, id LIMIT 1",
+            [worker.into(), opt_i64(except), worker.into()],
         ))
         .await?;
     row.map(|r| -> AppResult<(String, String)> {
@@ -3301,13 +3417,36 @@ async fn verify_permit_isolation_in(
             &[],
         ));
     }
+    let note = zero_energy_note(&input)?;
     write_isolation_action(
         db,
         &iso,
-        "verified_by_id = ?, verified_at = ?",
-        vec![actor_id.into(), now_ts().into()],
+        "verified_by_id = ?, verified_at = ?, zero_energy_note = ?",
+        vec![actor_id.into(), now_ts().into(), note.into()],
     )
     .await
+}
+
+/// The zero-energy test of a verification (L4-13): the verifier confirms it was done and says what
+/// was measured or seen (trimmed, not blank, at most `MAX_ZERO_ENERGY_NOTE_CHARS` characters).
+fn zero_energy_note(input: &PermitIsolationActionInput) -> AppResult<String> {
+    if input.zero_energy_confirmed != Some(true) {
+        return Err(refused(
+            "PERMIT_ZERO_ENERGY_NOT_CONFIRMED",
+            "Confirm that the zero-energy test was done before verifying the isolation.",
+            &[],
+        ));
+    }
+    let note = input.zero_energy_note.as_deref().map(str::trim).unwrap_or_default();
+    let max = super::domain::MAX_ZERO_ENERGY_NOTE_CHARS;
+    if note.is_empty() || note.chars().count() > max {
+        return Err(refused(
+            "PERMIT_ZERO_ENERGY_NOTE_REQUIRED",
+            format!("Record the measure or observation of the zero-energy test (1 to {max} characters)."),
+            &[("max", max.to_string())],
+        ));
+    }
+    Ok(note.to_string())
 }
 
 /// Records verified lock removal. Same two-person rule as verification: the person
@@ -3477,6 +3616,8 @@ async fn ensure_lock_removable(
         ));
     }
     ensure_linked_work_not_running(db, permit).await?;
+    // Group lockout (L4-18): no isolation lock comes off while a worker's padlock is on the box.
+    crate::permit::workers::ensure_no_personal_lock_on(db, permit.id).await?;
     Ok(applier)
 }
 
@@ -3549,8 +3690,8 @@ pub const AUDIT_WORKER_ACKNOWLEDGED: &str = "permit.forced_removal_acknowledged"
 pub const AUDIT_WORKER_INFORMED: &str = "permit.forced_removal_worker_informed";
 
 /// Latest time this PC accepts for a time given by a person (the tolerated clock difference).
-fn latest_accepted_ts() -> String {
-    (Utc::now() + Duration::minutes(crate::settings::site::MAX_CLOCK_SKEW_MINUTES))
+pub(crate) fn latest_accepted_ts() -> String {
+    (crate::clock::now() + Duration::minutes(crate::settings::site::MAX_CLOCK_SKEW_MINUTES))
         .format("%Y-%m-%dT%H:%M:%SZ")
         .to_string()
 }
@@ -3559,7 +3700,7 @@ fn latest_accepted_ts() -> String {
 /// one, at most [`super::domain::MAX_CONTACT_ATTEMPTS`]; each at a readable time not in the future,
 /// with a method of the plant's list (`permit::contact_methods`) and a result of 1 to
 /// [`super::domain::MAX_CONTACT_RESULT_CHARS`] characters.
-async fn checked_contact_attempts(
+pub(crate) async fn checked_contact_attempts(
     db: &impl ConnectionTrait,
     attempts: &[super::domain::ContactAttempt],
 ) -> AppResult<Vec<super::domain::ContactAttempt>> {
@@ -3597,7 +3738,7 @@ async fn checked_contact_attempts(
 }
 
 /// An active account with this id (a person who can be named on a lock record).
-async fn active_user(db: &impl ConnectionTrait, user_id: i64) -> AppResult<bool> {
+pub(crate) async fn active_user(db: &impl ConnectionTrait, user_id: i64) -> AppResult<bool> {
     Ok(db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -3636,6 +3777,8 @@ async fn force_permit_isolation_removal_in(
         isolation_id: input.isolation_id,
         expected_row_version: input.expected_row_version,
         lock_number: None,
+        zero_energy_confirmed: None,
+        zero_energy_note: None,
     };
     let (iso, permit) = load_isolation_for_action(db, &action).await?;
     let applier = ensure_lock_removable(db, &iso, &permit).await?;
@@ -3827,6 +3970,8 @@ pub async fn record_worker_informed(
         isolation_id: input.isolation_id,
         expected_row_version: input.expected_row_version,
         lock_number: None,
+        zero_energy_confirmed: None,
+        zero_energy_note: None,
     };
     let (iso, permit) = load_isolation_for_action(&txn, &action).await?;
     let applier = ensure_worker_to_inform(&iso)?;
@@ -3993,10 +4138,10 @@ pub async fn get_loto_card_view(
             DbBackend::Sqlite,
             "SELECT wp.code AS permit_code, wp.expires_at AS permit_expires, pi.id AS isolation_id, \
              pi.isolation_point, COALESCE(et.label, pi.energy_type) AS energy_type, pi.lock_number, \
-             pi.verified_by_id, pi.verified_at, pi.cancelled_at, \
+             pi.verified_by_id, pi.verified_at, pi.zero_energy_note, pi.cancelled_at, \
              COALESCE(pi.forced_removal, 0) AS forced_removal, pi.removed_at, pi.forced_reason, \
              COALESCE(uf.display_name, uf.username) AS forced_authorized_by, \
-             e.asset_id_code, e.name AS equipment_name, ua.username AS verifier_username \
+             e.asset_id_code, e.name AS equipment_name, COALESCE(ua.display_name, ua.username) AS verifier_username \
              FROM permit_isolations pi \
              JOIN work_permits wp ON wp.id = pi.permit_id \
              LEFT JOIN reference_values et ON et.id = pi.energy_type_id \
@@ -4041,7 +4186,13 @@ pub async fn get_loto_card_view(
     let expires_at: Option<String> = row.try_get("", "permit_expires").ok();
     let verified_at: Option<String> = row.try_get("", "verified_at").ok().flatten();
     let verifier_username: Option<String> = row.try_get("", "verifier_username").ok().flatten();
+    // L4-17: the verifier's name as people know them (display name), the login only without one.
     let verifier_signature = if verified_at.is_some() { verifier_username } else { None };
+    let zero_energy_note: Option<String> = if verified_at.is_some() {
+        row.try_get("", "zero_energy_note").ok().flatten()
+    } else {
+        None
+    };
     let iso_id: i64 = row
         .try_get("", "isolation_id")
         .map_err(|e| decode_err("isolation_id", e))?;
@@ -4066,6 +4217,7 @@ pub async fn get_loto_card_view(
         isolation_point,
         lock_number,
         verifier_signature,
+        zero_energy_note,
         expires_at,
         forced_removal,
         forced_authorized_by: forced_text("forced_authorized_by"),
@@ -4122,28 +4274,22 @@ async fn record_loto_card_print_in(
         ));
     }
     let sync_id = Uuid::new_v4().to_string();
-    let printed_at = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO loto_card_print_jobs (permit_id, isolation_id, printed_at, printed_by_id, entity_sync_id, \
-         row_version) VALUES (?, ?, ?, ?, ?, 1)",
-        [
-            input.permit_id.into(),
-            input.isolation_id.into(),
-            printed_at.clone().into(),
-            actor_id.into(),
-            sync_id.clone().into(),
-        ],
-    ))
-    .await?;
-    let id_row = db
-        .query_one(Statement::from_string(
+    let printed_at = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let insert_result = db
+        .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT last_insert_rowid() AS id".to_string(),
+            "INSERT INTO loto_card_print_jobs (permit_id, isolation_id, printed_at, printed_by_id, entity_sync_id, \
+         row_version) VALUES (?, ?, ?, ?, ?, 1)",
+            [
+                input.permit_id.into(),
+                input.isolation_id.into(),
+                printed_at.clone().into(),
+                actor_id.into(),
+                sync_id.clone().into(),
+            ],
         ))
-        .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("last_insert_rowid")))?;
-    let new_id: i64 = id_row.try_get("", "id").map_err(|e| decode_err("id", e))?;
+        .await?;
+    let new_id = crate::db::inserted_id(&insert_result)?;
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -4187,7 +4333,7 @@ pub async fn list_open_permits_report_in_scope(
     db: &impl ConnectionTrait,
     scope: &AccessScope,
 ) -> AppResult<WorkPermitListPage> {
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     // What the report shows (open, not expired): one condition for the rows and the hidden counts.
     let open_sql = format!("wp.status IN {OPEN_PERMIT_STATUSES_SQL} AND (wp.expires_at IS NULL OR wp.expires_at > ?)");
     let scope_sql = super::access::scope_sql(scope);
@@ -4219,6 +4365,48 @@ pub async fn list_open_permits_report_in_scope(
     })
 }
 
+/// Open permits whose expiry has passed (issued, active, suspended or to revalidate), in the
+/// reader's scope, with the permits left out and why (L4-08, CMMS Advisor 2026-11-02): such a
+/// permit no longer covers work, yet its isolations may still be in place until it is closed and
+/// handed back. Shown apart ("Permis expiré — isolement toujours en place"), never counted as
+/// open. Lock removal and closing stay allowed; the status is not rewritten here, so every
+/// device reads the same thing from the same expiry time without writing (no sync conflict).
+pub async fn list_overdue_permits_report_in_scope(
+    db: &impl ConnectionTrait,
+    scope: &AccessScope,
+) -> AppResult<WorkPermitListPage> {
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let overdue_sql =
+        format!("wp.status IN {OPEN_PERMIT_STATUSES_SQL} AND wp.expires_at IS NOT NULL AND wp.expires_at <= ?");
+    let scope_sql = super::access::scope_sql(scope);
+    let mut values: Vec<sea_orm::Value> = vec![now.clone().into()];
+    values.extend(scope_sql.binds);
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "{WORK_PERMIT_SELECT} \
+                 WHERE {overdue_sql} \
+                 AND ({pred}) \
+                 ORDER BY wp.expires_at ASC, wp.id ASC",
+                pred = scope_sql.predicate,
+            ),
+            values,
+        ))
+        .await?;
+    let mut items = Vec::with_capacity(rows.len());
+    for row in rows {
+        items.push(map_work_permit(&row)?);
+    }
+    let (hidden_outside_scope, hidden_without_site) =
+        hidden_permit_counts(db, scope, &overdue_sql, vec![now.into()]).await?;
+    Ok(WorkPermitListPage {
+        items,
+        hidden_outside_scope,
+        hidden_without_site,
+    })
+}
+
 /// The 30-day hand-back compliance, plant-wide (internal callers and tests).
 pub async fn permit_compliance_kpi_30d(db: &impl ConnectionTrait) -> AppResult<PermitComplianceKpi30d> {
     permit_compliance_kpi_30d_in_scope(db, &AccessScope::Everywhere).await
@@ -4229,7 +4417,7 @@ pub async fn permit_compliance_kpi_30d_in_scope(
     db: &impl ConnectionTrait,
     scope: &AccessScope,
 ) -> AppResult<PermitComplianceKpi30d> {
-    let cutoff = (Utc::now() - Duration::days(30))
+    let cutoff = (crate::clock::now() - Duration::days(30))
         .format("%Y-%m-%dT%H:%M:%SZ")
         .to_string();
     let scope_sql = super::access::scope_sql(scope);

@@ -799,13 +799,20 @@ pub async fn enforce_capability_for_permission(db: &DatabaseConnection, permissi
     };
     let check = check_entitlement_capability(db, capability.to_string()).await?;
     if !check.allowed {
+        // Coded first, so the screen says "module not included in your licence" (or that the
+        // licence is not in force) instead of a bare permission refusal; the sentence after it is
+        // kept for support.
         return Err(AppError::PermissionDenied(format!(
-            "Entitlement capability blocked: {} ({})",
-            check.capability, check.reason
+            "{}:module={},state={}: Entitlement capability blocked: {} ({})",
+            LICENCE_MODULE_OFF_CODE, check.capability, check.effective_state, check.capability, check.reason
         )));
     }
     Ok(())
 }
+
+/// Code that starts the refusal of a command whose module the licence does not allow now
+/// ([`enforce_capability_for_permission`]); the screen translates it (`app-error.ts`).
+pub const LICENCE_MODULE_OFF_CODE: &str = "LICENCE_MODULE_OFF";
 
 pub async fn get_entitlement_diagnostics(
     db: &DatabaseConnection,

@@ -21,6 +21,7 @@ const svc = vi.hoisted(() => ({
   deleteInventoryArticleEquivalent: vi.fn(),
   getInventoryArticleRepairableHistory: vi.fn(),
   listInventoryArticleEquivalents: vi.fn(),
+  listInventoryArticleUsage: vi.fn(),
   listInventoryArticlePurchaseHistory: vi.fn(),
   listInventoryDocumentLinks: vi.fn(),
   listInventoryReservations: vi.fn(),
@@ -150,9 +151,10 @@ function article(overrides: Partial<InventoryArticleRow> = {}): InventoryArticle
   };
 }
 
-function renderWorkspace() {
+function renderWorkspace(extra: { onBackToOrigin?: () => void } = {}) {
   return render(
     <ArticleDetailWorkspace
+      {...extra}
       article={article()}
       onEdit={vi.fn()}
       onDeactivate={vi.fn()}
@@ -184,6 +186,7 @@ describe("ArticleDetailWorkspace", () => {
     svc.listInventoryStateEvents.mockResolvedValue([]);
     svc.listInventoryArticlePurchaseHistory.mockResolvedValue([]);
     svc.listInventoryArticleEquivalents.mockResolvedValue([]);
+    svc.listInventoryArticleUsage.mockResolvedValue([]);
     svc.getInventoryArticleRepairableHistory.mockResolvedValue([]);
     svc.listInventoryDocumentLinks.mockResolvedValue([]);
     svc.listInventorySuppliers.mockResolvedValue([]);
@@ -193,6 +196,17 @@ describe("ArticleDetailWorkspace", () => {
         article({ id: 9, article_code: "ART-009", article_name: "Bearing 6204-Z" }),
       ],
     });
+  });
+
+  it("shows Retour only when the article was opened from another screen", async () => {
+    const onBackToOrigin = vi.fn();
+    const { unmount } = renderWorkspace({ onBackToOrigin });
+    fireEvent.click(await screen.findByRole("button", { name: enCommon.action.back }));
+    expect(onBackToOrigin).toHaveBeenCalledTimes(1);
+    unmount();
+    renderWorkspace();
+    await screen.findByRole("button", { name: "Create requisition" });
+    expect(screen.queryByRole("button", { name: enCommon.action.back })).toBeNull();
   });
 
   it("keeps the panel usable when one section fails, with a retry in that section", async () => {
@@ -258,6 +272,26 @@ describe("ArticleDetailWorkspace", () => {
     expect(transferButtons[0]).toBeDisabled();
     expect(transferButtons[0]).toHaveAttribute("title", "No available stock to transfer");
     expect(transferButtons[1]).toBeEnabled();
+  });
+
+  it("lists the equipment that use the article in a where-used view", async () => {
+    svc.listInventoryArticleUsage.mockResolvedValue([
+      {
+        asset_id: 11,
+        asset_code: "PRESS-01",
+        asset_name: "Hydraulic press",
+        quantity: 2,
+        is_critical_spare: true,
+      },
+    ]);
+
+    renderWorkspace();
+    fireEvent.click(await screen.findByRole("button", { name: "Used on" }));
+
+    expect(await screen.findByText("PRESS-01")).toBeInTheDocument();
+    expect(screen.getByText("Hydraulic press")).toBeInTheDocument();
+    expect(screen.getByText("Critical")).toBeInTheDocument();
+    expect(svc.listInventoryArticleUsage).toHaveBeenCalledWith(4);
   });
 
   it("adds an equivalent with a backend equivalence type and removes it only after confirmation", async () => {

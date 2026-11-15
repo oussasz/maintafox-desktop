@@ -15,7 +15,13 @@ import { PermissionGate } from "@/components/PermissionGate";
 import { DataTable } from "@/components/data/DataTable";
 import { SmartFilterBar } from "@/components/filters/SmartFilterBar";
 import type { SmartFilterDef } from "@/components/filters/smart-filter-types";
+import { GoodsReturnDialog } from "@/components/inventory/GoodsReturnDialog";
 import { ProcurementAlertCards } from "@/components/inventory/ProcurementAlertCards";
+import {
+  ApproverRolesLine,
+  useApprovalBlocker,
+  useApprovalBlockerFor,
+} from "@/components/inventory/ProcurementApproval";
 import { ProcurementArchivePanel } from "@/components/inventory/ProcurementArchivePanel";
 import { ProcurementContextMenu } from "@/components/inventory/ProcurementContextMenu";
 import type { ProcurementContextMenuAction } from "@/components/inventory/ProcurementContextMenu";
@@ -48,6 +54,7 @@ import type { KanbanCard, KanbanColumn } from "@/components/kanban";
 import { type ViewOption, ViewToggle } from "@/components/layout/ModuleHeaderControls";
 import { KpiTile } from "@/components/metrics/KpiTile";
 import { Timeline } from "@/components/timeline";
+import { ActionReason } from "@/components/ui/action-reason";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -199,6 +206,7 @@ type ProcurementRepairablePanelProps = {
 };
 
 type SubTab =
+  | "reorder"
   | "requisitions"
   | "purchase-orders"
   | "goods-receipts"
@@ -245,7 +253,9 @@ const PO_KANBAN_STATUSES = [
 /**
  * Board moves = the one-click lifecycle steps the row menu already offers (submit, approve),
  * run through the same `transition_*` command and server guards. Reject (reason), cancel and
- * close (confirmation) stay dialog-only and are never offered as a drop target.
+ * close (confirmation) stay dialog-only and are never offered as a drop target. "Approved" is no
+ * drop target for a document the signed-in user may not approve (their own, or a missing right):
+ * the row menu's greyed-out Approve says why.
  */
 const BOARD_ONE_CLICK_MOVES: Record<string, string> = {
   DRAFT: "SUBMITTED",
@@ -327,6 +337,8 @@ export const ProcurementRepairablePanel = forwardRef<
     useFormatters();
   const { can } = usePermissions();
   const canProcure = can(P.INV_PROCURE);
+  /** Same approval blockers in row menus as in the detail panes (right, own document). */
+  const approvalBlockerFor = useApprovalBlockerFor();
   const demandSources = useLookupOptions("inventory.demand_source_type");
   const purchasePriorities = useLookupOptions("inventory.purchase_priority");
   const documentPurposes = useLookupOptions("inventory.document_link_purpose");
@@ -384,6 +396,8 @@ export const ProcurementRepairablePanel = forwardRef<
   const [goodsReceipts, setGoodsReceipts] = useState<GoodsReceipt[]>([]);
   const [selectedGrId, setSelectedGrId] = useState<number | null>(null);
   const [grLines, setGrLines] = useState<GoodsReceiptLine[]>([]);
+  /** Reception line whose goods are being returned to the supplier (null: dialog closed). */
+  const [returnLine, setReturnLine] = useState<GoodsReceiptLine | null>(null);
   const [grLinesLoading, setGrLinesLoading] = useState(false);
   const [grLinesError, setGrLinesError] = useState<unknown>(null);
   const [stateEvents, setStateEvents] = useState<InventoryStateEvent[]>([]);
@@ -1017,6 +1031,7 @@ export const ProcurementRepairablePanel = forwardRef<
 
   // ── Tabs ────────────────────────────────────────────────────────────────────
   const subTabs: Array<{ id: SubTab; label: string }> = [
+    { id: "reorder", label: t("procurement.recommendations.tabTitle") },
     { id: "requisitions", label: t("procurement.requisitions.title") },
     { id: "purchase-orders", label: t("procurement.purchaseOrders.title") },
     { id: "goods-receipts", label: t("procurement.goodsReceipts.title") },
@@ -1065,16 +1080,22 @@ export const ProcurementRepairablePanel = forwardRef<
         });
       }
       if (row.status === "SUBMITTED") {
+        const approveBlocker = approvalBlockerFor(row.requested_by_id);
+        const rejectBlocker = approvalBlockerFor(row.requested_by_id, false);
         actions.push({
           id: "approve",
           label: t("procurement.requisitions.actions.approve"),
           permission: P.INV_PROCURE,
+          disabled: approveBlocker !== null,
+          disabledReason: approveBlocker,
           onClick: () => void runRequisitionTransition(row, "APPROVED"),
         });
         actions.push({
           id: "reject",
           label: t("procurement.requisitions.actions.reject"),
           permission: P.INV_PROCURE,
+          disabled: rejectBlocker !== null,
+          disabledReason: rejectBlocker,
           destructive: true,
           onClick: () => {
             openRequisitionDetails(row.id);
@@ -1108,6 +1129,7 @@ export const ProcurementRepairablePanel = forwardRef<
       return actions;
     },
     [
+      approvalBlockerFor,
       confirmRequisitionDecline,
       openCreatePoForm,
       openRequisitionDetails,
@@ -1134,10 +1156,13 @@ export const ProcurementRepairablePanel = forwardRef<
         });
       }
       if (row.status === "SUBMITTED") {
+        const approveBlocker = approvalBlockerFor(row.ordered_by_id);
         actions.push({
           id: "approve",
           label: t("procurement.purchaseOrders.actions.approve"),
           permission: P.INV_PROCURE,
+          disabled: approveBlocker !== null,
+          disabledReason: approveBlocker,
           onClick: () => void runPurchaseOrderTransition(row, "APPROVED"),
         });
       }
@@ -1145,7 +1170,7 @@ export const ProcurementRepairablePanel = forwardRef<
         actions.push({
           id: "receive",
           label: t("procurement.purchaseOrders.actions.receive"),
-          permission: P.INV_PROCURE,
+          permission: P.INV_RECEIVE,
           onClick: () => openReceiveForPo(row.id),
         });
       }
@@ -1161,7 +1186,14 @@ export const ProcurementRepairablePanel = forwardRef<
       }
       return actions;
     },
-    [confirmPurchaseOrderCancel, openPoDetails, openReceiveForPo, runPurchaseOrderTransition, t],
+    [
+      approvalBlockerFor,
+      confirmPurchaseOrderCancel,
+      openPoDetails,
+      openReceiveForPo,
+      runPurchaseOrderTransition,
+      t,
+    ],
   );
 
   const repairableRowActions = useCallback(
@@ -1935,6 +1967,45 @@ export const ProcurementRepairablePanel = forwardRef<
     </div>
   );
 
+  // Why the main button of a dialog is grey (first missing item, in the order of the form).
+  const disabledText = (key: string | null) => (key ? t(`procurement.disabled.${key}`) : null);
+  const rejectBlockerKey = saving ? "saving" : !rejectReason.trim() ? "rejectReason" : null;
+  const poBlockerKey = saving
+    ? "saving"
+    : poDialogReqId <= 0 || !approvedRequisitions.some((r) => r.id === poDialogReqId)
+      ? "poRequisition"
+      : null;
+  const repairBlockerKey = saving
+    ? "saving"
+    : repairArticleId <= 0
+      ? "repairArticle"
+      : repairSourceLocationId <= 0
+        ? "repairSource"
+        : repairQty <= 0
+          ? "repairQty"
+          : null;
+  const supplierBlockerKey = saving
+    ? "saving"
+    : !supplierForm.code.trim()
+      ? "supplierCode"
+      : !supplierForm.name.trim()
+        ? "supplierName"
+        : null;
+  const priceBlockerKey = saving
+    ? "saving"
+    : priceFormArticleId <= 0
+      ? "priceArticle"
+      : !priceFormUnitPrice
+        ? "priceUnit"
+        : null;
+  const docLinkBlockerKey = saving
+    ? "saving"
+    : !docLinkFormRef.trim()
+      ? "docRef"
+      : !docLinkFormPurpose
+        ? "docPurpose"
+        : null;
+
   const reqLinesBlocker = requisitionLinesBlocker(reqDraftLines);
   const reqFormBlocker = reqLinesBlocker
     ? t(`procurement.requisitionForm.blockers.${reqLinesBlocker}`)
@@ -2041,14 +2112,14 @@ export const ProcurementRepairablePanel = forwardRef<
         value={formatNumber(dashboard.low_stock_articles)}
         hint={t("procurement.dashboard.stockoutsHint")}
         {...(dashboard.low_stock_articles > 0 ? { tone: "warning" as const } : {})}
-        onOpen={() => document.getElementById(RECOMMENDATIONS_ID)?.scrollIntoView()}
+        onOpen={() => openReorderSection()}
       />
       <KpiTile
         label={t("procurement.dashboard.criticalStockouts")}
         value={formatNumber(dashboard.critical_low_stock_articles)}
         hint={t("procurement.dashboard.criticalStockoutsHint")}
         {...(dashboard.critical_low_stock_articles > 0 ? { tone: "danger" as const } : {})}
-        onOpen={() => document.getElementById(RECOMMENDATIONS_ID)?.scrollIntoView()}
+        onOpen={() => openReorderSection()}
       />
       <KpiTile
         label={t("procurement.dashboard.repairablesInRepair")}
@@ -2062,6 +2133,17 @@ export const ProcurementRepairablePanel = forwardRef<
       />
     </div>
   ) : null;
+
+  /** The low-stock tiles open the "À commander" section and bring its list into view. */
+  const openReorderSection = () => {
+    setActiveTab("reorder");
+    window.setTimeout(() => document.getElementById(RECOMMENDATIONS_ID)?.scrollIntoView(), 0);
+  };
+
+  /** Why the signed-in user cannot approve / reject the open requisition (null: they may try). */
+  const requisitionApprovalBlocker = useApprovalBlocker(
+    selectedRequisition?.requested_by_id ?? null,
+  );
 
   /** Next step of the open requisition, shown next to its lifecycle buttons. */
   const requisitionStepHint = selectedRequisition
@@ -2092,20 +2174,6 @@ export const ProcurementRepairablePanel = forwardRef<
             }}
           />
 
-          <ProcurementRecommendationsPanel
-            id={RECOMMENDATIONS_ID}
-            onCreateRequisitionPrefill={(rec, reason) =>
-              openRequisitionForm({
-                articleId: rec.article_id,
-                quantity: rec.suggested_reorder_qty,
-                sourceType: "REORDER",
-                sourceRef: rec.warehouse_code,
-                reason,
-              })
-            }
-            onCreated={() => loadAll()}
-          />
-
           <div className="grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)]">
             {/* Sub-tab sidebar */}
             <nav className="rounded-md border p-2" aria-label={t("procurement.sectionsLabel")}>
@@ -2130,6 +2198,23 @@ export const ProcurementRepairablePanel = forwardRef<
             </nav>
 
             <div className="min-w-0 space-y-4">
+              {/* ── REORDER (À commander) ── */}
+              {activeTab === "reorder" ? (
+                <ProcurementRecommendationsPanel
+                  id={RECOMMENDATIONS_ID}
+                  onCreateRequisitionPrefill={(rec, reason) =>
+                    openRequisitionForm({
+                      articleId: rec.article_id,
+                      quantity: rec.suggested_reorder_qty,
+                      sourceType: "REORDER",
+                      sourceRef: rec.warehouse_code,
+                      reason,
+                    })
+                  }
+                  onCreated={() => loadAll()}
+                />
+              ) : null}
+
               {/* ── REQUISITIONS ── */}
               {activeTab === "requisitions" ? (
                 <section className="rounded-md border p-4">
@@ -2166,7 +2251,14 @@ export const ProcurementRepairablePanel = forwardRef<
                         columns={reqKanbanColumns}
                         cards={reqKanbanCards}
                         enableDrag={canProcure}
-                        canDrop={(_card, from, to) => isBoardOneClickMove(from, to)}
+                        canDrop={(card, from, to) =>
+                          isBoardOneClickMove(from, to) &&
+                          (to !== "APPROVED" ||
+                            approvalBlockerFor(
+                              requisitions.find((r) => String(r.id) === card.id)?.requested_by_id ??
+                                null,
+                            ) === null)
+                        }
                         onDrop={async (card, _from, to) => {
                           const row = requisitions.find((r) => String(r.id) === card.id);
                           if (!row) return false;
@@ -2244,7 +2336,14 @@ export const ProcurementRepairablePanel = forwardRef<
                         columns={poKanbanColumns}
                         cards={poKanbanCards}
                         enableDrag={canProcure}
-                        canDrop={(_card, from, to) => isBoardOneClickMove(from, to)}
+                        canDrop={(card, from, to) =>
+                          isBoardOneClickMove(from, to) &&
+                          (to !== "APPROVED" ||
+                            approvalBlockerFor(
+                              purchaseOrders.find((r) => String(r.id) === card.id)?.ordered_by_id ??
+                                null,
+                            ) === null)
+                        }
                         onDrop={async (card, _from, to) => {
                           const row = purchaseOrders.find((r) => String(r.id) === card.id);
                           if (!row) return false;
@@ -2284,9 +2383,14 @@ export const ProcurementRepairablePanel = forwardRef<
               {/* ── REPAIRABLES ── */}
               {activeTab === "repairables" ? (
                 <section className="rounded-md border p-4">
-                  <h3 className="mb-2 text-sm font-semibold">
-                    {t("procurement.repairables.title")}
-                  </h3>
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                    <h3 className="text-sm font-semibold">{t("procurement.repairables.title")}</h3>
+                    {canProcure ? null : (
+                      <p className="text-xs text-text-muted" role="note">
+                        {t("procurement.repairables.noRightHint")}
+                      </p>
+                    )}
+                  </div>
                   <div className="mb-3">
                     <SmartFilterBar
                       searchPlaceholder={t("procurement.repairables.searchPlaceholder")}
@@ -2331,7 +2435,7 @@ export const ProcurementRepairablePanel = forwardRef<
                     <EmptyState
                       title={t("procurement.goodsReceipts.empty")}
                       description={t("procurement.goodsReceipts.emptyDescription")}
-                      {...(canProcure
+                      {...(can(P.INV_RECEIVE)
                         ? {
                             actionLabel: t("procurement.receive.title"),
                             onAction: () => {
@@ -2394,6 +2498,14 @@ export const ProcurementRepairablePanel = forwardRef<
                               <TableHead>
                                 {t("procurement.goodsReceipts.lines.columns.reason")}
                               </TableHead>
+                              <TableHead className="text-right">
+                                {t("procurement.goodsReceipts.lines.columns.returned")}
+                              </TableHead>
+                              <TableHead>
+                                <span className="sr-only">
+                                  {t("procurement.goodsReceipts.lines.columns.actions")}
+                                </span>
+                              </TableHead>
                             </TableRow>
                           </TableHeader>
                           <TableBody>
@@ -2413,6 +2525,24 @@ export const ProcurementRepairablePanel = forwardRef<
                                   {qtyLabel(line.rejected_qty)}
                                 </TableCell>
                                 <TableCell>{formatOrDash(line.rejection_reason)}</TableCell>
+                                <TableCell
+                                  className="text-right tabular-nums"
+                                  title={line.return_reason ?? undefined}
+                                >
+                                  {qtyLabel(line.returned_qty)}
+                                </TableCell>
+                                <TableCell>
+                                  <PermissionGate permission={P.INV_RECEIVE}>
+                                    <Button
+                                      variant="outline"
+                                      className="h-11"
+                                      disabled={line.accepted_qty - line.returned_qty <= 0}
+                                      onClick={() => setReturnLine(line)}
+                                    >
+                                      {t("procurement.goodsReceipts.return.action")}
+                                    </Button>
+                                  </PermissionGate>
+                                </TableCell>
                               </TableRow>
                             ))}
                           </TableBody>
@@ -3014,6 +3144,13 @@ export const ProcurementRepairablePanel = forwardRef<
                 </dt>
                 <dd>{formatDateTime(selectedRequisition.updated_at)}</dd>
               </dl>
+              {selectedRequisition.status === "SUBMITTED" ? (
+                <ApproverRolesLine
+                  documentType="REQUISITION"
+                  documentId={selectedRequisition.id}
+                  reloadKey={selectedRequisition.row_version}
+                />
+              ) : null}
               <div className="rounded-md border p-3 text-sm">
                 <div className="mb-2 font-medium">{t("procurement.requisitions.lines.title")}</div>
                 {reqLinesError ? (
@@ -3103,6 +3240,11 @@ export const ProcurementRepairablePanel = forwardRef<
                   {requisitionStepHint}
                 </p>
               ) : null}
+              {selectedRequisition.status === "SUBMITTED" && requisitionApprovalBlocker ? (
+                <p id="inv-req-approval-blocker" className="text-xs text-text-muted">
+                  {requisitionApprovalBlocker}
+                </p>
+              ) : null}
             </div>
           ) : (
             <p className="text-sm text-text-muted">{t("procurement.requisitions.noSelection")}</p>
@@ -3135,8 +3277,21 @@ export const ProcurementRepairablePanel = forwardRef<
                   </Button>
                   <Button
                     className="h-11"
-                    aria-describedby="inv-req-step-hint"
-                    disabled={saving || selectedRequisition.status !== "SUBMITTED"}
+                    aria-describedby={
+                      selectedRequisition.status === "SUBMITTED" && requisitionApprovalBlocker
+                        ? "inv-req-approval-blocker"
+                        : "inv-req-step-hint"
+                    }
+                    title={
+                      selectedRequisition.status === "SUBMITTED"
+                        ? (requisitionApprovalBlocker ?? undefined)
+                        : undefined
+                    }
+                    disabled={
+                      saving ||
+                      selectedRequisition.status !== "SUBMITTED" ||
+                      requisitionApprovalBlocker !== null
+                    }
                     onClick={() => void runRequisitionTransition(selectedRequisition, "APPROVED")}
                   >
                     {t("procurement.requisitions.actions.approve")}
@@ -3145,7 +3300,9 @@ export const ProcurementRepairablePanel = forwardRef<
                     <Button
                       variant="destructive"
                       className="h-11"
-                      disabled={saving}
+                      // Rejecting needs the approval right too (not the separation of duties).
+                      title={approvalBlockerFor(null, false) ?? undefined}
+                      disabled={saving || approvalBlockerFor(null, false) !== null}
                       onClick={() => {
                         setRejectReason("");
                         setRejectOpen(true);
@@ -3205,6 +3362,9 @@ export const ProcurementRepairablePanel = forwardRef<
               placeholder={t("procurement.requisitions.reject.reasonPlaceholder")}
             />
           </div>
+          <ActionReason className="text-right" data-testid="inv-reject-reason-blocker">
+            {disabledText(rejectBlockerKey)}
+          </ActionReason>
           <DialogFooter className="gap-2">
             <Button
               variant="outline"
@@ -3217,7 +3377,7 @@ export const ProcurementRepairablePanel = forwardRef<
             <Button
               variant="destructive"
               className="h-11"
-              disabled={saving || !rejectReason.trim()}
+              disabled={rejectBlockerKey !== null}
               onClick={() => void rejectSelectedRequisition()}
             >
               {t("procurement.requisitions.reject.confirm")}
@@ -3247,6 +3407,16 @@ export const ProcurementRepairablePanel = forwardRef<
           setPoDetailOpen(false);
           openGoodsReceipt(receiptId);
         }}
+      />
+
+      <GoodsReturnDialog
+        line={returnLine}
+        onOpenChange={(open) => {
+          if (!open) setReturnLine(null);
+        }}
+        onReturned={(updated) =>
+          setGrLines((rows) => rows.map((row) => (row.id === updated.id ? updated : row)))
+        }
       />
 
       <RepairableDetailDialog
@@ -3405,6 +3575,9 @@ export const ProcurementRepairablePanel = forwardRef<
               <p className="text-xs text-text-muted">{t("procurement.poForm.currencyHint")}</p>
             </div>
           </div>
+          <ActionReason className="text-right" data-testid="inv-po-blocker">
+            {disabledText(poBlockerKey)}
+          </ActionReason>
           <DialogFooter className="gap-2">
             <Button
               type="button"
@@ -3417,11 +3590,7 @@ export const ProcurementRepairablePanel = forwardRef<
             <Button
               type="button"
               className="h-11"
-              disabled={
-                saving ||
-                poDialogReqId <= 0 ||
-                !approvedRequisitions.some((r) => r.id === poDialogReqId)
-              }
+              disabled={poBlockerKey !== null}
               onClick={() =>
                 void (async () => {
                   const created = { id: null as number | null };
@@ -3615,6 +3784,9 @@ export const ProcurementRepairablePanel = forwardRef<
               )}
             </div>
           ) : null}
+          <ActionReason className="text-right" data-testid="inv-repair-blocker">
+            {disabledText(repairBlockerKey)}
+          </ActionReason>
           <DialogFooter className="gap-2">
             <Button
               type="button"
@@ -3627,9 +3799,7 @@ export const ProcurementRepairablePanel = forwardRef<
             <Button
               type="button"
               className="h-11"
-              disabled={
-                saving || repairArticleId <= 0 || repairSourceLocationId <= 0 || repairQty <= 0
-              }
+              disabled={repairBlockerKey !== null}
               onClick={() =>
                 void (async () => {
                   const ok = await runSaving(async () => {
@@ -3763,13 +3933,16 @@ export const ProcurementRepairablePanel = forwardRef<
               <Label htmlFor="supplier-active">{t("procurement.suppliers.fields.active")}</Label>
             </div>
           </div>
+          <ActionReason className="text-right" data-testid="inv-supplier-blocker">
+            {disabledText(supplierBlockerKey)}
+          </ActionReason>
           <DialogFooter className="gap-2">
             <Button variant="outline" className="h-11" onClick={() => setSupplierEditOpen(false)}>
               {t("common:action.cancel")}
             </Button>
             <Button
               className="h-11"
-              disabled={saving || !supplierForm.code.trim() || !supplierForm.name.trim()}
+              disabled={supplierBlockerKey !== null}
               onClick={() => void saveSupplierForm()}
             >
               {t("common:action.save")}
@@ -3844,13 +4017,16 @@ export const ProcurementRepairablePanel = forwardRef<
               />
             </div>
           </div>
+          <ActionReason className="text-right" data-testid="inv-price-blocker">
+            {disabledText(priceBlockerKey)}
+          </ActionReason>
           <DialogFooter className="gap-2">
             <Button variant="outline" className="h-11" onClick={() => setPriceFormOpen(false)}>
               {t("common:action.cancel")}
             </Button>
             <Button
               className="h-11"
-              disabled={saving || priceFormArticleId <= 0 || !priceFormUnitPrice}
+              disabled={priceBlockerKey !== null}
               onClick={() => void savePriceForm()}
             >
               {t("common:action.save")}
@@ -3928,13 +4104,16 @@ export const ProcurementRepairablePanel = forwardRef<
               </Label>
             </div>
           </div>
+          <ActionReason className="text-right" data-testid="inv-doclink-blocker">
+            {disabledText(docLinkBlockerKey)}
+          </ActionReason>
           <DialogFooter className="gap-2">
             <Button variant="outline" className="h-11" onClick={() => setDocLinkFormOpen(false)}>
               {t("common:action.cancel")}
             </Button>
             <Button
               className="h-11"
-              disabled={saving || !docLinkFormRef.trim() || !docLinkFormPurpose}
+              disabled={docLinkBlockerKey !== null}
               onClick={() => void saveDocLinkForm()}
             >
               {t("common:action.save")}

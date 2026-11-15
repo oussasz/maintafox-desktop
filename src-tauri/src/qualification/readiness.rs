@@ -1,4 +1,4 @@
-use chrono::{NaiveDate, Utc};
+use chrono::NaiveDate;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use uuid::Uuid;
 
@@ -18,7 +18,7 @@ fn decode_err(field: &str, err: impl std::fmt::Display) -> AppError {
 }
 
 fn today_naive() -> NaiveDate {
-    Utc::now().date_naive()
+    crate::clock::now().date_naive()
 }
 
 fn parse_day(s: &str) -> Option<NaiveDate> {
@@ -427,7 +427,7 @@ pub async fn refresh_personnel_readiness_snapshot_payload(
 
     let payload_json = serde_json::to_string(&serde_json::json!({
         "period": period,
-        "generated_at": Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+        "generated_at": crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string(),
         "profile_count": profiles.len(),
         "rows": matrix,
     }))?;

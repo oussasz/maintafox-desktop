@@ -5,7 +5,6 @@
 //! the same year. A month cannot be closed while OTs closed in it still wait for settlement, so a
 //! closed month always holds the complete maintenance cost of its OTs.
 
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 use serde::{Deserialize, Serialize};
 
@@ -213,7 +212,7 @@ pub async fn close_budget_period<C: ConnectionTrait>(
             n = period.pending_settlements
         )]));
     }
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let notes = input.notes.map(|n| n.trim().to_string()).filter(|n| !n.is_empty());
     match period_row_id(db, input.fiscal_year, input.period_month).await? {
         Some(id) => {
@@ -270,7 +269,7 @@ pub async fn reopen_budget_period<C: ConnectionTrait>(
             ]))
         }
     };
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE budget_periods SET status = 'open', reopened_at = ?, reopened_by_id = ?,

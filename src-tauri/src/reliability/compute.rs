@@ -1,26 +1,24 @@
 use chrono::{DateTime, Duration, Utc};
 
-/// PRD §6.10.2 — inclusion flag for unplanned MTBF-eligible failure events.
-pub fn eligible_unplanned_mtbf(flags_json: &str) -> bool {
-    serde_json::from_str::<serde_json::Value>(flags_json)
-        .ok()
-        .and_then(|v| {
-            v.get("eligible_unplanned_mtbf").and_then(|x| {
-                if x.as_bool() == Some(true) || x.as_u64() == Some(1) {
-                    Some(true)
-                } else {
-                    x.as_i64().map(|i| i == 1)
-                }
-            })
-        })
-        == Some(true)
+/// A failure record counts in the MTBF (and in the failure count `F` of the KPI snapshot) when it
+/// is unplanned — every unplanned failure, whatever its coding (CMMS Advisor ruling 2026-11-05,
+/// the rule of `study::fleet_kpis`). Decided live from the record's `is_planned`, never from the
+/// frozen `failure_events.eligible_flags_json` flag (written once at work-order close, it is not
+/// updated when the coding is completed later and left uncoded failures out of the MTBF).
+#[must_use]
+pub fn counts_in_mtbf(is_planned: bool) -> bool {
+    !is_planned
 }
+
+/// SQL form of [`counts_in_mtbf`] on `failure_events` (no alias).
+pub const COUNTS_IN_MTBF_SQL: &str = "COALESCE(is_planned, 0) = 0";
 
 #[derive(Debug, Clone)]
 pub struct KpiFailureEvent {
     pub id: i64,
     pub event_ts: DateTime<Utc>,
-    pub eligible_flags_json: String,
+    /// [`counts_in_mtbf`], decided by the loader from the record.
+    pub counts_in_mtbf: bool,
     pub downtime_duration_hours: f64,
     pub active_repair_hours: f64,
     pub failure_mode_id: Option<i64>,
@@ -29,7 +27,9 @@ pub struct KpiFailureEvent {
 /// Version tag persisted on `reliability_kpi_snapshots.algorithm_version`.
 /// v2: exposure is treated as uptime; A_i / A_o split; MTTF for non-repairable items;
 /// additive totals persisted for pooled fleet ratios.
-pub const RELIABILITY_KPI_ALGORITHM_VERSION: &str = "reliability_kpi_v2";
+/// v3 (L2-10): every unplanned failure counts (`counts_in_mtbf`, decided live from `is_planned`),
+/// no longer the stored `eligible_flags_json` flag; `is_planned` is part of the dataset hash.
+pub const RELIABILITY_KPI_ALGORITHM_VERSION: &str = "reliability_kpi_v3";
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReliabilityKpiComputed {
@@ -92,7 +92,7 @@ pub fn compute_reliability_kpis(input: &ReliabilityKpiComputeInput) -> Reliabili
         .map(|e| Ev {
             id: e.id,
             ts: e.event_ts,
-            eligible: eligible_unplanned_mtbf(&e.eligible_flags_json),
+            eligible: e.counts_in_mtbf,
             downtime: e.downtime_duration_hours,
             active_r: e.active_repair_hours,
             mode: e.failure_mode_id,
@@ -184,7 +184,7 @@ mod tests {
         KpiFailureEvent {
             id,
             event_ts: ts(at),
-            eligible_flags_json: "{\"eligible_unplanned_mtbf\":true}".into(),
+            counts_in_mtbf: true,
             downtime_duration_hours: downtime,
             active_repair_hours: active,
             failure_mode_id: None,
@@ -233,5 +233,18 @@ mod tests {
         let k = compute_reliability_kpis(&input(false));
         assert_eq!(k.mtbf, None);
         assert_eq!(k.mttf, Some(300.0));
+    }
+
+    /// L2-10: only the live `is_planned` decides; a planned record is not a failure of the MTBF.
+    #[test]
+    fn only_unplanned_records_count_in_the_mtbf() {
+        assert!(counts_in_mtbf(false));
+        assert!(!counts_in_mtbf(true));
+        let mut i = input(true);
+        let mut planned = ev(3, "2026-01-25T00:00:00Z", 5.0, 1.0);
+        planned.counts_in_mtbf = counts_in_mtbf(true);
+        i.events.push(planned);
+        let k = compute_reliability_kpis(&i);
+        assert_eq!((k.event_count, k.mtbf), (2, Some(300.0)));
     }
 }

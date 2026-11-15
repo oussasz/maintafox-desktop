@@ -11,6 +11,11 @@ export interface WoLaborPersonOption {
   /** `personnel.id` as a string (Select value). */
   value: string;
   label: string;
+  /** Primary team, for the team filter (absent on people only known from past entries). */
+  teamId?: number | null;
+  teamName?: string | null;
+  /** The signed-in user's own card. */
+  isSelf?: boolean;
 }
 
 export function woLaborPersonLabel(p: WoLaborPerson): string {
@@ -50,7 +55,13 @@ export function useWoLaborPeople(): {
         if (cancelled) return;
         setOptions(
           rows
-            .map((p) => ({ value: String(p.personnel_id), label: woLaborPersonLabel(p) }))
+            .map((p) => ({
+              value: String(p.personnel_id),
+              label: woLaborPersonLabel(p),
+              teamId: p.team_id,
+              teamName: p.team_name,
+              isSelf: p.is_self,
+            }))
             .sort((a, b) => a.label.localeCompare(b.label)),
         );
         setFailed(false);

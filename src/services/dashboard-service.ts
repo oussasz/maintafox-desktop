@@ -3,6 +3,7 @@
 import { z } from "zod";
 
 import { invoke, invokeSilent } from "@/lib/ipc-invoke";
+import { FleetKpisSchema } from "@/services/reliability-study-service";
 import type {
   DashboardDiStatusChart,
   DashboardLayoutPayload,
@@ -53,6 +54,8 @@ const OverviewKpiCellSchema = z.object({
   quality_badge: z.string().nullable().optional(),
   value_kind: z.enum(["count", "percent", "hours", "currency"]),
   trend_sense: z.enum(["up-good", "up-bad", "neutral"]),
+  /** Fleet reliability cells: window and the live figures (`study::fleet_kpis`). */
+  fleet: z.object({ window_months: z.number(), kpis: FleetKpisSchema }).nullable().optional(),
 });
 
 const OverviewKpisPayloadSchema = z.object({

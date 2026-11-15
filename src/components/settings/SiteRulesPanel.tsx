@@ -37,13 +37,24 @@ import {
  * permit, may approve it.
  */
 export const SELF_APPROVAL_SITE_RULE = "reliability.decisions.allow_self_approval";
+/**
+ * Per-site rule: dépannages of the site are approved automatically at their close, with no
+ * validator (`wo::depannage_validation`, CMMS Advisor decision 2026-11-04).
+ */
+export const DEPANNAGE_AUTO_VALIDATION_SITE_RULE = "wo.depannage.auto_validation";
 /** Shortest reason accepted (same rule as the server). */
 const MIN_REASON_CHARS = 10;
 
 export function SiteRulesPanel({
   onToast,
+  rule = SELF_APPROVAL_SITE_RULE,
+  textKey = "selfApproval",
 }: {
   onToast: (msg: { title: string; variant?: "default" | "destructive" | "success" }) => void;
+  /** The site rule shown (a key of the backend's site settings). */
+  rule?: string;
+  /** Its texts under `siteRules.<textKey>` (label, help, active, title). */
+  textKey?: "selfApproval" | "depannageValidation";
 }) {
   const { t } = useTranslation("settings");
   const { formatDateTime } = useFormatters();
@@ -61,23 +72,26 @@ export function SiteRulesPanel({
     setLoading(true);
     setError(null);
     try {
-      setSites(await listSiteSettings(SELF_APPROVAL_SITE_RULE));
+      setSites(await listSiteSettings(rule));
     } catch (e) {
       setError(e);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [rule]);
 
-  const loadEvents = useCallback(async (site: number) => {
-    setEventsError(null);
-    try {
-      setEvents(await listSiteSettingEvents(site, SELF_APPROVAL_SITE_RULE));
-    } catch (e) {
-      setEvents(null);
-      setEventsError(e);
-    }
-  }, []);
+  const loadEvents = useCallback(
+    async (site: number) => {
+      setEventsError(null);
+      try {
+        setEvents(await listSiteSettingEvents(site, rule));
+      } catch (e) {
+        setEvents(null);
+        setEventsError(e);
+      }
+    },
+    [rule],
+  );
 
   useEffect(() => {
     void load();
@@ -97,7 +111,9 @@ export function SiteRulesPanel({
   return (
     <Card className="shadow-none">
       <CardHeader className="space-y-1 px-5 py-4">
-        <CardTitle className="text-base font-semibold">{t("siteRules.title")}</CardTitle>
+        <CardTitle className="text-base font-semibold">
+          {textKey === "selfApproval" ? t("siteRules.title") : t(`siteRules.${textKey}.title`)}
+        </CardTitle>
         <p className="text-xs text-text-secondary">{t("siteRules.hint")}</p>
       </CardHeader>
       <CardContent className="space-y-3 px-5 pb-4 pt-0">
@@ -137,14 +153,12 @@ export function SiteRulesPanel({
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0 flex-1 space-y-0.5">
                     <label
-                      htmlFor="site-rule-self-approval"
+                      htmlFor={`site-rule-${textKey}`}
                       className="text-sm font-medium text-text-primary"
                     >
-                      {t("siteRules.selfApproval.label")}
+                      {t(`siteRules.${textKey}.label`)}
                     </label>
-                    <p className="text-xs text-text-secondary">
-                      {t("siteRules.selfApproval.help")}
-                    </p>
+                    <p className="text-xs text-text-secondary">{t(`siteRules.${textKey}.help`)}</p>
                     <p className="flex flex-wrap items-center gap-2 text-xs text-text-secondary">
                       {site.value_unreadable ? (
                         <StatusChip
@@ -165,14 +179,14 @@ export function SiteRulesPanel({
                         <StatusChip
                           tone="warning"
                           icon={ShieldAlert}
-                          label={t("siteRules.selfApproval.active")}
+                          label={t(`siteRules.${textKey}.active`)}
                         />
                       ) : null}
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
                     <Switch
-                      id="site-rule-self-approval"
+                      id={`site-rule-${textKey}`}
                       checked={effective}
                       onCheckedChange={(checked) => {
                         setReason("");
@@ -226,9 +240,14 @@ export function SiteRulesPanel({
           if (!open) setPending(null);
         }}
         title={t("siteRules.confirmTitle", { site: site?.site_name ?? "" })}
-        description={t(pending ? "siteRules.confirmOnBody" : "siteRules.confirmOffBody", {
-          site: site?.site_name ?? "",
-        })}
+        description={t(
+          textKey === "selfApproval"
+            ? pending
+              ? "siteRules.confirmOnBody"
+              : "siteRules.confirmOffBody"
+            : `siteRules.${textKey}.${pending ? "confirmOnBody" : "confirmOffBody"}`,
+          { site: site?.site_name ?? "" },
+        )}
         confirmLabel={t("siteRules.confirm")}
         destructive={pending === true}
         confirmDisabled={reason.trim().length < MIN_REASON_CHARS}
@@ -238,7 +257,7 @@ export function SiteRulesPanel({
             await withStepUp(() =>
               setSiteSetting({
                 site_node_id: site.site_node_id,
-                key: SELF_APPROVAL_SITE_RULE,
+                key: rule,
                 value: pending,
                 reason: reason.trim(),
                 expected_row_version: site.row_version,

@@ -76,6 +76,52 @@ pub async fn validate_backup_file(state: State<'_, AppState>, backup_path: Strin
     backup::validate_backup_file(&state.db, &backup_path, key.as_ref()).await
 }
 
+/// Where scheduled backups go and when the last copy outside the PC was made (L7-03).
+/// Requires: active session + adm.settings
+#[tauri::command]
+pub async fn get_backup_overview(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> AppResult<backup::destination::BackupOverview> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ADM_SETTINGS,
+        PermissionScope::Global
+    );
+    backup::destination::overview(&state.db, &app_backup_dir(&app)?).await
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetBackupExternalDirPayload {
+    /// The folder, or `None` to stop writing scheduled backups outside the PC.
+    pub path: Option<String>,
+}
+
+/// Sets this PC's folder for scheduled backups outside its disk (checked: exists, writable, not
+/// the application's folder). Requires: active session + adm.settings + recent step-up
+#[tauri::command]
+pub async fn set_backup_external_dir(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    payload: SetBackupExternalDirPayload,
+) -> AppResult<Option<String>> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ADM_SETTINGS,
+        PermissionScope::Global
+    );
+    require_step_up!(state);
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("app_data_dir: {e}")))?;
+    backup::destination::set_external_dir(&state.db, payload.path.as_deref(), &app_data_dir, user.user_id).await
+}
+
 /// Directory for backups the application writes on its own (scheduled, pre-restore, pre-reset).
 pub(crate) fn app_backup_dir(app: &AppHandle) -> AppResult<std::path::PathBuf> {
     let dir = app

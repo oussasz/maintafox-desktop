@@ -82,7 +82,7 @@ async fn run_scheduler_tick(pool: &SqlitePool) -> Result<()> {
         .await
         .map(|l| l.to_ascii_lowercase().starts_with("fr"))
         .unwrap_or(true);
-    let now = Utc::now();
+    let now = crate::clock::now();
     for stage in stages() {
         let txn = pool.begin().await?;
         begin_suppression(&txn).await?;

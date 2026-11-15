@@ -372,6 +372,18 @@ See also: [`VPS_SYNC_EXCHANGE.md`](./VPS_SYNC_EXCHANGE.md) for the frozen Fastif
   snapshot bootstrap of a new device, lost answer then resend applied once, backup restore then
   snapshot, library files through object storage (also after a delayed upload), revoked device. A few minutes with a warm Rust build (`--skip-api-build` reuses the API
   build).
+- **Mobile sync proof (Android field app, step 0):** `pnpm sync:harness --mobile-proof`, with
+  `MAINTAFOX_VENDOR_CONSOLE_DIR` on a control API that has the mobile device class. Licence with
+  `max_machines: 2, max_mobile_devices: 1`; API on 127.0.0.1:47831 (`MAINTAFOX_MOBILE_PROOF_PORT`),
+  reached by a USB phone through `adb reverse tcp:47831 tcp:47831`. `sync::mobile_proof_tests` is the
+  desktop (encrypted database file, production sync access): activation, plant join (first pull,
+  then first administrator), a Maintenance Technician account (generated password, stdout only),
+  one equipment, one work order assigned to the technician, then `MOBILE_PROOF_READY`. It waits
+  for a request reported on the phone (`MAINTAFOX_MOBILE_PROOF_WAIT_SECS`, default 1200 s), prints
+  `MOBILE_PROOF_DI` with its uplink time (phone `created_at` to arrival, so phone clock included),
+  marks the work order ready and prints `MOBILE_PROOF_DOWNLINK`; the API stays up
+  `MAINTAFOX_MOBILE_PROOF_HOLD_SECS` (default 300 s) for the phone to pull it. The downlink arrival
+  is checked on the phone.
 - Golden fixtures: `src-tauri/src/sync/fixtures/exchange_request_v1.json`, `exchange_response_v1.json`
 - `cargo check`, `pnpm typecheck`, `cargo test --lib sync::` / `vps::`
 - Transport: `cargo test --lib -- sync::transport` (worker against an in-process HTTP stub: push/pull,

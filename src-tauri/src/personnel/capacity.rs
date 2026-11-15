@@ -108,7 +108,7 @@ pub struct TeamDayCapacity {
     pub people_scheduled: i64,
     /// Members with a shift that day fully absent.
     pub people_absent: i64,
-    /// `roster` | `rest_day` | `holiday` | `no_schedule` | `no_members`.
+    /// `roster` | `rest_day` | `site_rest_day` | `holiday` | `no_schedule` | `no_members`.
     pub basis: String,
     /// Planner's overtime ceiling for the day (`capacity_rules`), if any.
     pub rule_overtime_hours: Option<f64>,
@@ -612,7 +612,7 @@ pub async fn team_capacity_range(
             rule_overtime_hours: overtime_rule(db, team_id, day).await?,
             members: Vec::new(),
         };
-        let (mut holidays, mut rests) = (0, 0);
+        let (mut holidays, mut rests, mut site_rests) = (0, 0, 0);
         for (pid, percent) in allocation {
             let person = &facts[&pid];
             let d = person_day(person, day, &links, &book);
@@ -623,7 +623,8 @@ pub async fn team_capacity_range(
             cap.people += 1;
             match d.reason.as_str() {
                 "holiday" => holidays += 1,
-                "rest_day" | "site_rest_day" => rests += 1,
+                "rest_day" => rests += 1,
+                "site_rest_day" => site_rests += 1,
                 _ => {}
             }
             if d.scheduled_minutes > 0 {
@@ -660,6 +661,8 @@ pub async fn team_capacity_range(
             "holiday"
         } else if rests > 0 {
             "rest_day"
+        } else if site_rests > 0 {
+            "site_rest_day"
         } else {
             "no_schedule"
         }

@@ -260,7 +260,7 @@ pub async fn create_unit_conversion<C: ConnectionTrait + TransactionTrait>(
         ]));
     }
     let sync_id = crate::sync::identity::new_entity_sync_id();
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO unit_conversions (entity_sync_id, from_unit_value_id, to_unit_value_id, article_id, factor, \
@@ -302,7 +302,7 @@ async fn bump(
     set_sql: &str,
     mut values: Vec<sea_orm::Value>,
 ) -> AppResult<()> {
-    values.push(chrono::Utc::now().to_rfc3339().into());
+    values.push(crate::clock::now().to_rfc3339().into());
     values.push(id.into());
     values.push(expected_row_version.into());
     let res = conn

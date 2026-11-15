@@ -28,6 +28,8 @@ pub mod event_type {
     pub const PERMISSION_DENIED: &str = "permission.denied";
     pub const ROLE_ASSIGNED: &str = "role.assigned";
     pub const ROLE_REVOKED: &str = "role.revoked";
+    /// A plant-wide assignment ended because a narrower one replaced it (`detail.replaced_by_assignment_id`).
+    pub const ROLE_REPLACED: &str = "role.replaced";
     pub const PERMISSION_GRANTED: &str = "permission.granted";
     pub const PERMISSION_REMOVED: &str = "permission.removed";
     pub const USER_CREATED: &str = "user.created";

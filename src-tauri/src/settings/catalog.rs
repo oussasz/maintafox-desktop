@@ -116,6 +116,91 @@ pub const SETTINGS_CATALOG: &[SettingDefinition] = &[
         editor: SettingEditor::Section,
         risk: "low",
     },
+    // ── Work permits ────────────────────────────────────────────────────────────────────────
+    // Acceptance limits of a permit's gas test (L4-04, migration 290): a permit that needs a gas
+    // test is issued only when its latest reading is within them (`permit::safety_content`).
+    // Shipped values: the usual confined-space limits (O2 19.5-23.5 %, LEL < 10 %, H2S < 10 ppm,
+    // CO < 25 ppm). Safety values: a change needs a step-up and a reason.
+    // Lowest oxygen reading accepted (%, inclusive).
+    SettingDefinition {
+        key: crate::permit::safety_content::SETTING_GAS_O2_MIN,
+        category: "permits",
+        scope: "tenant",
+        shipped_value_json: r"19.5",
+        kind: SettingKind::Decimal {
+            min_millionths: 0,
+            max_millionths: 100_000_000,
+        },
+        editor: SettingEditor::Section,
+        risk: "high",
+    },
+    // Highest oxygen reading accepted (%, inclusive).
+    SettingDefinition {
+        key: crate::permit::safety_content::SETTING_GAS_O2_MAX,
+        category: "permits",
+        scope: "tenant",
+        shipped_value_json: r"23.5",
+        kind: SettingKind::Decimal {
+            min_millionths: 0,
+            max_millionths: 100_000_000,
+        },
+        editor: SettingEditor::Section,
+        risk: "high",
+    },
+    // Flammable gas (% of the lower explosive limit): a reading must stay below it.
+    SettingDefinition {
+        key: crate::permit::safety_content::SETTING_GAS_LEL_MAX,
+        category: "permits",
+        scope: "tenant",
+        shipped_value_json: r"10",
+        kind: SettingKind::Decimal {
+            min_millionths: 0,
+            max_millionths: 100_000_000,
+        },
+        editor: SettingEditor::Section,
+        risk: "high",
+    },
+    // Hydrogen sulphide (ppm): a reading must stay below it.
+    SettingDefinition {
+        key: crate::permit::safety_content::SETTING_GAS_H2S_MAX,
+        category: "permits",
+        scope: "tenant",
+        shipped_value_json: r"10",
+        kind: SettingKind::Decimal {
+            min_millionths: 0,
+            max_millionths: 1_000_000_000,
+        },
+        editor: SettingEditor::Section,
+        risk: "high",
+    },
+    // Carbon monoxide (ppm), when measured: a reading must stay below it.
+    SettingDefinition {
+        key: crate::permit::safety_content::SETTING_GAS_CO_MAX,
+        category: "permits",
+        scope: "tenant",
+        shipped_value_json: r"25",
+        kind: SettingKind::Decimal {
+            min_millionths: 0,
+            max_millionths: 10_000_000_000,
+        },
+        editor: SettingEditor::Section,
+        risk: "high",
+    },
+    // Re-test interval of a gas test (hours; CMMS Advisor 2026-11-11): a reading older than this is
+    // out of date at the issue, the activation, the reinstatement and each start or resume of the
+    // work. Shipped value 4 h; between a quarter of an hour and 24 h.
+    SettingDefinition {
+        key: crate::permit::safety_content::SETTING_GAS_VALIDITY_HOURS,
+        category: "permits",
+        scope: "tenant",
+        shipped_value_json: r"4",
+        kind: SettingKind::Decimal {
+            min_millionths: 250_000,
+            max_millionths: 24_000_000,
+        },
+        editor: SettingEditor::Section,
+        risk: "high",
+    },
     // ── Inventory ───────────────────────────────────────────────────────────────────────────
     // Four-eyes tolerance of a stock count variance (D11, migration 259): above it ("critique"), the
     // variance is approved by someone other than the counter. Above = any threshold set is exceeded
@@ -171,6 +256,26 @@ pub const SETTINGS_CATALOG: &[SettingDefinition] = &[
         editor: SettingEditor::Section,
         risk: "low",
     },
+    // Repeat failures (L2-09): an equipment is flagged when it has at least this many unplanned
+    // failures within the window below (`assets::repeat_failures`).
+    SettingDefinition {
+        key: crate::assets::repeat_failures::SETTING_COUNT,
+        category: "reliability",
+        scope: "tenant",
+        shipped_value_json: r"3",
+        kind: SettingKind::Integer { min: 2, max: 100 },
+        editor: SettingEditor::Section,
+        risk: "low",
+    },
+    SettingDefinition {
+        key: crate::assets::repeat_failures::SETTING_WINDOW_DAYS,
+        category: "reliability",
+        scope: "tenant",
+        shipped_value_json: r"90",
+        kind: SettingKind::Integer { min: 1, max: 3650 },
+        editor: SettingEditor::Section,
+        risk: "low",
+    },
     // Former home of the FMECA rating grids: read once to seed Données de référence
     // (`reliability::study::scales::ensure_fmeca_rating_scales`), then no longer used.
     SettingDefinition {
@@ -210,6 +315,17 @@ pub const SETTINGS_CATALOG: &[SettingDefinition] = &[
         kind: SettingKind::Integer { min: 0, max: 120 },
         editor: SettingEditor::Section,
         risk: "low",
+    },
+    // A folder outside this PC's disk (USB disk, network share) for scheduled backups (L7-03).
+    // One PC's own folder: never sent to the other PCs. Set by the Backups panel (folder checked).
+    SettingDefinition {
+        key: "backup.external_dir",
+        category: "backup",
+        scope: "device",
+        shipped_value_json: r"null",
+        kind: SettingKind::ModuleManaged,
+        editor: SettingEditor::Dedicated,
+        risk: "high",
     },
     // ── Printed documents ───────────────────────────────────────────────────────────────────
     SettingDefinition {
@@ -354,14 +470,52 @@ const HEADER_ATTRIBUTES: &[&str] = &[
     "class", "style", "src", "alt", "width", "height", "align", "colspan", "rowspan",
 ];
 
+/// Largest header the engine stores, in bytes (the editor refuses a larger one before saving,
+/// `src/lib/document-header-sanitize.ts`).
+pub const HEADER_MAX_BYTES: usize = 200_000;
+
+/// A parameter value safe inside a coded refusal (`CODE:key=value`): no separator, no space.
+fn header_param(raw: &str) -> String {
+    let cleaned: String = raw
+        .chars()
+        .take(40)
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if cleaned.is_empty() {
+        "_".to_string()
+    } else {
+        cleaned
+    }
+}
+
 /// Check the header HTML against the editor's allowlist: only listed tags and attributes, no
 /// comments, no script URLs or CSS expressions. The editor sanitizes before saving, so a header
-/// that fails here did not come from it.
+/// that fails here did not come from it. A refusal is a coded sentence
+/// (`GATE_SET_HEADER_*:param=value: english detail`) that the screen translates from its code.
 pub fn validate_header_html(html: &str) -> Result<(), String> {
+    if html.len() > HEADER_MAX_BYTES {
+        let size_kb = html.len().div_ceil(1000);
+        let max_kb = HEADER_MAX_BYTES / 1000;
+        return Err(format!(
+            "GATE_SET_HEADER_TOO_LARGE:size_kb={size_kb}:max_kb={max_kb}: the header is too large ({size_kb} KB, {max_kb} KB maximum)"
+        ));
+    }
     let lower = html.to_ascii_lowercase();
-    for forbidden in ["<!--", "javascript:", "vbscript:", "expression(", "<![cdata["] {
+    if lower.contains("<!--") {
+        return Err("GATE_SET_HEADER_COMMENT: the header contains a comment, which is not allowed".to_string());
+    }
+    for forbidden in ["javascript:", "vbscript:", "expression(", "<![cdata["] {
         if lower.contains(forbidden) {
-            return Err(format!("the header contains '{forbidden}', which is not allowed"));
+            return Err(format!(
+                "GATE_SET_HEADER_SCRIPT:content={}: the header contains '{forbidden}', which is not allowed",
+                header_param(forbidden)
+            ));
         }
     }
     let bytes = lower.as_bytes();
@@ -377,8 +531,14 @@ pub fn validate_header_html(html: &str) -> Result<(), String> {
             j += 1;
         }
         let name = &lower[name_start..j];
-        if name.is_empty() || !HEADER_TAGS.contains(&name) {
-            return Err(format!("the tag <{name}> is not allowed in the header"));
+        if name.is_empty() {
+            return Err("GATE_SET_HEADER_STRAY_BRACKET: the header contains a '<' that opens no tag".to_string());
+        }
+        if !HEADER_TAGS.contains(&name) {
+            return Err(format!(
+                "GATE_SET_HEADER_TAG_FORBIDDEN:tag={}: the tag <{name}> is not allowed in the header",
+                header_param(name)
+            ));
         }
         // Attributes until the closing '>'.
         loop {
@@ -386,7 +546,12 @@ pub fn validate_header_html(html: &str) -> Result<(), String> {
                 j += 1;
             }
             match bytes.get(j) {
-                None => return Err("the header has an unclosed tag".into()),
+                None => {
+                    return Err(format!(
+                        "GATE_SET_HEADER_UNCLOSED_TAG:tag={}: the header has an unclosed tag",
+                        header_param(name)
+                    ))
+                }
                 Some(b'>') => break,
                 _ => {}
             }
@@ -396,7 +561,11 @@ pub fn validate_header_html(html: &str) -> Result<(), String> {
             }
             let attr = &lower[attr_start..j];
             if !HEADER_ATTRIBUTES.contains(&attr) {
-                return Err(format!("the attribute '{attr}' is not allowed in the header"));
+                return Err(format!(
+                    "GATE_SET_HEADER_ATTRIBUTE_FORBIDDEN:attribute={}:tag={}: the attribute '{attr}' is not allowed in the header",
+                    header_param(attr),
+                    header_param(name)
+                ));
             }
             while j < bytes.len() && bytes[j].is_ascii_whitespace() {
                 j += 1;
@@ -409,7 +578,10 @@ pub fn validate_header_html(html: &str) -> Result<(), String> {
                 match bytes.get(j) {
                     Some(&q) if q == b'"' || q == b'\'' => {
                         let Some(end) = lower[j + 1..].find(q as char) else {
-                            return Err("the header has an unclosed attribute value".into());
+                            return Err(format!(
+                                "GATE_SET_HEADER_UNCLOSED_TAG:tag={}: the header has an unclosed attribute value",
+                                header_param(name)
+                            ));
                         };
                         j += end + 2;
                     }
@@ -524,14 +696,7 @@ pub fn validate_value(def: &SettingDefinition, value_json: &str) -> AppResult<St
                 ));
             }
             let html = obj.get("html").and_then(serde_json::Value::as_str).unwrap_or("");
-            if html.len() > 200_000 {
-                return Err(invalid(
-                    def.key,
-                    "GATE_SET_HEADER_INVALID",
-                    "the header is too large (200 KB maximum)",
-                ));
-            }
-            validate_header_html(html).map_err(|m| invalid(def.key, "GATE_SET_HEADER_INVALID", m))?;
+            validate_header_html(html).map_err(|coded| AppError::ValidationFailed(vec![coded]))?;
             Ok(serde_json::to_string(&value)?)
         }
         SettingKind::ModuleManaged => Err(invalid(
@@ -603,6 +768,27 @@ pub async fn decimal_setting<C: ConnectionTrait>(db: &C, key: &str) -> AppResult
     let raw: String = row.try_get("", "setting_value_json")?;
     let canonical = validate_value(def, &raw)?;
     serde_json::from_str(&canonical).map_err(|_| invalid(key, "GATE_SET_VALUE_NOT_NUMBER", "expected a number"))
+}
+
+/// An integer setting's value, checked against its catalog bounds. A missing or out-of-bounds
+/// value is an error: nothing is computed on a guessed value.
+pub async fn integer_setting<C: ConnectionTrait>(db: &C, key: &str) -> AppResult<i64> {
+    let def = definition(key)
+        .filter(|d| matches!(d.kind, SettingKind::Integer { .. }))
+        .ok_or_else(|| AppError::ValidationFailed(vec![format!("{key}: not an integer setting of the catalog")]))?;
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT setting_value_json FROM app_settings WHERE setting_key = ? AND setting_scope = ?",
+            [def.key.into(), def.scope.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::ValidationFailed(vec![format!("{key}: the setting is missing")]))?;
+    let raw: String = row.try_get("", "setting_value_json")?;
+    let canonical = validate_value(def, &raw)?;
+    canonical
+        .parse::<i64>()
+        .map_err(|_| invalid(key, "GATE_SET_VALUE_NOT_INTEGER", "expected a whole number"))
 }
 
 /// An optional decimal setting's value: `None` when blank (no row), never read as zero. A stored
@@ -920,6 +1106,44 @@ mod tests {
             "a bare '<' is refused"
         );
         assert!(validate_header_html("").is_ok());
+    }
+
+    /// The same sample as the editor's test (`src/lib/__tests__/document-header-sanitize.test.ts`):
+    /// text, formatting, a table and a pasted picture as the sanitizer writes them.
+    #[test]
+    fn header_sample_from_the_editor_is_accepted() {
+        let sample = concat!(
+            r#"<h2 style="text-align: center">Atelier Nord</h2>"#,
+            r#"<p><strong>Maintafox</strong> <em>GMAO</em> <u>usine</u> <s>x</s></p>"#,
+            r#"<ul><li>Ligne 1</li></ul><ol><li>Ligne 2</li></ol>"#,
+            r#"<table style="width: 100%"><thead><tr><th colspan="2">Site</th></tr></thead>"#,
+            r#"<tbody><tr><td rowspan="1" align="left">A &amp; B &lt; C</td><td>1</td></tr></tbody></table>"#,
+            r#"<p><br></p><img src="data:image/png;base64,iVBORw0KGgo=" alt="Logo" width="80" height="40">"#,
+        );
+        assert_eq!(validate_header_html(sample), Ok(()));
+    }
+
+    #[test]
+    fn header_refusals_carry_a_reason_code_and_parameters() {
+        let big = format!("<p>{}</p>", "a".repeat(HEADER_MAX_BYTES));
+        let err = validate_header_html(&big).unwrap_err();
+        assert!(
+            err.starts_with("GATE_SET_HEADER_TOO_LARGE:size_kb=201:max_kb=200:"),
+            "{err}"
+        );
+        let err = validate_header_html("<p>x</p><script>1</script>").unwrap_err();
+        assert!(err.starts_with("GATE_SET_HEADER_TAG_FORBIDDEN:tag=script:"), "{err}");
+        let err = validate_header_html(r#"<p onclick="x">a</p>"#).unwrap_err();
+        assert!(
+            err.starts_with("GATE_SET_HEADER_ATTRIBUTE_FORBIDDEN:attribute=onclick:tag=p:"),
+            "{err}"
+        );
+        let err = validate_header_html("<p>a</p><!-- note -->").unwrap_err();
+        assert!(err.starts_with("GATE_SET_HEADER_COMMENT:"), "{err}");
+        let err = validate_header_html("<p>a</p><b").unwrap_err();
+        assert!(err.starts_with("GATE_SET_HEADER_UNCLOSED_TAG:tag=b:"), "{err}");
+        let err = validate_header_html("3 < 4").unwrap_err();
+        assert!(err.starts_with("GATE_SET_HEADER_STRAY_BRACKET:"), "{err}");
     }
 
     #[test]

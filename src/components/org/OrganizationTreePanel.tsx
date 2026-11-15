@@ -17,7 +17,7 @@ import { useTranslation } from "react-i18next";
 import { PermissionGate } from "@/components/PermissionGate";
 import { SmartFilterBar } from "@/components/filters/SmartFilterBar";
 import type { SmartFilterDef } from "@/components/filters/smart-filter-types";
-import { orgNodeStatusLabel } from "@/components/org/org-display";
+import { isTechnicalRootCode, orgNodeStatusLabel } from "@/components/org/org-display";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { StatusChip } from "@/components/ui/status-chip";
@@ -401,7 +401,9 @@ export function OrganizationTreePanel({
                 )}
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
-                    <span className="font-mono text-xs text-text-muted">{node.code}</span>
+                    {!isTechnicalRootCode(node) && (
+                      <span className="font-mono text-xs text-text-muted">{node.code}</span>
+                    )}
                     <span
                       className={cn(
                         "text-sm font-medium truncate",
@@ -435,7 +437,10 @@ export function OrganizationTreePanel({
                 <div className="flex items-center gap-3 shrink-0 text-xs text-text-muted">
                   {node.child_count > 0 && (
                     <span title={t("designer.childCount")}>
-                      {formatNumber(node.child_count)} {t("designer.children")}
+                      {t("designer.childrenCount", {
+                        count: node.child_count,
+                        n: formatNumber(node.child_count),
+                      })}
                     </span>
                   )}
                   {node.active_responsibility_count > 0 && (
@@ -445,7 +450,10 @@ export function OrganizationTreePanel({
                   )}
                   {node.active_binding_count > 0 && (
                     <span title={t("designer.bindingCount")}>
-                      {formatNumber(node.active_binding_count)} {t("designer.bindings")}
+                      {t("designer.bindingsCount", {
+                        count: node.active_binding_count,
+                        n: formatNumber(node.active_binding_count),
+                      })}
                     </span>
                   )}
                 </div>

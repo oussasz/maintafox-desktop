@@ -56,26 +56,20 @@ pub async fn insert_contract_version(
     version_semver: &str,
     content_sha256: &str,
 ) -> AppResult<i64> {
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO analytics_contract_versions (entity_sync_id, row_version, contract_id, \
-         version_semver, content_sha256) VALUES (?, 1, ?, ?, ?)",
-        [
-            entity_sync_id.into(),
-            contract_id.into(),
-            version_semver.into(),
-            content_sha256.into(),
-        ],
-    ))
-    .await?;
-    let row = db
-        .query_one(Statement::from_string(
+    let inserted = db
+        .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT last_insert_rowid() AS id".to_string(),
+            "INSERT INTO analytics_contract_versions (entity_sync_id, row_version, contract_id, \
+         version_semver, content_sha256) VALUES (?, 1, ?, ?, ?)",
+            [
+                entity_sync_id.into(),
+                contract_id.into(),
+                version_semver.into(),
+                content_sha256.into(),
+            ],
         ))
-        .await?
-        .ok_or_else(|| crate::errors::AppError::Internal(anyhow::anyhow!("last_insert_rowid")))?;
-    row.try_get("", "id").map_err(|e| map_err("id", e))
+        .await?;
+    crate::db::inserted_id(&inserted)
 }
 
 pub async fn get_contract_version_by_id(

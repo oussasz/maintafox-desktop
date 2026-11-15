@@ -313,7 +313,7 @@ const DETECTION_METHODS: &[Row] = &[
     ("other", "Autre", "Other", "10"),
 ];
 
-async fn ensure_domain(conn: &impl ConnectionTrait, code: &str, name: &str) -> AppResult<()> {
+pub(crate) async fn ensure_domain(conn: &impl ConnectionTrait, code: &str, name: &str) -> AppResult<()> {
     let category = derive_category_for_persist(code, "tenant_managed");
     conn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,

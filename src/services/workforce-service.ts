@@ -48,6 +48,7 @@ export type PersonDayCapacity = z.infer<typeof PersonDayCapacitySchema>;
 export const TEAM_CAPACITY_BASES = [
   "roster",
   "rest_day",
+  "site_rest_day",
   "holiday",
   "no_schedule",
   "no_members",
@@ -396,6 +397,15 @@ const ExternalCompanyRecordSchema = z.object({
   service_domain: z.string().nullable(),
   contract_start: z.string().nullable(),
   contract_end: z.string().nullable(),
+  contract_number: z.string().nullable().default(null),
+  contract_amount: z.number().nullable().default(null),
+  contract_alert_days: z.number().default(30),
+  consumed_amount: z.number().default(0),
+  contract_state: z.enum(["none", "active", "expiring", "expired"]).default("none"),
+  contract_days_left: z.number().nullable().default(null),
+  wo_count: z.number().default(0),
+  wo_closed_with_deadline: z.number().default(0),
+  wo_on_time: z.number().default(0),
   onboarding_status: z.string(),
   insurance_status: z.string(),
   notes: z.string().nullable(),
@@ -410,6 +420,9 @@ export interface ExternalCompanyUpdateInput {
   service_domain?: string | null;
   contract_start?: string | null;
   contract_end?: string | null;
+  contract_number?: string | null;
+  contract_amount?: number | null;
+  contract_alert_days?: number;
   onboarding_status: string;
   insurance_status: string;
   notes?: string | null;

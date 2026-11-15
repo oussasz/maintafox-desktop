@@ -92,6 +92,21 @@ fn updater_public_key(manifest_dir: &Path) -> Option<String> {
     Some(key.to_string())
 }
 
+/// How this build reaches users: `direct` (default: the installer from the release workflow, with
+/// in-app updates) or `store` (the Microsoft Store MSIX package: the Store installs every update,
+/// so the build has no updater at all). Any other value stops the build.
+const DISTRIBUTION_ENV: &str = "MAINTAFOX_DISTRIBUTION";
+
+fn store_distribution() -> bool {
+    println!("cargo:rerun-if-env-changed={DISTRIBUTION_ENV}");
+    println!("cargo::rustc-check-cfg=cfg(maintafox_store)");
+    match std::env::var(DISTRIBUTION_ENV).ok().as_deref().map(str::trim) {
+        None | Some("" | "direct") => false,
+        Some("store") => true,
+        Some(other) => panic!("{DISTRIBUTION_ENV} must be `direct` or `store`, not `{other}`"),
+    }
+}
+
 fn main() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let root = manifest_dir
@@ -100,8 +115,15 @@ fn main() {
         .to_path_buf();
     let url = control_plane_api_base_url(&root);
     println!("cargo:rustc-env=MAINTAFOX_CONTROL_PLANE_API_BASE_URL={url}");
-    match updater_public_key(manifest_dir) {
+    let store = store_distribution();
+    if store {
+        // The Store signs and updates the package: no updater key is embedded, whatever is on disk.
+        println!("cargo:rustc-cfg=maintafox_store");
+        println!("cargo:warning=Microsoft Store build: no in-app updater (the Store installs updates).");
+    }
+    match updater_public_key(manifest_dir).filter(|_| !store) {
         Some(key) => println!("cargo:rustc-env=MAINTAFOX_UPDATER_PUBKEY={key}"),
+        None if store => {}
         None => println!(
             "cargo:warning=No updater public key ({UPDATER_KEY_DIR}/{UPDATER_PUBLIC_KEY_FILE}): this build has no in-app updates. The owner creates it with scripts/release/setup-updater-key.ps1."
         ),

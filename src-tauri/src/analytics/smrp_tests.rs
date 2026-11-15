@@ -308,6 +308,29 @@ async fn pm_compliance_and_pm_overdue_from_occurrences() {
         (1, 1, 1, 1, 1)
     );
     assert_eq!(page.compliance_pct, r.value_pct);
+    // L7-26: the split by site and by trade counts the same judged occurrences as the total.
+    let split = crate::pm::compliance::compliance_breakdown(
+        &db,
+        now - Duration::days(30),
+        now,
+        now,
+        crate::pm::compliance::ComplianceScope::default(),
+    )
+    .await
+    .unwrap();
+    let sum = |g: &[crate::pm::compliance::PmComplianceGroup]| {
+        g.iter()
+            .fold((0, 0), |(d, o), x| (d + x.due_count, o + x.on_time_count))
+    };
+    assert_eq!(
+        sum(&split.by_site),
+        (4, 1),
+        "every judged occurrence has one site group"
+    );
+    assert_eq!(split.by_team.len(), 1, "the plan has no team: one 'no team' group");
+    assert_eq!(split.by_team[0].id, None);
+    assert_eq!(sum(&split.by_team), (4, 1));
+    assert_eq!(split.by_team[0].compliance_pct, r.value_pct);
     let prev = smrp::pm_compliance(&db, SmrpWindow::last_days(now, 30).previous(), now, None)
         .await
         .unwrap();
@@ -803,6 +826,18 @@ async fn backlog_weeks_from_crew_schedules() {
     assert!((b.backlog_hours - 20.0).abs() < 1e-9, "{b:?}");
     assert!((b.ready_backlog_hours - 6.0).abs() < 1e-9);
     assert_eq!((b.open_work_orders, b.work_orders_without_estimate), (4, 1));
+    // L1-21: the OT without estimate is named; no team assigned → one "unassigned" row.
+    assert_eq!(
+        b.without_estimate_list
+            .iter()
+            .map(|w| w.code.as_str())
+            .collect::<Vec<_>>(),
+        vec!["B4"]
+    );
+    assert_eq!(b.by_team.len(), 1, "{:?}", b.by_team);
+    assert_eq!(b.by_team[0].team_name, None);
+    assert_eq!((b.by_team[0].work_orders, b.by_team[0].without_estimate), (4, 1));
+    assert!((b.by_team[0].backlog_hours - 20.0).abs() < 1e-9);
     // The backlog figure is "open (work to do)": the OT list's `open_only` filter lists it.
     assert_eq!(b.open_work_orders_rule, crate::wo::backlog::RULE_OPEN_WORK_TO_DO);
     let listed = crate::wo::queries::list_work_orders(

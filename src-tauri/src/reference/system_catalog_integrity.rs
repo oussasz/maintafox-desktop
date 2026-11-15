@@ -17,6 +17,8 @@ const SYSTEM_META: &str = r#"{"origin":"system"}"#;
 /// Ensure all system-governed reference catalogs exist after wipe/drift.
 pub async fn ensure_system_reference_catalog_integrity(db: &DatabaseConnection) -> AppResult<()> {
     taxonomy_reference::ensure_equipment_taxonomy_reference_integrity(db).await?;
+    // Technical characteristics per family (COMPANY list), after the families they hang under.
+    crate::assets::characteristics::ensure_characteristic_catalog(db).await?;
     ensure_di_reference_catalog(db).await?;
     ensure_personnel_skills_reference_catalog(db).await?;
     ensure_work_failure_modes_reference_catalog(db).await?;
@@ -25,6 +27,8 @@ pub async fn ensure_system_reference_catalog_integrity(db: &DatabaseConnection) 
     ensure_org_schedule_class_reference_catalog(db).await?;
     // WO close-out coding (symptoms, causes, effects, mechanisms, detection methods).
     crate::wo::closeout_reference_catalog::ensure_closeout_reference_catalogs(db).await?;
+    // Failure modes per equipment family (ISO 14224) and the corrective remedies list.
+    crate::wo::failure_catalogue::ensure_failure_catalogue(db).await?;
     // Shared DI / OT urgency scale and the OT types with their maintenance nature.
     crate::reference::urgency_scale::ensure_urgency_scale(db).await?;
     // FMECA rating grids (severity, occurrence, detection, criticality zones).

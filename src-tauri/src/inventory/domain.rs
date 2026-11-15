@@ -223,6 +223,7 @@ pub struct InventoryReorderRecommendation {
     pub article_name: String,
     pub warehouse_id: i64,
     pub warehouse_code: String,
+    pub warehouse_name: String,
     pub min_stock: f64,
     pub reorder_point: f64,
     pub max_stock: Option<f64>,
@@ -247,6 +248,7 @@ pub struct InventoryReplenishmentRecommendation {
     pub article_name: String,
     pub warehouse_id: i64,
     pub warehouse_code: String,
+    pub warehouse_name: String,
     pub min_stock: f64,
     pub reorder_point: f64,
     pub max_stock: Option<f64>,
@@ -932,6 +934,10 @@ pub struct GoodsReceiptLine {
     pub actual_lead_time_days: Option<f64>,
     pub status: String,
     pub created_at: String,
+    /// Quantity already sent back to the supplier (stock unit), with the reason of the last return.
+    pub returned_qty: f64,
+    pub return_reason: Option<String>,
+    pub returned_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1509,6 +1515,21 @@ pub struct ProcurementApprovalLimit {
     pub is_active: i64,
     pub row_version: i64,
     pub updated_at: String,
+    /// The "Administrator: unlimited" row the app seeds so the plant is never locked out
+    /// (`approvals::seed_administrator_unlimited_limits`); editable like any other.
+    pub is_seeded_default: bool,
+}
+
+/// Who may approve a document: the roles that hold the approval right and whose active limit
+/// covers its amount (or is unlimited).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProcurementApproverRoles {
+    pub document_type: String,
+    pub document_id: i64,
+    /// Amount in the tenant currency; None when it cannot be established (only unlimited roles).
+    pub amount: Option<f64>,
+    pub amount_unknown_reason: Option<String>,
+    pub role_names: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1547,5 +1568,16 @@ pub struct ReplaceRequisitionLinesInput {
     pub requisition_id: i64,
     pub expected_row_version: i64,
     pub lines: Vec<RequisitionLineInput>,
+    pub actor_id: Option<i64>,
+}
+
+/// Return of accepted goods to the supplier (non-conforming part found after reception). The
+/// quantity is in the stock unit; a lot- or serial-tracked article names the lot sent back.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReturnGoodsToSupplierInput {
+    pub goods_receipt_line_id: i64,
+    pub quantity: f64,
+    pub reason: String,
+    pub lot_id: Option<i64>,
     pub actor_id: Option<i64>,
 }

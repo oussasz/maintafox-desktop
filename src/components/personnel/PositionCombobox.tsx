@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { PositionCreateDialog } from "@/components/personnel/PositionCreateDialog";
+import { positionLabels } from "@/components/personnel/position-label";
 import { Button } from "@/components/ui/button";
 import { mfInput } from "@/design-system/tokens";
 import { usePermissions } from "@/hooks/use-permissions";
@@ -51,6 +52,9 @@ export function PositionCombobox({
     void loadPositions();
   }, [loadPositions]);
 
+  // The position's name is what people read; the code only tells apart two positions that share a name.
+  const labels = useMemo(() => positionLabels(positions), [positions]);
+
   const filtered = useMemo(() => {
     const term = query.trim().toLowerCase();
     if (!term) return positions.slice(0, 150);
@@ -94,7 +98,7 @@ export function PositionCombobox({
             <option value="">—</option>
             {listWithSelected.map((p) => (
               <option key={p.id} value={p.id}>
-                {p.code} — {p.name}
+                {labels.get(p.id) ?? p.name}
               </option>
             ))}
           </select>

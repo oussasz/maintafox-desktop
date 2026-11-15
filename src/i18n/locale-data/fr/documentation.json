@@ -20,11 +20,20 @@
       "notes": "Notes",
       "notesPlaceholder": "Description facultative",
       "file": "Fichier",
-      "equipmentHint": "Facultatif — le document apparaîtra aussi sur la fiche de l'équipement."
+      "equipmentHint": "Facultatif — le document apparaîtra aussi sur la fiche de l'équipement.",
+      "category": "Catégorie",
+      "documentNumber": "N° du document",
+      "documentNumberPlaceholder": "Ex. PR-ELEC-012",
+      "revision": "Révision",
+      "revisionPlaceholder": "Ex. B ou 3",
+      "validUntil": "Valide jusqu'au",
+      "validUntilHint": "Facultatif — un document expiré, ou qui expire dans les {{days}} jours, est signalé dans la liste.",
+      "validUntilInvalid": "Date incomplète ou impossible : saisissez une date valide, ou videz le champ si le document n'expire pas."
     },
     "open": "Ajouter un document",
     "submit": "Téléverser",
-    "done": "Document « {{title}} » ajouté"
+    "done": "Document « {{title}} » ajouté",
+    "doneIn": "Document « {{title}} » ajouté dans « {{category}} »"
   },
   "list": {
     "empty": "Aucun document dans cette catégorie.",
@@ -33,10 +42,12 @@
       "file": "Fichier",
       "equipment": "Équipement",
       "uploaded": "Téléversé",
-      "actions": "Actions"
+      "actions": "Actions",
+      "validity": "Validité",
+      "category": "Catégorie"
     },
     "download": "Télécharger",
-    "edit": "Modifier le lien",
+    "edit": "Modifier",
     "delete": "Supprimer",
     "loading": "Chargement des documents…",
     "loadError": "Impossible de charger les documents de cette catégorie",
@@ -49,29 +60,65 @@
     "downloadFailed": "Le document n'a pas pu être enregistré",
     "editNamed": "Modifier {{title}}",
     "deleteNamed": "Supprimer {{title}}",
-    "openEquipment": "Ouvrir l'équipement {{code}}"
+    "openEquipment": "Ouvrir l'équipement {{code}}",
+    "revisionLabel": "Rév. {{revision}}",
+    "validity": {
+      "none": "Sans échéance",
+      "expired": "Expiré le {{date}}",
+      "soon": "Expire le {{date}}",
+      "until": "Jusqu'au {{date}}"
+    },
+    "searchAll": "Chercher dans toute la bibliothèque",
+    "noMatch": "Aucun document ne correspond à la recherche."
   },
   "edit": {
     "title": "Modifier le document",
     "save": "Enregistrer",
     "cancel": "Annuler",
     "saving": "Enregistrement…",
-    "linkUnreadable": "L'équipement lié ({{code}}) n'a pas pu être lu ; le lien est conservé tant que vous n'en choisissez pas un autre."
+    "linkUnreadable": "L'équipement lié ({{code}}) n'a pas pu être lu ; le lien est conservé tant que vous n'en choisissez pas un autre.",
+    "moved": "Document « {{title}} » déplacé dans « {{category}} »"
   },
   "confirm": {
-    "delete": "« {{title}} » sera retiré de la bibliothèque. Le fichier reste conservé sur le disque pour l'audit.",
+    "delete": "« {{title}} » sera retiré de la bibliothèque et ne pourra pas être rétabli depuis cet écran. Maintafox garde une copie du fichier pour la traçabilité.",
     "deleteTitle": "Supprimer ce document ?",
-    "deleteAction": "Supprimer le document"
+    "deleteAction": "Supprimer le document",
+    "deleteVersion": "La révision {{revision}} de « {{title}} » sera retirée ; la version précédente redevient la version actuelle. Maintafox garde une copie du fichier pour la traçabilité."
   },
   "errors": {
     "fileTooLarge": "Le fichier dépasse {{mb}} Mo."
   },
-  "size": {
-    "bytes": "{{value}} o",
-    "kb": "{{value}} Ko",
-    "mb": "{{value}} Mo"
-  },
   "category": {
     "description": "Documents de la catégorie « {{name}} »."
+  },
+  "expiry": {
+    "expired_one": "{{count}} document expiré",
+    "expired_other": "{{count}} documents expirés",
+    "soon_one": "{{count}} document expire dans les {{days}} jours",
+    "soon_other": "{{count}} documents expirent dans les {{days}} jours"
+  },
+  "versions": {
+    "new": "Nouvelle version",
+    "newNamed": "Nouvelle version de {{title}}",
+    "newTitle": "Nouvelle version du document",
+    "newDescription": "« {{title}} » — version actuelle : {{revision}}. Le nouveau fichier remplace l'actuel dans la bibliothèque.",
+    "noRevision": "sans révision",
+    "sameRevision": "Saisissez une révision différente de la version actuelle.",
+    "changes": "Ce qui change",
+    "changesPlaceholder": "Facultatif — ex. ajout d'une étape de vérification",
+    "keepsHistory": "La version actuelle reste consultable et téléchargeable dans l'historique du document ; elle n'est plus modifiable.",
+    "submit": "Téléverser la version",
+    "done": "« {{title}} » : révision {{revision}} enregistrée",
+    "history": "Historique des versions",
+    "historyNamed": "Historique des versions de {{title}}",
+    "historyTitle": "Versions de « {{title}} »",
+    "historyDescription": "De la plus récente à la plus ancienne. Les versions précédentes sont conservées telles quelles.",
+    "loadError": "Impossible de lire l'historique des versions",
+    "current": "Actuelle",
+    "uploaded": "Téléversée le {{date}} par {{by}}",
+    "replaced": "remplacée le {{date}}",
+    "unknownUser": "utilisateur inconnu",
+    "downloadNamed": "Télécharger la révision {{revision}}",
+    "close": "Fermer"
   }
 }

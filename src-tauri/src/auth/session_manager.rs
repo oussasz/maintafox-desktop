@@ -284,6 +284,8 @@ impl SessionManager {
             step_up_verified_at: None,
             password_changed_at_seen: None,
         };
+        // A new session never inherits the previous user's keys.
+        crate::auth::signing_keys::release_session_keys();
         self.current = Some(session);
         self.current.as_ref().unwrap()
     }
@@ -329,6 +331,11 @@ impl SessionManager {
     pub fn clear_session(&mut self) -> Option<String> {
         let session_id = self.current.as_ref().map(|s| s.session_db_id.clone());
         self.current = None;
+        // Per-user signing: no key (nor typed co-signer password) outlives the session that
+        // unlocked it. The capture actor is cleared by the async callers
+        // (`sync::signing::end_signing_session`) and is inert once the session row is closed.
+        crate::auth::signing_keys::release_session_keys();
+        crate::auth::second_signer::release_pending_enrolments();
         session_id
     }
 
@@ -752,6 +759,9 @@ pub async fn enforce_session_alive(
             }
             current
         };
+        if was_current {
+            crate::sync::signing::end_signing_session_logged(db, "stored_state_check").await;
+        }
         tracing::warn!(
             user_id = user.user_id,
             session_id = session_db_id.unwrap_or("-"),
@@ -899,6 +909,13 @@ pub async fn change_password_and_rotate(
         [user_id.into(), new_id.clone().into()],
     ))
     .await?;
+    // Per-user signing: the capture actor follows its session to the new stored row.
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE sync_capture_actor SET session_id = ? WHERE id = 1 AND session_id = ?",
+        [new_id.clone().into(), current.session_db_id.clone().into()],
+    ))
+    .await?;
     tx.commit().await?;
     current.session_db_id = new_id;
     // This session made the change: the new date is its reference, not a change after its start.
@@ -961,6 +978,7 @@ pub async fn store_session_or_clear(
         }
         Err(e) => {
             manager.clear_session();
+            crate::sync::signing::end_signing_session_logged(db, "session_store_failed").await;
             Err(e)
         }
     }

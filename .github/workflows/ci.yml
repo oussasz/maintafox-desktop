@@ -152,6 +152,14 @@ jobs:
           trap 'kill "$MON" 2>/dev/null || true' EXIT
           cargo test
 
+      - name: Demo-company generator (developer-only feature)
+        working-directory: src-tauri
+        env:
+          CARGO_BUILD_JOBS: "2"
+        run: |
+          cargo clippy --features demo-company --bin demo-company -- -D warnings
+          cargo test --features demo-company --lib demo_company::
+
   # ─────────────────────────────────────────────────────────────────────────────
   # Job 3: Frontend tests with coverage
   # ─────────────────────────────────────────────────────────────────────────────

@@ -69,11 +69,21 @@ interface Draft {
   service_domain: string;
   contract_start: string;
   contract_end: string;
+  contract_number: string;
+  contract_amount: string;
+  alert_days: string;
   onboarding_status: string;
   insurance_status: string;
   notes: string;
   active: boolean;
 }
+
+const CONTRACT_STATE_TONE: Record<string, Tone> = {
+  none: "neutral",
+  active: "success",
+  expiring: "attention",
+  expired: "danger",
+};
 
 function toDraft(c: ExternalCompany | null): Draft {
   return {
@@ -82,6 +92,9 @@ function toDraft(c: ExternalCompany | null): Draft {
     service_domain: c?.service_domain ?? "",
     contract_start: c?.contract_start?.slice(0, 10) ?? "",
     contract_end: c?.contract_end?.slice(0, 10) ?? "",
+    contract_number: c?.contract_number ?? "",
+    contract_amount: c?.contract_amount != null ? String(c.contract_amount) : "",
+    alert_days: String(c?.contract_alert_days ?? 30),
     onboarding_status: c?.onboarding_status ?? "pending",
     insurance_status: c?.insurance_status ?? "unknown",
     notes: c?.notes ?? "",
@@ -113,7 +126,11 @@ export function ExternalCompanyDialog({
 
   const datesValid =
     !draft.contract_start || !draft.contract_end || draft.contract_end >= draft.contract_start;
-  const valid = draft.name.trim() !== "" && datesValid;
+  const amount = draft.contract_amount.trim() === "" ? null : Number(draft.contract_amount);
+  const alertDays = Number(draft.alert_days);
+  const amountValid = amount === null || (Number.isFinite(amount) && amount >= 0);
+  const alertValid = Number.isInteger(alertDays) && alertDays >= 0 && alertDays <= 365;
+  const valid = draft.name.trim() !== "" && datesValid && amountValid && alertValid;
 
   const save = async () => {
     if (!valid) return;
@@ -121,13 +138,33 @@ export function ExternalCompanyDialog({
     try {
       let saved: ExternalCompany;
       if (draft.id == null) {
-        saved = await createExternalCompany(
+        const created = await createExternalCompany(
           draft.name.trim(),
           draft.service_domain.trim() || undefined,
           draft.contract_start || undefined,
           draft.contract_end || undefined,
           draft.notes.trim() || undefined,
         );
+        // The create call takes the identity and contract dates; the contract number and amount,
+        // the referencing (onboarding) and insurance statuses typed in the same form are saved
+        // right after, so the create form has the same fields as the edit form (UX L3-18). The
+        // draft takes the new id first: if that second call fails, a retry updates the company
+        // instead of creating it twice.
+        setDraft((d) => ({ ...d, id: created.id }));
+        saved = (await updateExternalCompany({
+          id: created.id,
+          name: created.name,
+          service_domain: draft.service_domain,
+          contract_start: draft.contract_start || null,
+          contract_end: draft.contract_end || null,
+          contract_number: draft.contract_number,
+          contract_amount: amount,
+          contract_alert_days: alertDays,
+          onboarding_status: draft.onboarding_status,
+          insurance_status: draft.insurance_status,
+          notes: draft.notes,
+          is_active: true,
+        })) as ExternalCompany;
       } else {
         saved = (await updateExternalCompany({
           id: draft.id,
@@ -135,6 +172,9 @@ export function ExternalCompanyDialog({
           service_domain: draft.service_domain,
           contract_start: draft.contract_start || null,
           contract_end: draft.contract_end || null,
+          contract_number: draft.contract_number,
+          contract_amount: amount,
+          contract_alert_days: alertDays,
           onboarding_status: draft.onboarding_status,
           insurance_status: draft.insurance_status,
           notes: draft.notes,
@@ -190,44 +230,78 @@ export function ExternalCompanyDialog({
               onChange={(v) => setDraft({ ...draft, contract_end: v })}
             />
           </FormField>
-          {draft.id != null ? (
-            <>
-              <FormField name="co-onboarding" label={t("companies.onboarding")}>
-                <Select
-                  value={draft.onboarding_status}
-                  onValueChange={(v) => setDraft({ ...draft, onboarding_status: v })}
-                >
-                  <SelectTrigger id="co-onboarding">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {ONBOARDING_STATUSES.map((s) => (
-                      <SelectItem key={s} value={s}>
-                        {t(`companies.onboardingStatus.${s}`)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </FormField>
-              <FormField name="co-insurance" label={t("companies.insurance")}>
-                <Select
-                  value={draft.insurance_status}
-                  onValueChange={(v) => setDraft({ ...draft, insurance_status: v })}
-                >
-                  <SelectTrigger id="co-insurance">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {INSURANCE_STATUSES.map((s) => (
-                      <SelectItem key={s} value={s}>
-                        {t(`companies.insuranceStatus.${s}`)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </FormField>
-            </>
-          ) : null}
+          <>
+            <FormField name="co-number" label={t("companies.contractNumber")}>
+              <Input
+                id="co-number"
+                value={draft.contract_number}
+                onChange={(e) => setDraft({ ...draft, contract_number: e.target.value })}
+              />
+            </FormField>
+            <FormField
+              name="co-amount"
+              label={t("companies.contractAmount")}
+              error={amountValid ? undefined : t("companies.amountInvalid")}
+            >
+              <Input
+                id="co-amount"
+                type="number"
+                min={0}
+                step="0.01"
+                value={draft.contract_amount}
+                onChange={(e) => setDraft({ ...draft, contract_amount: e.target.value })}
+              />
+            </FormField>
+            <FormField
+              name="co-alert"
+              label={t("companies.alertDays")}
+              error={alertValid ? undefined : t("companies.alertDaysInvalid")}
+            >
+              <Input
+                id="co-alert"
+                type="number"
+                min={0}
+                max={365}
+                step={1}
+                value={draft.alert_days}
+                onChange={(e) => setDraft({ ...draft, alert_days: e.target.value })}
+              />
+            </FormField>
+            <FormField name="co-onboarding" label={t("companies.onboarding")}>
+              <Select
+                value={draft.onboarding_status}
+                onValueChange={(v) => setDraft({ ...draft, onboarding_status: v })}
+              >
+                <SelectTrigger id="co-onboarding">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {ONBOARDING_STATUSES.map((s) => (
+                    <SelectItem key={s} value={s}>
+                      {t(`companies.onboardingStatus.${s}`)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </FormField>
+            <FormField name="co-insurance" label={t("companies.insurance")}>
+              <Select
+                value={draft.insurance_status}
+                onValueChange={(v) => setDraft({ ...draft, insurance_status: v })}
+              >
+                <SelectTrigger id="co-insurance">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {INSURANCE_STATUSES.map((s) => (
+                    <SelectItem key={s} value={s}>
+                      {t(`companies.insuranceStatus.${s}`)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </FormField>
+          </>
           <FormField name="co-notes" label={t("companies.notes")} className="sm:col-span-2">
             <Textarea
               id="co-notes"
@@ -267,7 +341,7 @@ export function ExternalCompanyDialog({
 
 export function ExternalCompaniesPanel() {
   const { t } = useTranslation("personnel");
-  const { formatDate } = useFormatters();
+  const { formatDate, formatCurrency } = useFormatters();
   const { can } = usePermissions();
   const [rows, setRows] = useState<ExternalCompany[]>([]);
   const [peopleByCompany, setPeopleByCompany] = useState<Map<number, number>>(new Map());
@@ -336,10 +410,76 @@ export function ExternalCompaniesPanel() {
       {
         id: "contract",
         header: t("companies.contract"),
+        cell: ({ row }) => (
+          <div className="flex flex-col gap-1">
+            {row.original.contract_number ? (
+              <span className="text-xs text-text-muted">{row.original.contract_number}</span>
+            ) : null}
+            <span>
+              {[row.original.contract_start, row.original.contract_end]
+                .map((d) => (d ? formatDate(d) : "…"))
+                .join(" → ")}
+            </span>
+            {row.original.contract_state !== "none" ? (
+              <StatusChip
+                label={t(`companies.contractState.${row.original.contract_state}`, {
+                  days: row.original.contract_days_left ?? 0,
+                })}
+                tone={CONTRACT_STATE_TONE[row.original.contract_state] ?? "neutral"}
+                dot
+              />
+            ) : null}
+          </div>
+        ),
+      },
+      {
+        id: "amount",
+        header: t("companies.amount"),
         cell: ({ row }) =>
-          [row.original.contract_start, row.original.contract_end]
-            .map((d) => (d ? formatDate(d) : "…"))
-            .join(" → "),
+          row.original.contract_amount == null ? (
+            <span className="text-text-muted">—</span>
+          ) : (
+            <div className="flex flex-col text-sm tabular-nums">
+              <span>{formatCurrency(row.original.contract_amount)}</span>
+              <span
+                className={
+                  row.original.consumed_amount > row.original.contract_amount
+                    ? "text-text-danger"
+                    : "text-text-muted"
+                }
+              >
+                {t("companies.consumed", { amount: formatCurrency(row.original.consumed_amount) })}
+              </span>
+            </div>
+          ),
+      },
+      {
+        id: "performance",
+        header: t("companies.performance.header"),
+        cell: ({ row }) => {
+          const c = row.original;
+          const pct =
+            c.wo_closed_with_deadline > 0
+              ? Math.round((c.wo_on_time / c.wo_closed_with_deadline) * 100)
+              : null;
+          return (
+            <div className="flex flex-col text-sm tabular-nums">
+              <span>{t("companies.performance.workOrders", { count: c.wo_count })}</span>
+              <span
+                className={pct != null && pct < 80 ? "text-text-danger" : "text-text-muted"}
+                title={t("companies.performance.onTimeHint")}
+              >
+                {pct != null
+                  ? t("companies.performance.onTime", {
+                      pct,
+                      onTime: c.wo_on_time,
+                      total: c.wo_closed_with_deadline,
+                    })
+                  : t("companies.performance.noClosed")}
+              </span>
+            </div>
+          );
+        },
       },
       {
         accessorKey: "onboarding_status",
@@ -371,8 +511,11 @@ export function ExternalCompaniesPanel() {
         ),
       },
     ],
-    [t, can, peopleByCompany, formatDate],
+    [t, can, peopleByCompany, formatDate, formatCurrency],
   );
+  const alertCount = rows.filter(
+    (c) => c.is_active === 1 && (c.contract_state === "expiring" || c.contract_state === "expired"),
+  ).length;
 
   return (
     <div className="space-y-3">
@@ -391,6 +534,14 @@ export function ExternalCompaniesPanel() {
           </Button>
         </PermissionGate>
       </div>
+      {alertCount > 0 ? (
+        <p
+          role="status"
+          className="rounded-md border border-surface-border bg-surface-1 px-3 py-2 text-sm text-text-primary"
+        >
+          {t("companies.contractAlert", { count: alertCount })}
+        </p>
+      ) : null}
       {error && rows.length === 0 ? (
         <ErrorState error={error} onRetry={() => void load()} retrying={loading} />
       ) : !loading && rows.length === 0 ? (

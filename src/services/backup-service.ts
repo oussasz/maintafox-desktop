@@ -5,7 +5,12 @@
 import { z } from "zod";
 
 import { invoke } from "@/lib/ipc-invoke";
-import type { BackupRunRecord, BackupRunResult, RestoreTestResult } from "@shared/ipc-types";
+import type {
+  BackupOverview,
+  BackupRunRecord,
+  BackupRunResult,
+  RestoreTestResult,
+} from "@shared/ipc-types";
 
 // â”€â”€ Zod schemas for runtime shape validation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -30,6 +35,17 @@ const BackupRunResultSchema = z.object({
   file_size_bytes: z.number(),
   sha256_checksum: z.string(),
   status: z.string(),
+});
+
+const BackupOverviewSchema = z.object({
+  external_dir: z.string().nullable(),
+  external_reachable: z.boolean(),
+  app_backup_dir: z.string(),
+  last_success_at: z.string().nullable(),
+  last_outside_at: z.string().nullable(),
+  last_outside_path: z.string().nullable(),
+  outside_copy_missing_or_old: z.boolean(),
+  outside_copy_max_age_days: z.number(),
 });
 
 const RestoreTestResultSchema = z.object({
@@ -100,4 +116,23 @@ export async function factoryReset(confirmationPhrase: string): Promise<void> {
     { payload: { confirmation_phrase: confirmationPhrase } },
     { notifyOnError: false },
   );
+}
+
+/** Where scheduled backups go and when the last copy outside this PC was made. */
+export async function getBackupOverview(): Promise<BackupOverview> {
+  const raw = await invoke<unknown>("get_backup_overview");
+  return BackupOverviewSchema.parse(raw) as BackupOverview;
+}
+
+/**
+ * Sets (or clears, with null) this PC's folder for scheduled backups outside its disk.
+ * Requires: active session + adm.settings + recent step-up.
+ */
+export async function setBackupExternalDir(path: string | null): Promise<string | null> {
+  const raw = await invoke<unknown>(
+    "set_backup_external_dir",
+    { payload: { path } },
+    { notifyOnError: false },
+  );
+  return z.string().nullable().parse(raw);
 }

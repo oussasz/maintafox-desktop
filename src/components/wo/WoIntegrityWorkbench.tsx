@@ -19,7 +19,6 @@ import {
 } from "@/components/ui/select";
 import { useFormatters } from "@/hooks/use-formatters";
 import { describeAppError } from "@/lib/app-error";
-import { listAnalyticsContractVersions } from "@/services/analytics-contract-service";
 import {
   applyDataIntegrityRepair,
   listDataIntegrityFindings,
@@ -27,7 +26,7 @@ import {
   runDataIntegrityDetectors,
   waiveDataIntegrityFinding,
 } from "@/services/data-integrity-service";
-import type { AnalyticsContractVersionRow, DataIntegrityFindingRow } from "@shared/ipc-types";
+import type { DataIntegrityFindingRow } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
 function repairOptionsForCode(code: string): { value: string; labelKey: string }[] {
@@ -121,7 +120,6 @@ export function WoIntegrityWorkbench({ reloadSignal = 0 }: { reloadSignal?: numb
   }, [reloadSignal]);
 
   const [rows, setRows] = useState<DataIntegrityFindingRow[]>([]);
-  const [contracts, setContracts] = useState<AnalyticsContractVersionRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -130,12 +128,7 @@ export function WoIntegrityWorkbench({ reloadSignal = 0 }: { reloadSignal?: numb
     setLoading(true);
     setError(null);
     try {
-      const [r, c] = await Promise.all([
-        listDataIntegrityFindings(200),
-        listAnalyticsContractVersions(),
-      ]);
-      setRows(r);
-      setContracts(c);
+      setRows(await listDataIntegrityFindings(200));
     } catch (e) {
       setError(describeAppError(e).title);
     } finally {
@@ -188,15 +181,6 @@ export function WoIntegrityWorkbench({ reloadSignal = 0 }: { reloadSignal?: numb
             <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
             <span className="break-all">{error}</span>
           </div>
-        )}
-        {contracts[0] && (
-          <p className="mt-2 text-[10px] text-text-muted font-mono">
-            {t("integrity.contractFrozen", {
-              id: contracts[0].contract_id,
-              ver: contracts[0].version_semver,
-              hash: contracts[0].content_sha256.slice(0, 12),
-            })}
-          </p>
         )}
         <div className="mt-3 space-y-2 max-h-[60vh] overflow-auto">
           {rows.length === 0 && !loading && (
@@ -352,6 +336,9 @@ function FindingRow({
           variant="secondary"
           className="h-10"
           disabled={busy || (row.severity === "error" && !approverId)}
+          title={
+            row.severity === "error" && !approverId ? t("integrity.waiveNeedsApprover") : undefined
+          }
           onClick={() => void onWaive()}
         >
           {t("integrity.waive")}

@@ -279,6 +279,8 @@ export function HomeRecordList(props: {
   emptyText: string;
   ariaLabel: string;
   total?: number;
+  /** The full list behind the "+N autres" line (a link, not plain text). */
+  moreTo?: string;
 }) {
   const { t } = useTranslation("dashboard");
   const navigate = useNavigate();
@@ -326,14 +328,41 @@ export function HomeRecordList(props: {
         ))}
       </ul>
       {more > 0 ? (
-        <p className="px-1 text-xs text-text-muted">{t("home.more", { count: more })}</p>
+        props.moreTo ? (
+          <HomeMoreLink count={more} to={props.moreTo} />
+        ) : (
+          <p className="px-1 text-xs text-text-muted">{t("home.more", { count: more })}</p>
+        )
       ) : null}
     </div>
   );
 }
 
+/** "+N autres — voir la liste complète", opening the full list. */
+export function HomeMoreLink(props: { count: number; to: string }) {
+  const { t } = useTranslation("dashboard");
+  const navigate = useNavigate();
+  return (
+    <button
+      type="button"
+      className="inline-flex items-center px-1 text-xs font-medium text-text-secondary underline underline-offset-2"
+      onClick={() => void navigate(props.to)}
+    >
+      {t("home.more", { count: props.count })}
+      <ChevronRight className="h-3.5 w-3.5" aria-hidden />
+    </button>
+  );
+}
+
 /** A plain-language note in place of a figure that cannot be given (never a fake 0). */
-export function HomeNote(props: { children: ReactNode; tone?: Tone }) {
+export function HomeNote(props: {
+  children: ReactNode;
+  tone?: Tone;
+  /** Where the note's action is done, with the link's wording. */
+  link?: { to: string; label: string };
+}) {
+  const navigate = useNavigate();
+  const { link } = props;
   return (
     <p
       className={cn(
@@ -342,6 +371,19 @@ export function HomeNote(props: { children: ReactNode; tone?: Tone }) {
       )}
     >
       {props.children}
+      {link ? (
+        <>
+          {" "}
+          <button
+            type="button"
+            className="inline-flex items-center font-medium underline underline-offset-2"
+            onClick={() => void navigate(link.to)}
+          >
+            {link.label}
+            <ChevronRight className="h-3.5 w-3.5" aria-hidden />
+          </button>
+        </>
+      ) : null}
     </p>
   );
 }

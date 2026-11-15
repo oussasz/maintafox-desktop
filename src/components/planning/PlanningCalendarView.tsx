@@ -106,7 +106,7 @@ export function PlanningCalendarView({
     [t],
   );
 
-  const dayNames = i18n.language === "fr" ? DAY_NAMES_FR : DAY_NAMES_EN;
+  const dayNames = i18n.language.startsWith("fr") ? DAY_NAMES_FR : DAY_NAMES_EN;
 
   const byDate = useMemo(() => {
     const map = new Map<string, PlanningCalendarChip[]>();

@@ -9,14 +9,15 @@ pub struct ReadinessEvent {
     /// FMUCD university identifier when sourced from external CMMS (optional).
     pub university_id: Option<String>,
     pub event_ts: DateTime<Utc>,
-    /// Counts toward `N_f` / DQ when true (UPM / unplanned MTBF-eligible).
+    /// Counts toward `N_f` / DQ when true (unplanned failure, `compute::counts_in_mtbf`; for a
+    /// database record decided live from `is_planned`, never from the stored flag).
     pub eligible: bool,
     pub equipment_identified: bool,
     /// `(failed_at OR detected_at) AND restored_at` equivalent.
     pub interval_complete: bool,
     pub failure_mode_coded: bool,
     pub corrective_documented: bool,
-    /// Passed through to `compute::compute_reliability_kpis`.
+    /// JSON form of `eligible` (provenance of external datasets); the computation reads `eligible`.
     pub eligible_flags_json: String,
     pub failure_mode_id: Option<i64>,
     pub downtime_duration_hours: f64,

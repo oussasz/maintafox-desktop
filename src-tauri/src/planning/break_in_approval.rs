@@ -254,7 +254,7 @@ pub(crate) async fn validate_break_in_approval(
         approver: Some(approver),
         approver_personnel: Some(personnel),
         approver_name: name,
-        signed_at: Some(chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()),
+        signed_at: Some(crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()),
     })
 }
 
@@ -285,11 +285,18 @@ pub(crate) async fn record_signer_outcome(
     signer: Option<i32>,
     checked: Option<bool>,
     commitment_id: Option<i64>,
+    committed_break_in: Option<i64>,
 ) -> AppResult<()> {
     crate::auth::second_signer::record_outcome(
         db,
         signer,
         checked,
+        // Committed: the approver's key co-signs this break-in only (review F2).
+        committed_break_in.map(|row_id| crate::auth::second_signer::CosignedRecord {
+            entity_type: "schedule_break_ins",
+            row_id,
+            author_field: "approved_by_user_sync_id",
+        }),
         &crate::auth::second_signer::SignatureContext {
             actor_id,
             context: "planning_break_in",

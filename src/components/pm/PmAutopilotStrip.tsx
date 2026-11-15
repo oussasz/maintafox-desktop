@@ -108,7 +108,8 @@ export function PmAutopilotStrip() {
       <span className="text-text-muted">
         {t("autopilot.lastRun")}: <span className="text-foreground">{lastRunLabel}</span>
         {control?.last_generated_count != null || control?.last_skipped_count != null ? (
-          <span className="ms-2 tabular-nums">
+          // L1-27: what "ignorée" means, on hover.
+          <span className="ms-2 tabular-nums" title={t("autopilot.skippedHint")}>
             (
             {t("autopilot.counts", {
               generated: known(control.last_generated_count),

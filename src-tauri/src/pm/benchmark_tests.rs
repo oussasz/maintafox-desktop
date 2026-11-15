@@ -316,9 +316,14 @@ async fn location_plan_fans_out_one_occurrence_per_asset() {
         },
     )
     .await;
-    let preview = crate::pm::plan_tools::preview_pm_scope_assets(&db, "location", 1)
-        .await
-        .expect("preview");
+    let preview = crate::pm::plan_tools::preview_pm_scope_assets(
+        &db,
+        "location",
+        1,
+        &crate::auth::scope::AccessScope::Everywhere,
+    )
+    .await
+    .expect("preview");
     assert_eq!(
         preview.iter().map(|a| a.asset_code.as_str()).collect::<Vec<_>>(),
         vec!["CMP-01", "CMP-02"],
@@ -384,6 +389,7 @@ async fn read_meter(db: &DatabaseConnection, value: f64, at: &str, kind: Option<
             reading_value: value,
             reading_at: Some(at.to_string()),
             kind: kind.map(str::to_string),
+            confirm_jump: Some(true),
         },
         1,
     )
@@ -449,6 +455,7 @@ async fn rollover_and_replacement_keep_counting_usage() {
             reading_value: 10.0,
             reading_at: Some("2026-01-06T00:00:00Z".to_string()),
             kind: Some("normal".to_string()),
+            confirm_jump: Some(true),
         },
         1,
     )
@@ -471,6 +478,36 @@ async fn rollover_and_replacement_keep_counting_usage() {
     .await;
     assert_eq!(generate(&db, plan_id, "2026-01-05T00:00:00Z", 7).await, 1);
     assert_eq!(occurrences(&db, plan_id).await[0].due_meter_value, Some(10030.0));
+}
+
+#[tokio::test]
+async fn a_pm_reading_far_above_the_usual_use_waits_for_confirmation() {
+    let db = setup_db().await;
+    seed_plant(&db).await;
+    seed_meter(&db, 0.0, "2026-01-01T00:00:00Z", "NULL").await;
+    exec(
+        &db,
+        "UPDATE equipment_meters SET expected_rate_per_day = 10 WHERE id = 9",
+    )
+    .await;
+    read_meter(&db, 1000.0, "2026-01-02T00:00:00Z", None).await;
+
+    let typo = |confirm: Option<bool>| crate::pm::domain::RecordPmMeterReadingInput {
+        meter_id: 9,
+        reading_value: 12_450.0,
+        reading_at: Some("2026-01-12T00:00:00Z".to_string()),
+        kind: None,
+        confirm_jump: confirm,
+    };
+    // 10 days at ~10 h/day is ~100 h; 11 450 h is a typing error until the person confirms it.
+    let err = crate::pm::plan_tools::record_pm_meter_reading(&db, typo(None), 1)
+        .await
+        .expect_err("an unconfirmed jump is refused");
+    assert!(format!("{err:?}").contains("GATE_ASSET_METER_JUMP_UNCONFIRMED"));
+    let kept = crate::pm::plan_tools::record_pm_meter_reading(&db, typo(Some(true)), 1)
+        .await
+        .expect("confirmed");
+    assert_eq!(kept.current_reading, 12_450.0);
 }
 
 #[tokio::test]

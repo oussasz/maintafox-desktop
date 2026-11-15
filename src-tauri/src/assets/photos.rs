@@ -3,7 +3,6 @@
 use std::path::{Path, PathBuf};
 
 use base64::{engine::general_purpose::STANDARD as B64_ENGINE, Engine as _};
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -270,7 +269,7 @@ pub async fn upload_asset_photo(
         "asset photo copied to primary storage"
     );
 
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let caption = payload
         .caption
         .as_ref()

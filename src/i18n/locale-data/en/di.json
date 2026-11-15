@@ -20,13 +20,14 @@
       "outsideScope_other": "{{count}} requests are not shown: outside your sites.",
       "withoutSite_one": "{{count}} request is not shown: it has no site.",
       "withoutSite_other": "{{count}} requests are not shown: they have no site.",
-      "allRequests": "These counts cover all requests, whatever the filters or search.",
+      "allRequests": "Total over all requests, ignoring the filters.",
       "askPlantWide": "Ask a user with a plant-wide role to see them."
     },
     "columns": {
       "number": "No.",
       "subject": "Subject",
       "equipment": "Equipment",
+      "criticality": "Criticality",
       "status": "Status",
       "priority": "Priority",
       "reportedBy": "Reported by",
@@ -105,6 +106,9 @@
     "possibleDuplicates_other": "{{count}} other open requests on this asset with the same symptom"
   },
   "form": {
+    "createdToast": "Request {{code}} created",
+    "savedToast": "Request {{code}} saved",
+    "openCreated": "Open the request",
     "section": {
       "requester": "Requester",
       "equipment": "Equipment",
@@ -145,7 +149,8 @@
     "symptom": {
       "label": "Symptom",
       "placeholder": "Select a symptom",
-      "searchPlaceholder": "Search symptom..."
+      "searchPlaceholder": "Search symptom...",
+      "optionalHint": "Optional: the planner fills it in if you do not know it."
     },
     "impactLevel": {
       "label": "Impact level",
@@ -154,7 +159,7 @@
     "pictures": {
       "label": "Pictures",
       "empty": "No pictures yet",
-      "hint": "Add photos of the equipment or issue. Same picker as equipment gallery.",
+      "hint": "Add photos of the equipment or the problem.",
       "primary": "Primary",
       "remove": "Remove",
       "add": "Add pictures"
@@ -169,16 +174,15 @@
       "partialUploadFailed": "{{failed}} of {{total}} file(s) could not be uploaded. You can retry from the request detail."
     },
     "safetyFlag": {
-      "label": "Safety concern"
+      "label": "Safety concern",
+      "minUrgencyHint": "Safety report: urgency at least Urgent.",
+      "lockedHint": "A saved safety report cannot be removed. Only the reviewer can lower the urgency, with a reason."
     },
     "environmentalFlag": {
       "label": "Environmental concern"
     },
     "qualityFlag": {
       "label": "Quality concern"
-    },
-    "productionImpact": {
-      "label": "Production impact"
     },
     "origin": {
       "operator": "Operator",
@@ -207,7 +211,8 @@
       "symptomRequired": "Symptom is required",
       "urgencyRequired": "Priority is required",
       "impactRequired": "Impact level is required",
-      "assetMissingOrgNode": "The selected equipment has no organizational unit. Please assign one first."
+      "assetMissingOrgNode": "The selected equipment has no organizational unit. Please assign one first.",
+      "machineStateRequired": "Say whether the machine is stopped"
     },
     "cancel": "Cancel",
     "submit": "Create request",
@@ -223,6 +228,15 @@
       "sameAsset_one": "{{count}} request is already open on this equipment",
       "sameAsset_other": "{{count}} requests are already open on this equipment",
       "hint": "Check that your problem is not already reported before sending a new request."
+    },
+    "machineStopped": {
+      "label": "Is the machine stopped?",
+      "yes": "Yes, the machine is stopped",
+      "no": "No, it is still running"
+    },
+    "fullForm": {
+      "open": "Full form (type, symptom, urgency, flags)",
+      "hint": "For a quick report, the equipment, the description and the machine state are enough: the planner completes the rest."
     }
   },
   "status": {
@@ -283,11 +297,15 @@
     "title": "SLA Rules",
     "description": "Configure response and resolution targets for each urgency level.",
     "scaleHint": "The target times of a level for every request are set in the urgency scale (Reference data). The rules below are the exceptions by origin or asset criticality.",
+    "scopeAllOrigins": "All origins",
+    "scopeCriticality": "criticality {{code}}",
+    "inactiveHint": "Inactive: the urgency scale's targets apply.",
+    "escalationHint": "Escalation: at the escalation threshold, the request turns \"At risk\" and appears in the \"SLA at risk or breached\" queue. When a target is missed, an \"SLA breach\" notification is sent according to its notification rule (by default: the entity manager, acknowledgement required).",
     "invalidHours": "Enter whole hours (0 or more) in all three fields.",
     "loading": "Loading rules…",
     "empty": "No SLA rules configured.",
     "columns": {
-      "name": "Rule",
+      "name": "Scope",
       "urgency": "Urgency",
       "response": "Response (h)",
       "resolution": "Resolution (h)",
@@ -523,7 +541,13 @@
     "conversionFailed": "Conversion to work order failed.",
     "view": "View details",
     "returnAction": "Return",
-    "approvalTitle": "Approve & Convert to Work Order",
+    "approvalTitle": "Approve the request",
+    "convertTitle": "Convert to work order",
+    "approveOnly": "Approve only",
+    "approveAndConvert": "Approve and create the work order",
+    "confirmApproveConvertTitle": "Approve and create the work order?",
+    "confirmApproveConvertDescription": "{{code}} will be approved, then a work order will be created with its validated urgency, its safety flag (permit / lockout required) and its symptom. Both actions are recorded in your name in the audit log.",
+    "selfDecision": "You declared this request: another person must approve it and convert it into a work order (separation of duties).",
     "confirmApproveTitle": "Approve this request?",
     "confirmApproveDescription": "{{code}} will be approved and ready to convert into a work order. The approval is recorded in your name in the audit trail.",
     "confirmApproveAction": "Approve request",
@@ -535,7 +559,6 @@
     "approvalNotePlaceholder": "Optional note for the approval record…",
     "approver": "Approver",
     "print": "Print",
-    "approveAndConvert": "Approve & Convert",
     "convertToWo": "Convert to Work Order",
     "reviewerNote": "Reviewer note",
     "rejectionTitle": "Reject Intervention Request",
@@ -578,7 +601,7 @@
     "periodMonths": "Last {{months}}",
     "now": "Now",
     "openBacklog": "Open requests",
-    "slaAtRisk": "SLA at risk",
+    "slaAtRisk": "SLA at risk or breached",
     "overdueHint": "Open, past a target",
     "slaComplianceHint": "{{met}} met · {{breached}} breached",
     "conversionRate": "Converted to work order",
@@ -630,6 +653,16 @@
     "return": "Return for clarification",
     "actionsFor": "Actions for {{code}}"
   },
+  "merge": {
+    "action": "Merge duplicates into this request",
+    "hint": "The other requests are closed as duplicates linked to this one.",
+    "confirmTitle": "Merge into {{code}}?",
+    "confirmDescription": "{{count}} other open request(s) on this equipment will be closed as duplicates of {{code}}. This request goes on to its work order.",
+    "note": "Duplicate merged into {{code}}",
+    "done_one": "{{count}} request merged.",
+    "done_other": "{{count}} requests merged.",
+    "partial": "{{merged}} merged. Not merged (status or right): {{failed}}."
+  },
   "close": {
     "title": "Close request",
     "disposition": "Disposition",
@@ -640,7 +673,8 @@
     "relatedDiNoResults": "No matching requests.",
     "relatedDiResolved": "Linked to {{code}}",
     "relatedDiUseMatch": "Use {{code}}",
-    "notesRequired": "Notes are required for disposition “Other”.",
+    "notesRequired": "Give the reason: it is required for “Rejected” and “Other”.",
+    "dispositionPlaceholder": "Choose: rejection, duplicate, no work…",
     "relatedRequired": "Select the related request for duplicate disposition.",
     "submit": "Close request",
     "saving": "Closing…",
@@ -663,6 +697,8 @@
     "validatedUrgency": "Validated urgency",
     "urgencyChanged": "Changed from the reported urgency ({{reported}}).",
     "urgencyAsReported": "Same as the urgency reported by the requester.",
+    "safetyBelowUrgent": "Safety report: an urgency below “Urgent” requires the review reason (note below). It is recorded in the request's history.",
+    "noteRequired": "Review reason (required)",
     "classification": "Classification",
     "classificationLoading": "Loading classification…",
     "classificationPlaceholder": "Choose a classification",
@@ -708,7 +744,7 @@
     "to_approve": "To approve",
     "approved_not_converted": "Approved, no work order",
     "deferred_due": "Deferral due",
-    "sla_at_risk": "SLA at risk",
+    "sla_at_risk": "SLA at risk or breached",
     "hint": {
       "all": "Every request, newest first",
       "mine": "The requests you raised, with their status and next step",

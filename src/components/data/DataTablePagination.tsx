@@ -25,6 +25,12 @@ export function DataTablePagination<TData>({
 
   const currentPage = table.getState().pagination.pageIndex + 1;
   const totalPages = table.getPageCount();
+  const pageSize = table.getState().pagination.pageSize;
+  // The table's own page size is always one of the choices (a list opened at 25 rows showed an
+  // empty selector when the choices were 10/20/50).
+  const sizes = [...new Set([...pageSizeOptions, pageSize])].sort((a, b) => a - b);
+  // Every row fits on the smallest page: no page-size choice and no pager to show.
+  if (table.getPrePaginationRowModel().rows.length <= (sizes[0] ?? pageSize)) return null;
 
   return (
     <div className="flex items-center justify-between px-2">
@@ -32,14 +38,14 @@ export function DataTablePagination<TData>({
       <div className="flex items-center gap-2 text-sm text-text-muted">
         <span>{t("label.resultsPerPage")}</span>
         <Select
-          value={String(table.getState().pagination.pageSize)}
+          value={String(pageSize)}
           onValueChange={(value) => table.setPageSize(Number(value))}
         >
           <SelectTrigger className="h-8 w-[70px]">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {pageSizeOptions.map((size) => (
+            {sizes.map((size) => (
               <SelectItem key={size} value={String(size)}>
                 {size}
               </SelectItem>

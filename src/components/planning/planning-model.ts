@@ -457,6 +457,18 @@ export function parseCommitmentItemId(itemId: string | number): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+/** Item id of a planned OT without commitment (read-only "to commit" bar). */
+export function proposedItemId(workOrderId: number): string {
+  return `prop-${workOrderId}`;
+}
+
+export function parseProposedItemId(itemId: string | number): number | null {
+  const raw = String(itemId);
+  if (!raw.startsWith("prop-")) return null;
+  const n = Number(raw.slice(5));
+  return Number.isFinite(n) ? n : null;
+}
+
 export function blockItemId(personnelId: number, index: number): string {
   return `blk-${personnelId}-${index}`;
 }

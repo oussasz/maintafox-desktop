@@ -290,6 +290,7 @@ const COMMANDS: Array<{
     call: () => svc.declareOwnSkill({ skill_code: "WELD" } as never),
     command: "declare_own_skill",
     args: { payload: { skill_code: "WELD" } },
+    options: { notifyOnError: false },
   },
   {
     name: "listPersonnelSkillReferenceValues",

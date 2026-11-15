@@ -134,6 +134,12 @@ async fn state_transitions_and_mid_session_policy_refresh_are_consistent() {
         .await
         .expect_err("finance write must be blocked when suspended");
     assert!(format!("{blocked}").contains("Entitlement capability blocked"));
+    // Coded for the screen: which module, and that the licence is not in force.
+    assert!(
+        format!("{blocked}").contains("LICENCE_MODULE_OFF:module=finance,state=suspended:"),
+        "{blocked}"
+    );
+    assert!(matches!(blocked, crate::errors::AppError::PermissionDenied(_)));
 
     let summary = queries::get_entitlement_summary(&db).await.expect("summary");
     assert_eq!(summary.state, "suspended");

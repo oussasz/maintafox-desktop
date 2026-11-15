@@ -242,11 +242,10 @@ pub async fn insert_lookup_value(
     color: Option<&str>,
     _created_by_sync_id: &str,
 ) -> AppResult<i32> {
-    use chrono::Utc;
     use uuid::Uuid;
 
     let entity_sync_id = Uuid::new_v4().to_string();
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
 
     let sql = r"
         INSERT INTO lookup_values
@@ -255,7 +254,8 @@ pub async fn insert_lookup_value(
              created_at, updated_at, row_version)
         VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, 1)
     ";
-    db.execute(Statement::from_sql_and_values(
+    let inserted = db
+        .execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         sql,
         [
@@ -283,13 +283,8 @@ pub async fn insert_lookup_value(
         }
     })?;
 
-    // Return the new id
-    let row = db
-        .query_one(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT last_insert_rowid() as id;".to_string(),
-        ))
-        .await?;
-    let new_id: i32 = row.and_then(|r| r.try_get::<i64>("", "id").ok()).unwrap_or(0) as i32;
+    // Return the new id, from the INSERT's own result (not a second statement)
+    let new_id = i32::try_from(crate::db::inserted_id(&inserted)?)
+        .map_err(|_| AppError::Internal(anyhow::anyhow!("inserted lookup value id out of range")))?;
     Ok(new_id)
 }

@@ -22,6 +22,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useSession } from "@/hooks/use-session";
 import { isStepUpCancelled, useStepUp } from "@/hooks/use-step-up";
 import { describeAppError } from "@/lib/app-error";
+import { listParts } from "@/services/wo-execution-service";
 import { useWoStore } from "@/stores/wo-store";
 import type { WorkOrder } from "@shared/ipc-types";
 
@@ -40,6 +41,8 @@ export function WoCancelDialog({ wo, open, onOpenChange }: WoCancelDialogProps) 
 
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
+  // L1-33: parts already issued from the store for this work order (they go back by a return).
+  const [issuedLines, setIssuedLines] = useState(0);
 
   useEffect(() => {
     if (open) {
@@ -47,6 +50,22 @@ export function WoCancelDialog({ wo, open, onOpenChange }: WoCancelDialogProps) 
       setError(null);
     }
   }, [open, wo?.id]);
+
+  useEffect(() => {
+    setIssuedLines(0);
+    if (!open || wo == null) return;
+    let live = true;
+    listParts(wo.id)
+      .then((parts) => {
+        if (live) setIssuedLines(parts.filter((p) => p.quantity_issued > 0).length);
+      })
+      .catch(() => {
+        // The warning is a help; the backend still decides the cancellation.
+      });
+    return () => {
+      live = false;
+    };
+  }, [open, wo]);
 
   const handleSubmit = useCallback(async () => {
     if (!wo || !info?.user_id) return;
@@ -94,6 +113,14 @@ export function WoCancelDialog({ wo, open, onOpenChange }: WoCancelDialogProps) 
 
         <div className="space-y-3 py-2">
           <p className="text-sm text-muted-foreground">{t("cancel.warning")}</p>
+          {issuedLines > 0 && (
+            <p
+              role="alert"
+              className="rounded-md border border-tone-warning-border bg-tone-warning-bg px-3 py-2 text-sm text-tone-warning-fg"
+            >
+              {t("cancel.partsIssued", { count: issuedLines })}
+            </p>
+          )}
           <div className="space-y-1.5">
             <Label className="text-xs">{t("cancel.reason")}</Label>
             <Textarea
@@ -116,7 +143,7 @@ export function WoCancelDialog({ wo, open, onOpenChange }: WoCancelDialogProps) 
 
         <div className="flex items-center justify-end gap-2 pt-1">
           <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
-            {t("form.cancel")}
+            {t("cancel.keep")}
           </Button>
           <Button
             size="sm"

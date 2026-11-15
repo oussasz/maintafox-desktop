@@ -22,6 +22,7 @@ type InventoryServiceModule = typeof InventoryService;
 const svc = vi.hoisted(() => ({
   resolveInventoryScan: vi.fn(),
   issueInventoryStockToWorkOrder: vi.fn(),
+  returnInventoryStock: vi.fn(),
   listInventoryArticles: vi.fn(),
   listInventoryStockBalances: vi.fn(),
   listInventoryReservations: vi.fn(),
@@ -37,6 +38,12 @@ vi.mock("@/services/inventory-service", async (importOriginal) => {
   return { ...actual, ...svc };
 });
 vi.mock("@/services/wo-service", () => wo);
+// The list of parts "à sortir" above the desk (its own test: PartsToIssuePanel.test.tsx).
+vi.mock("@/services/wo-execution-service", () => ({
+  listWoPartsToIssue: vi.fn().mockResolvedValue([]),
+  issueWoPartToIssue: vi.fn(),
+  cancelWoPartToIssue: vi.fn(),
+}));
 vi.mock("@/services/reference-service", async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
   return { ...actual, ...ref };
@@ -221,6 +228,64 @@ describe("InventoryIssueDesk", () => {
     expect(await screen.findByText("ART-001 issued to OT-2026-0144")).toBeInTheDocument();
     // Ready for the next scan.
     await waitFor(() => expect(screen.getByLabelText("Scan or type an article")).toHaveValue(""));
+  });
+
+  it("returns unused parts already issued to the work order back to stock", async () => {
+    svc.listInventoryReservations.mockResolvedValue([
+      {
+        id: 70,
+        article_id: 4,
+        article_code: "ART-001",
+        article_name: "Bearing",
+        warehouse_id: 1,
+        warehouse_code: "WH1",
+        warehouse_name: null,
+        location_id: 3,
+        location_code: "A-01",
+        location_name: null,
+        source_type: "WORK_ORDER_PART",
+        source_id: 81,
+        source_ref: null,
+        work_order_code: "OT-2026-0144",
+        quantity_reserved: 3,
+        quantity_issued: 3,
+        status: "consumed",
+        notes: null,
+        created_by_id: null,
+        created_at: "2026-10-01T08:00:00Z",
+        updated_at: "2026-10-01T08:00:00Z",
+        released_at: null,
+      },
+    ]);
+    svc.returnInventoryStock.mockResolvedValue({});
+
+    render(<InventoryIssueDesk />);
+    const scan = screen.getByLabelText("Scan or type an article");
+    fireEvent.change(scan, { target: { value: "ART-001" } });
+    fireEvent.submit(scan);
+    await screen.findByText("Found by barcode");
+    fireEvent.click(await screen.findByRole("option", { name: /OT-2026-0144/ }));
+
+    expect(await screen.findByText("Return unused parts from this work order")).toBeInTheDocument();
+    const back = screen.getByRole("button", { name: "Return to stock" });
+    fireEvent.change(screen.getByLabelText("Quantity (PCS)"), { target: { value: "5" } });
+    expect(
+      await screen.findByText(
+        "You can only return 3 PCS (the quantity already issued for this work order).",
+      ),
+    ).toBeInTheDocument();
+    expect(back).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText("Quantity (PCS)"), { target: { value: "1" } });
+    await waitFor(() => expect(back).toBeEnabled());
+    fireEvent.click(back);
+    await waitFor(() =>
+      expect(svc.returnInventoryStock).toHaveBeenCalledWith({
+        reservation_id: 70,
+        quantity: 1,
+        notes: null,
+      }),
+    );
   });
 
   it("refuses more than the location holds", async () => {

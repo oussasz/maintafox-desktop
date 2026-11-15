@@ -14,7 +14,6 @@
 //!   - deleting a preferred alias auto-promotes the oldest remaining alias in the same scope
 
 use crate::errors::{AppError, AppResult};
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement};
 use serde::{Deserialize, Serialize};
 
@@ -267,7 +266,7 @@ pub async fn create_alias(
         enforce_preferred_uniqueness(db, payload.reference_value_id, &locale, &alias_type, None).await?;
     }
 
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
     let preferred_int: i32 = if is_preferred { 1 } else { 0 };
 
     db.execute(Statement::from_sql_and_values(

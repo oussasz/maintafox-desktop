@@ -194,7 +194,8 @@ pub struct ReliabilityKpiSnapshot {
     pub analysis_input_spec_json: String,
     pub plot_payload_json: String,
     pub row_version: i64,
-    /// `reliability_kpi_v2` and later; legacy rows carry `reliability_kpi_v1`.
+    /// `reliability_kpi_v2` and later (v3: every unplanned failure counts, L2-10); legacy rows
+    /// carry `reliability_kpi_v1`.
     pub algorithm_version: Option<String>,
     pub exposure_hours: Option<f64>,
     pub repair_event_count: Option<i64>,

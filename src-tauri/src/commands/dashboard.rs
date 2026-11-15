@@ -66,7 +66,7 @@ pub struct DashboardDiStatusChart {
 }
 
 /// Mirrors `DEFAULT_DASHBOARD_LAYOUT` in `shared/dashboard-layout.ts`.
-pub const DEFAULT_DASHBOARD_LAYOUT_JSON: &str = r#"{"version":1,"widgets":[{"id":"my_work","order":0,"visible":true},{"id":"supervision","order":1,"visible":true},{"id":"planning","order":2,"visible":true},{"id":"kpis","order":3,"visible":true},{"id":"workload","order":4,"visible":true},{"id":"di_status","order":5,"visible":true}]}"#;
+pub const DEFAULT_DASHBOARD_LAYOUT_JSON: &str = r#"{"version":1,"widgets":[{"id":"kpis","order":0,"visible":true},{"id":"my_work","order":1,"visible":true},{"id":"supervision","order":2,"visible":true},{"id":"planning","order":3,"visible":true},{"id":"workload","order":4,"visible":false},{"id":"di_status","order":5,"visible":false}]}"#;
 
 /// Periods of the activity chart (days).
 pub const WORKLOAD_PERIODS: [i64; 2] = [7, 30];

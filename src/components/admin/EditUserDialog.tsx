@@ -16,7 +16,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
-import { describeAppError } from "@/lib/app-error";
+import { appErrorReason } from "@/lib/app-error";
 import { listPersonnel } from "@/services/personnel-service";
 import { updateUser } from "@/services/rbac-service";
 import { pushAppToast } from "@/store/app-toast-store";
@@ -137,7 +137,7 @@ export function EditUserDialog({
       onSaved();
       onClose();
     } catch (err) {
-      const msg = describeAppError(err).title;
+      const msg = appErrorReason(err);
       toast({
         title: msg || t("users.edit.error"),
         variant: "destructive",

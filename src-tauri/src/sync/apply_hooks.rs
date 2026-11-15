@@ -79,7 +79,9 @@
 //!   protects its work orders not started yet (origin, permit required, a clearing withdrawn); a
 //!   work order new here received without the column and already started takes that origin; a
 //!   protected work order required again but still carrying its clearing ends protected
-//!   (`after_received_work_order`, recorded in its history and audit trail);
+//!   (`after_received_work_order`, recorded in its history and audit trail); a request received
+//!   flagged raises its safety alert here once (`settings::received_notice::announce_di_safety_alert`,
+//!   not for the plant history of a first join);
 //! - `work_orders` changing status (or new here): applied with its waiting reservations, tasks,
 //!   failure coding, labour, parts, downtime, tools, verifications and status changes; entering
 //!   `completed` or `closed`, then judged by the local completion and close gates on the written
@@ -88,6 +90,11 @@
 //!   completion or close here, a task result outside execution and a mandatory task removed past
 //!   planning refused, and a verification keeps the self-verification rules
 //!   (`wo::closeout_sync`); snapshot history is applied, not judged;
+//! - `work_orders` (a start, hold, resume, "Terminé", close or cancellation) / `work_order_tasks` (a
+//!   task result): after those gates, the author of the change (its status-history row, the task's
+//!   `completed_by`) must hold the action's right at the work order's site here now and carry the
+//!   work order out (assignee, team, planner, approver; `wo::execution_actor`), otherwise a
+//!   `WO_EXECUTION_UNAUTHORISED` conflict (`wo::execution_actor_sync`, L5-08c);
 //! - `permit_types`: a change of the three-person lock-removal setting, or a switch-off of the
 //!   energy-isolation rule, names who changed it (holding the settings and permit-issue rights
 //!   here), when and why; the shipped LOTO type's isolation rule is never switched off
@@ -138,6 +145,10 @@
 //!   organisation administration right plant-wide here), when and why, and the record still has no
 //!   site here; the trace is never rewritten; a work order or request given a site without that
 //!   trace is a conflict (`org::site_assignment::inbound_site_assignment_check`).
+//! - `work_orders`: a dépannage (migration 277) carries its "panne constatée à" (readable, not later
+//!   than its row) and its "machine arrêtée", and is never turned back into an ordinary work order;
+//!   otherwise a conflict (`wo::depannage::inbound_depannage_check`). Its start is judged by the
+//!   permit gate of a start like any work order entering in progress (above).
 //! - `work_orders` / `intervention_requests` / `equipment`: after the apply, an open work order or
 //!   request on equipment retired here (created on one PC, the retirement recorded on another,
 //!   whichever arrives second) is applied, never refused, and gets its one review item
@@ -279,6 +290,15 @@ pub(crate) async fn before_upsert_checked(
         "permit_handover_logs" => {
             Some(crate::permit::sync_check::inbound_handover_check(conn, entity_sync_id, payload).await?)
         }
+        // The workers of a permit and their personal padlocks (L4-05 / L4-18, migration 294):
+        // the group lockout, a padlock taken off by its owner or by a recorded forced removal, a
+        // worker added after the issue (`permit::workers_sync`).
+        "permit_workers" => {
+            Some(crate::permit::workers_sync::inbound_worker_check(conn, entity_sync_id, payload).await?)
+        }
+        "permit_personal_locks" => {
+            Some(crate::permit::workers_sync::inbound_personal_lock_check(conn, entity_sync_id, payload).await?)
+        }
         "work_orders" => Some(
             match crate::permit::sync_check::inbound_permit_rule_check(conn, entity_sync_id, payload).await? {
                 Some(verdict) => Some(verdict),
@@ -291,15 +311,19 @@ pub(crate) async fn before_upsert_checked(
                     };
                     match closeout {
                         Some(verdict) => Some(verdict),
-                        None => {
-                            crate::org::site_assignment::inbound_site_assignment_check(
-                                conn,
-                                crate::org::site_assignment::NoSiteKind::WorkOrder,
-                                entity_sync_id,
-                                payload,
-                            )
-                            .await?
-                        }
+                        None => match crate::org::site_assignment::inbound_site_assignment_check(
+                            conn,
+                            crate::org::site_assignment::NoSiteKind::WorkOrder,
+                            entity_sync_id,
+                            payload,
+                        )
+                        .await?
+                        {
+                            Some(verdict) => Some(verdict),
+                            None => {
+                                crate::wo::depannage::inbound_depannage_check(conn, entity_sync_id, payload).await?
+                            }
+                        },
                     }
                 }
             },
@@ -336,6 +360,10 @@ pub(crate) async fn before_upsert_checked(
         // A crew's site change carrying its committed jobs across a week frozen here (AU-129).
         "teams" => Some(crate::planning::sync_check::inbound_crew_site_check(conn, entity_sync_id, payload).await?),
         "work_order_parts" => Some(crate::wo::parts::inbound_part_line_check(conn, entity_sync_id, payload).await?),
+        // An RCM decision leaving a critical FMECA mode to run to failure (`reliability::rcm_loop`, L2-15).
+        "rcm_decisions" => {
+            Some(crate::reliability::rcm_loop::inbound_rcm_decision_check(conn, entity_sync_id, payload).await?)
+        }
         // An anomaly closed without a decision, reopened, its link changed or its "revue permis
         // requise" cleared (`inspection::sync_check`, audit finding AU-72).
         "inspection_anomalies" => {
@@ -348,13 +376,20 @@ pub(crate) async fn before_upsert_checked(
         | "work_order_interveners"
         | "work_order_tools"
         | "work_order_verifications" => Some(
-            crate::wo::closeout_sync::inbound_closeout_child_check(
+            match crate::wo::closeout_sync::inbound_closeout_child_check(
                 conn,
                 layout.def.entity_type,
                 entity_sync_id,
                 payload,
             )
-            .await?,
+            .await?
+            {
+                // A task result: its author, with the rights held here now (L5-08c).
+                None if layout.def.entity_type == "work_order_tasks" => {
+                    crate::wo::execution_actor_sync::inbound_task_result_check(conn, entity_sync_id, payload).await?
+                }
+                verdict => verdict,
+            },
         ),
         crate::auth::recovery_code::NOTICE_ENTITY => {
             Some(crate::auth::recovery_code::inbound_notice_check(conn, entity_sync_id, payload).await?)
@@ -560,10 +595,15 @@ pub(crate) async fn after_upsert_group(
     if let Some(outcome) = crate::permit::sync_check::apply_group(conn, group).await? {
         return Ok(Some(outcome));
     }
-    match closeout {
-        Some(entry) => crate::wo::closeout_sync::judge_closeout(conn, &entry).await,
-        None => Ok(None),
+    let Some(entry) = closeout else {
+        return Ok(None);
+    };
+    if let Some(outcome) = crate::wo::closeout_sync::judge_closeout(conn, &entry).await? {
+        return Ok(Some(outcome));
     }
+    // Who made the execution change (start, hold, resume, completion, close, cancellation), with
+    // the rights they hold here now (L5-08c, `wo::execution_actor_sync`).
+    crate::wo::execution_actor_sync::judge_received_transition(conn, &entry).await
 }
 
 /// Checks of an inbound delete before it is applied; `Some` stops it with that outcome. A permit
@@ -594,7 +634,13 @@ pub(crate) async fn before_delete_checked(
         }
     }
     let verdict = match layout.def.entity_type {
-        "work_permits" | "permit_isolations" | "permit_suspensions" | "permit_types" | "qualification_requirements" => {
+        "work_permits"
+        | "permit_isolations"
+        | "permit_suspensions"
+        | "permit_types"
+        | "qualification_requirements"
+        | "permit_workers"
+        | "permit_personal_locks" => {
             crate::permit::sync_check::inbound_delete_check(conn, layout.def.entity_type, entity_sync_id).await?
         }
         // Rows of the safety rule notice are local to each PC: never deleted by sync.
@@ -720,6 +766,17 @@ pub(crate) async fn after_upsert(
                 .ok_or_else(|| hook_err(layout.table(), "node not found after apply"))?;
             recompute_org_paths(conn, id).await
         }
+        // A top level still carrying the old English default, sent by a PC that has not upgraded
+        // (or pulled on a new PC after the migration ran), reads like the local one
+        // (`migrations::m20261102_000268_org_root_level_label`). A label the plant chose is kept.
+        "org_node_types" => {
+            let id = located_row_id(conn, layout, row)
+                .await?
+                .ok_or_else(|| hook_err(layout.table(), "level not found after apply"))?;
+            crate::migrations::m20261102_000268_org_root_level_label::rename_default_root_label(conn, Some(id))
+                .await
+                .map_err(|e| hook_err(layout.table(), e))
+        }
         // A received count line's "above the tolerance" flag is this PC's judgement (CMMS Advisor
         // Q14, `inventory::count_four_eyes::store_judged_critique`): the derived auto-approbation
         // and the "critique" badge read it. A version already judged here keeps the flag held.
@@ -827,6 +884,19 @@ pub(crate) async fn after_upsert(
                 .ok_or_else(|| hook_err(layout.table(), "request not found after apply"))?;
             crate::wo::workflow::actions::permit_requirement::raise_work_orders_of_safety_request(conn, id, None)
                 .await?;
+            // Received flagged: its safety alert is raised here, once per request on this PC (the
+            // key is looked for first; CMMS Advisor decision on L4-11). Only while it is open (a
+            // closed or converted request raises nothing: `announce_di_safety_alert`), and not for
+            // plant history: a request new here received by the snapshot of this PC's first join.
+            let first_join_history = match row {
+                RowLocator::Identity(sync_id) if inserted => {
+                    crate::sync::plant_join::first_join_snapshot_row(conn, "intervention_requests", sync_id).await?
+                }
+                _ => false,
+            };
+            if !first_join_history {
+                crate::settings::received_notice::announce_di_safety_alert(conn, id).await;
+            }
             // Open on retired equipment here, or no longer: its review item (AU-73b).
             crate::wo::retired_equipment_review::reconcile_request_in(conn, id).await
         }
@@ -968,6 +1038,44 @@ async fn after_received_work_order(
         crate::permit::requirement_rules::stamp_causes::WORK_ORDER_RECEIVED,
     )
     .await?;
+    // Every permit type the list here gives it is required, whatever its status while it is open
+    // (in progress or on hold too: its resume will ask for them; CMMS Advisor 2026-11-04). The types
+    // a started work order lacked are named in its arrival finding.
+    let status: Option<String> = conn
+        .query_one(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "SELECT st.code FROM work_orders wo JOIN work_order_statuses st ON st.id = wo.status_id WHERE wo.id = ?",
+            [wo_id.into()],
+        ))
+        .await?
+        .and_then(|r| r.try_get::<String>("", "code").ok());
+    let open = status
+        .as_deref()
+        .is_some_and(|s| !matches!(s, "completed" | "closed" | "cancelled"));
+    let mut missing = if open {
+        let rules = crate::permit::requirement_rules::PublishedRules::load(conn).await?;
+        crate::permit::requirement_rules::add_matching_types(
+            conn,
+            &rules,
+            wo_id,
+            None,
+            crate::permit::requirement_rules::stamp_causes::WORK_ORDER_RECEIVED,
+            None,
+        )
+        .await?
+    } else {
+        Vec::new()
+    };
+    // Running here without a live permit of a type it requires (one added just now, or held here
+    // while the sender's set lacked it: its start was judged with the sender's set).
+    if status.as_deref() == Some("in_progress") {
+        for uncovered in crate::permit::requirement_rules::required_types_without_live_permit(conn, wo_id).await? {
+            if !missing.iter().any(|(t, _)| *t == uncovered.0) {
+                missing.push(uncovered);
+            }
+        }
+    }
+    missing.sort();
     if !first_join_history {
         let received_without_held_rule = match held_rule {
             Some(HeldRule::Kept { received_requires }) => Some(*received_requires),
@@ -978,6 +1086,7 @@ async fn after_received_work_order(
             wo_id,
             received_without_held_rule,
             matches!(held_rule, Some(HeldRule::Received)),
+            &missing,
         )
         .await?;
     }

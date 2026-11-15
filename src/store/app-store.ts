@@ -31,6 +31,8 @@ export interface AppStore {
   // Startup state
   appStatus: AppStatus;
   startupMessage: string;
+  /** Start-up has been "loading" for too long: the screen offers a retry instead of a spinner. */
+  startupStalled: boolean;
   appVersion: string;
   updateRecovery: UpdateRecoveryInfo | null;
 
@@ -51,6 +53,7 @@ export interface AppStore {
 
   // Actions
   setAppStatus: (status: AppStatus, message?: string) => void;
+  setStartupStalled: (stalled: boolean) => void;
   setAppVersion: (version: string) => void;
   /** Shows the update recovery screen (AppStatus "update_rollback_required"). */
   setUpdateRecovery: (info: UpdateRecoveryInfo) => void;
@@ -67,6 +70,7 @@ export const useAppStore = create<AppStore>()(
     (set) => ({
       appStatus: "loading" as AppStatus,
       startupMessage: "",
+      startupStalled: false,
       appVersion: "",
       updateRecovery: null,
       isOnline: true,
@@ -89,6 +93,9 @@ export const useAppStore = create<AppStore>()(
           appStatus,
           startupMessage: startupMessage ?? "",
         });
+      },
+      setStartupStalled: (startupStalled): void => {
+        set({ startupStalled });
       },
       setAppVersion: (appVersion): void => {
         set({ appVersion });

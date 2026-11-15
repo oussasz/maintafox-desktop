@@ -219,6 +219,17 @@ function generateRust(registry: Registry): string {
   );
   lines.push("");
 
+  lines.push(
+    "/// Role templates (role models) offered when creating a role: name → permissions copied into",
+  );
+  lines.push("/// the new role. Migrations seed the `role_templates` rows from this list.");
+  lines.push("pub const ROLE_TEMPLATES: &[(&str, &[&str])] = &[");
+  for (const [name, perms] of Object.entries(registry.role_templates)) {
+    lines.push(`    (${JSON.stringify(name)}, &[${perms.map((n) => constName(n)).join(", ")}]),`);
+  }
+  lines.push("];");
+  lines.push("");
+
   lines.push("/// Resolve a permission or alias to its canonical name.");
   lines.push("pub fn canonicalize(name: &str) -> Option<&'static str> {");
   lines.push("    for meta in CATALOG {");

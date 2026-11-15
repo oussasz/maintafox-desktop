@@ -124,7 +124,8 @@ export async function getPasswordRequirements(): Promise<PasswordRequirements> {
  * Requires the current password for verification.
  */
 export async function setPin(input: SetPinInput): Promise<void> {
-  await invoke<void>("set_pin", { payload: input });
+  // The profile form shows the reason in the field: no global toast.
+  await invoke<void>("set_pin", { payload: input }, { notifyOnError: false });
 }
 
 /**
@@ -132,7 +133,7 @@ export async function setPin(input: SetPinInput): Promise<void> {
  * Requires the current password for verification.
  */
 export async function clearPin(input: ClearPinInput): Promise<void> {
-  await invoke<void>("clear_pin", { payload: input });
+  await invoke<void>("clear_pin", { payload: input }, { notifyOnError: false });
 }
 
 /**

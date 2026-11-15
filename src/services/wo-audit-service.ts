@@ -22,6 +22,8 @@ const WoChangeEventSchema = z.object({
   details_json: z.string().nullable(),
   requires_step_up: z.number(),
   apply_result: z.string(),
+  /** `wo`: a change event of the OT; `audit`: an audit-trail event whose object is the OT. */
+  source: z.enum(["wo", "audit"]).default("wo"),
 });
 
 // â”€â”€ Exported types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

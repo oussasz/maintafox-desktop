@@ -1,7 +1,7 @@
 /**
  * Supervisor / manager panel (`get_home_supervision`): open requests against their SLA, the OT
  * backlog by nature and urgency, PM, stock to reorder, permits and lockouts, critical assets
- * down. Each section is the module's own figure; a module the user may not open has none.
+ * down and equipment with repeat failures. Each section is the module's own figure; a module the user may not open has none.
  */
 import { ShieldCheck } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
@@ -18,12 +18,14 @@ import type { HomeSupervision, HomeSupervisionWorkOrders } from "@shared/ipc-typ
 
 import {
   HomeFigure,
+  HomeMoreLink,
   HomeNote,
   HomePanel,
   HomeRecordList,
   HomeSection,
   usePanelLoad,
 } from "./HomeParts";
+import { HomeRepeatFailuresSection } from "./HomeRepeatFailuresSection";
 import { homeLinks } from "./home-links";
 
 export function HomeSupervisionPanel({ refreshSignal = 0 }: { refreshSignal?: number }) {
@@ -41,12 +43,18 @@ export function HomeSupervisionPanel({ refreshSignal = 0 }: { refreshSignal?: nu
       state={state}
       testId="home-supervision"
     >
-      {state.data ? <SupervisionBody data={state.data} /> : null}
+      {state.data ? <SupervisionBody data={state.data} refreshSignal={refreshSignal} /> : null}
     </HomePanel>
   );
 }
 
-function SupervisionBody({ data }: { data: HomeSupervision }) {
+function SupervisionBody({
+  data,
+  refreshSignal,
+}: {
+  data: HomeSupervision;
+  refreshSignal: number;
+}) {
   const { t } = useTranslation("dashboard");
   const { formatNumber, formatPercent, formatDecimal, formatDateTime } = useFormatters();
   const queues = useVisibleDiQueues();
@@ -194,12 +202,14 @@ function SupervisionBody({ data }: { data: HomeSupervision }) {
               label={t("home.supervision.stock.out")}
               value={n(stock.lines_out_of_stock)}
               tone={stock.lines_out_of_stock > 0 ? "danger" : undefined}
+              to={listLinks.inventory({ belowReorder: true })}
             />
           </div>
           <HomeRecordList
             ariaLabel={t("home.supervision.stock.listAria")}
             emptyText={t("home.supervision.stock.empty")}
             total={stock.lines_to_reorder}
+            moreTo={listLinks.inventory({ belowReorder: true })}
             rows={stock.items.map((s) => ({
               key: `${s.article_id}-${s.warehouse_code}`,
               primary: `${s.article_code} — ${s.article_name}`,
@@ -232,7 +242,11 @@ function SupervisionBody({ data }: { data: HomeSupervision }) {
           openTo={homeLinks.permits}
         >
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            <HomeFigure label={t("home.supervision.safety.open")} value={n(safety.open_permits)} />
+            <HomeFigure
+              label={t("home.supervision.safety.open")}
+              value={n(safety.open_permits)}
+              to={homeLinks.permits}
+            />
             <HomeFigure
               label={t("home.supervision.safety.expiring")}
               value={safety.expiring_rule === "active" ? n(safety.expiring.total) : t("home.none")}
@@ -244,16 +258,19 @@ function SupervisionBody({ data }: { data: HomeSupervision }) {
                   : t(`home.supervision.safety.rule.${safety.expiring_rule}`)
               }
               tone={safety.expiring.total > 0 ? "warning" : undefined}
+              to={homeLinks.permits}
             />
             <HomeFigure
               label={t("home.supervision.safety.expired")}
               value={n(safety.expired_open.total)}
               tone={safety.expired_open.total > 0 ? "danger" : undefined}
+              to={homeLinks.permits}
             />
             <HomeFigure
               label={t("home.supervision.safety.locks")}
               value={n(safety.locks_in_place)}
               hint={t("home.supervision.safety.locksOn", { count: safety.permits_with_locks })}
+              to={homeLinks.permits}
             />
           </div>
           {[
@@ -282,11 +299,10 @@ function SupervisionBody({ data }: { data: HomeSupervision }) {
                   }))}
                 />
                 {list.total - list.without_record > list.items.length ? (
-                  <HomeNote>
-                    {t("home.more", {
-                      count: list.total - list.without_record - list.items.length,
-                    })}
-                  </HomeNote>
+                  <HomeMoreLink
+                    count={list.total - list.without_record - list.items.length}
+                    to={homeLinks.permits}
+                  />
                 ) : null}
                 {list.without_record > 0 ? (
                   <HomeNote tone="warning">
@@ -321,11 +337,13 @@ function SupervisionBody({ data }: { data: HomeSupervision }) {
             label={t("home.supervision.assets.down")}
             value={n(assets.critical_down)}
             tone={assets.critical_down > 0 ? "danger" : undefined}
+            to={homeLinks.equipment}
           />
           <HomeRecordList
             ariaLabel={t("home.supervision.assets.listAria")}
             emptyText={t("home.supervision.assets.empty")}
             total={assets.critical_down}
+            moreTo={homeLinks.equipment}
             rows={assets.items.map((a) => ({
               key: a.id,
               primary: `${a.asset_code} — ${a.name}`,
@@ -336,6 +354,8 @@ function SupervisionBody({ data }: { data: HomeSupervision }) {
           />
         </HomeSection>
       ) : null}
+      {/* Same right as the assets section (equipment view). */}
+      {assets ? <HomeRepeatFailuresSection refreshSignal={refreshSignal} /> : null}
     </div>
   );
 }

@@ -81,6 +81,7 @@ fn validate_activation_input(input: &ApplyMachineActivationInput) -> AppResult<(
     Ok(())
 }
 
+#[cfg(not(target_os = "android"))]
 fn read_machine_id_or_fallback() -> String {
     #[cfg(target_os = "windows")]
     {
@@ -124,8 +125,22 @@ fn read_machine_id_or_fallback() -> String {
     "unknown-machine".to_string()
 }
 
-fn get_keyring_entry(secret_name: &str) -> AppResult<keyring::Entry> {
-    keyring::Entry::new(KEYRING_SERVICE, secret_name)
+/// Machine id anchor. Android: the app's own installation id (no hardware id), and an error when
+/// the secret store cannot give it, never the shared fallback (fails closed, as `auth::device`).
+fn read_machine_id() -> AppResult<String> {
+    #[cfg(target_os = "android")]
+    {
+        crate::platform::installation_id::get_or_create()
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("android installation id unavailable: {e}")))
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        Ok(read_machine_id_or_fallback())
+    }
+}
+
+fn get_keyring_entry(secret_name: &str) -> AppResult<crate::platform::secret_store::Entry> {
+    crate::platform::secret_store::Entry::new(KEYRING_SERVICE, secret_name)
         .map_err(|e| AppError::Internal(anyhow::anyhow!("keyring open failed: {e}")))
 }
 
@@ -138,7 +153,7 @@ fn get_activation_binding_secret() -> AppResult<Option<Vec<u8>>> {
                 hex::decode(value).map_err(|e| AppError::Internal(anyhow::anyhow!("keyring decode failed: {e}")))?;
             Ok(Some(bytes))
         }
-        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(crate::platform::secret_store::Error::NoEntry) => Ok(None),
         Err(e) => Err(AppError::Internal(anyhow::anyhow!("keyring read failed: {e}"))),
     }
 }
@@ -182,7 +197,7 @@ fn derive_anchor_hash(secret: &[u8], anchor_name: &str, anchor_value: &str) -> S
 
 pub(crate) fn current_anchor_hashes() -> AppResult<BTreeMap<String, String>> {
     let secret = get_or_initialize_activation_binding_secret()?;
-    let machine_id = read_machine_id_or_fallback();
+    let machine_id = read_machine_id()?;
     let hostname = hostname::get()
         .map(|v| v.to_string_lossy().to_string())
         .unwrap_or_else(|_| "unknown-host".to_string());

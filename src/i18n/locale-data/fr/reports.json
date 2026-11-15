@@ -7,7 +7,7 @@
       "dashboards": "Tableaux de bord",
       "templates": "Générateur de rapports",
       "schedules": "Planifications",
-      "history": "Historique & audit"
+      "history": "Historique des rapports"
     },
     "dashboards": {
       "title": "Tableaux de bord exécutifs",
@@ -18,12 +18,12 @@
       "saveLayout": "Enregistrer",
       "cancel": "Annuler",
       "widgetsSection": "Blocs affichés",
-      "reliabilityHint": "Valeurs regroupées du parc à partir des instantanés de fiabilité des {{days}} derniers jours (limitées à l’organisation choisie). Les écarts comparent aux {{days}} jours précédents.",
+      "reliabilityHint": "Calcul en direct sur les défaillances, {{period}} (limité à l’organisation choisie) : le même calcul que l’accueil RAMS. Les écarts comparent à la période précédente de même durée. Instantanés et taille d’échantillon : série issue des instantanés de fiabilité rafraîchis sur la période.",
       "vsPrior": "vs préc.",
-      "pmEmpty": "Aucune PM ouverte dans la file d’échéance pour ce périmètre.",
+      "pmEmpty": "Aucune MP ouverte dans la file d’échéance pour ce périmètre.",
       "sections": {
         "ops": "Opérations",
-        "pm": "Pipeline PM",
+        "pm": "Pipeline MP",
         "rams": "RAMS flotte",
         "cost": "Coût",
         "health": "Santé flotte"
@@ -33,32 +33,34 @@
         "days7": "7 jours",
         "days30": "30 jours",
         "days90": "90 jours",
+        "months12": "12 mois",
         "orgScope": "Organisation",
-        "allOrgs": "Toutes les organisations"
+        "allOrgs": "Toutes les organisations",
+        "thisMonth": "Mois en cours",
+        "thisYear": "Année en cours",
+        "custom": "Période libre…",
+        "customFrom": "Du",
+        "customHint": "jusqu’à aujourd’hui (366 jours au plus). Mois et année en cours : jours entiers écoulés, aujourd’hui compris."
       },
       "widgets": {
         "opsKpis": "KPIs opérationnels",
-        "pmDue": "File PM à échéance",
+        "pmDue": "File MP à échéance",
         "reliability": "Fiabilité RAMS",
         "maintenanceCost": "Coût de maintenance",
         "workload": "Charge de travail",
         "diStatus": "Répartition des statuts DI"
       },
       "kpi": {
-        "pmOverdue": "PM en retard",
-        "pmDueToday": "PM dues aujourd’hui",
-        "pmDueNext7d": "PM dues sous 7 jours",
-        "mtbf": "MTBF parc (h)",
-        "mttr": "MTTR parc (h)",
-        "availability": "Disponibilité opérationnelle parc (A_o)",
-        "dataQuality": "Qualité des données",
-        "snapshots": "Snapshots",
-        "failureEvents": "Événements de défaillance",
+        "pmOverdue": "MP en retard",
+        "pmDueToday": "MP dues aujourd’hui",
+        "pmDueNext7d": "MP dues sous 7 jours",
+        "sampleSize": "Taille d’échantillon",
+        "snapshots": "Équipements avec instantané",
         "maintenanceCost": "Coût OT valorisé au budget"
       },
       "badActors": {
         "title": "Top 5 équipements à risque",
-        "empty": "Aucun snapshot sur l’horizon",
+        "empty": "Aucun instantané sur la période",
         "asset": "Équipement",
         "events": "Événements"
       },
@@ -74,11 +76,14 @@
         "today": "Aujourd’hui",
         "next7": "7 prochains jours",
         "horizon": "{{days}} derniers jours",
+        "snapshots": "{{period}} · série issue des instantanés",
         "inService": "Enregistrés, non supprimés",
-        "overdue": "DI ouvertes > 7 jours + PM en retard + OT en retard",
+        "overdue": "DI ouvertes > 7 jours + MP en retard + OT en retard",
         "costSettled": "Comptabilisé au budget par la Finance, {{days}} derniers jours",
         "costPending_one": "{{days}} derniers jours · {{count}} OT clôturé pas encore valorisé",
-        "costPending_other": "{{days}} derniers jours · {{count}} OT clôturés pas encore valorisés"
+        "costPending_other": "{{days}} derniers jours · {{count}} OT clôturés pas encore valorisés",
+        "thisMonth": "Mois en cours",
+        "thisYear": "Année en cours"
       },
       "diStatus": {
         "openList": "Ouvrir les demandes",
@@ -99,7 +104,8 @@
         "closed_as_non_executable": "Clôturée, non exécutable",
         "closed": "Clôturée",
         "archived": "Archivée"
-      }
+      },
+      "customizeScope": "Cette disposition est la vôtre : elle ne change pas le tableau de bord des autres utilisateurs."
     },
     "customize": {
       "moveUp": "Monter {{widget}}",
@@ -117,7 +123,7 @@
     "name": "Titre",
     "defaultFormat": "Format par défaut",
     "actions": "Exporter",
-    "subtitle": "Générez un rapport maintenant en PDF ou Excel. Vous choisissez où enregistrer le fichier.",
+    "subtitle": "Générez un rapport maintenant en PDF ou Excel. Vous choisissez où enregistrer le fichier. Chaque modèle couvre une période et un périmètre prédéfinis (toute l'usine) : pour une autre période ou une autre ligne, utilisez l'export du module concerné (liste filtrée) ou le tableau de bord.",
     "loading": "Chargement des modèles de rapport…",
     "loadError": "Les modèles de rapport n’ont pas pu être chargés",
     "empty": "Aucun modèle de rapport disponible.",
@@ -144,14 +150,14 @@
     "title": "Planifications",
     "cronHint": "Cron (UTC, secondes en premier) : ex. 0 0 8 * * * chaque jour à 08:00.",
     "template": "Modèle",
-    "cron": "Cron",
+    "cron": "Fréquence (expression avancée)",
     "format": "Format",
     "enabled": "Actif",
     "save": "Ajouter",
     "delete": "Supprimer",
     "next": "Prochaine exécution",
     "noAccess": "Permission insuffisante pour gérer les planifications de rapports.",
-    "subtitle": "Rapports générés automatiquement et conservés dans l’historique, d’où vous pouvez les télécharger.",
+    "subtitle": "Rapports générés automatiquement et conservés dans l'historique, d'où vous pouvez les télécharger. Ils ne sont pas envoyés par e-mail et ne se génèrent que lorsque Maintafox est ouvert à l'heure prévue ; un rapport manqué est généré au prochain démarrage.",
     "newTitle": "Nouvelle planification",
     "frequency": "Fréquence",
     "frequencies": {
@@ -189,7 +195,7 @@
     }
   },
   "runs": {
-    "title": "Historique & audit",
+    "title": "Historique des rapports",
     "status": "Statut",
     "format": "Format",
     "started": "Début",
@@ -235,8 +241,15 @@
     "dismiss": "Masquer ce message"
   },
   "smrp": {
+    "pmBy": {
+      "toggle": "Détail par site et par métier",
+      "site": "Par site",
+      "team": "Par métier (équipe du plan)",
+      "no_site": "Sans site",
+      "no_team": "Sans équipe affectée"
+    },
     "title": "Indicateurs SMRP",
-    "subtitle": "Indicateurs de gestion de la maintenance conformes aux métriques SMRP Best Practice, calculés à partir de vos OT, planifications, PM et personnel. {{period}}.",
+    "subtitle": "Indicateurs de gestion de la maintenance conformes aux métriques SMRP Best Practice, calculés à partir de vos OT, planifications, MP et personnel. {{period}}.",
     "definitionAria": "Définition de {{title}}",
     "formula": "Formule",
     "period": "Période",
@@ -252,16 +265,17 @@
     "unitPercentYear": "Pourcentage de la valeur de remplacement par an (%)",
     "schedule": {
       "title": "Respect du planning",
-      "none": "Aucune semaine gelée ne s'est terminée sur la période : le respect du planning se mesure sur la référence gelée.",
+      "none": "Aucune semaine gelée terminée sur la période",
       "detail": "{{done}} réalisées sur {{total}} planifiées dans la référence gelée",
-      "formula": "Heures de la référence gelée des semaines terminées dans la période dont le travail a été réalisé avant la fin de sa semaine ÷ heures de la référence. Un travail ensuite libéré ou annulé compte comme non réalisé ; les semaines jamais gelées ne sont pas mesurées."
+      "formula": "Heures de la référence gelée des semaines terminées dans la période dont le travail a été réalisé avant la fin de sa semaine ÷ heures de la référence. Un travail ensuite libéré ou annulé compte comme non réalisé ; les semaines jamais gelées ne sont pas mesurées.",
+      "openWeek": "Ouvrir le planning hebdomadaire"
     },
     "mix": {
       "basisHours": "Sur les heures de main-d’œuvre saisies",
       "basisCount": "Sur le nombre d’OT (aucune heure de main-d’œuvre saisie)",
       "detailHours": "{{part}} sur {{total}}",
       "detailCount": "{{part}} OT sur {{total}}",
-      "none": "Aucun OT terminé sur la période.",
+      "none": "Aucun OT terminé sur la période",
       "planned": {
         "title": "Travail planifié",
         "formula": "Heures de main-d’œuvre des OT terminés de type préventif, conditionnel, inspection, révision et amélioration ÷ heures de tous les OT terminés. Le nombre d’OT est utilisé quand aucune heure n’est saisie."
@@ -273,13 +287,15 @@
       "emergency": {
         "title": "Travail d’urgence",
         "formula": "Heures de main-d’œuvre des OT d’urgence terminés ÷ heures de tous les OT terminés."
-      }
+      },
+      "basisHoursShort": "en heures",
+      "basisCountShort": "en nombre d’OT"
     },
     "pm": {
-      "title": "Respect des PM",
+      "title": "Respect des MP",
       "none": "Aucune maintenance préventive n’était due sur la période.",
       "detail": "{{done}} sur {{total}} réalisées dans leur fenêtre",
-      "formula": "Occurrences de PM réalisées dans leur fenêtre de tolérance — ni avant son ouverture, ni après sa fermeture (sans tolérance : le jour d’échéance) ÷ occurrences de PM dues sur la période, réalisées ou dont la fenêtre est close. Les occurrences annulées sont exclues ; celles encore dans leur fenêtre ne sont pas encore comptées. Même chiffre que la page PM et la tuile d’accueil."
+      "formula": "Occurrences de MP réalisées dans leur fenêtre de tolérance — ni avant son ouverture, ni après sa fermeture (sans tolérance : le jour d’échéance) ÷ occurrences de MP dues sur la période, réalisées ou dont la fenêtre est close. Les occurrences annulées sont exclues ; celles encore dans leur fenêtre ne sont pas encore comptées. Même chiffre que la page MP et la tuile d’accueil."
     },
     "backlog": {
       "title": "Carnet de travaux",
@@ -291,6 +307,10 @@
       "withoutSchedule_other": "{{count}} personnes actives sans horaire de travail ne sont pas comptées",
       "withoutEstimate_one": "{{count}} OT ouvert n’a pas d’estimation de durée (compté 0 h)",
       "withoutEstimate_other": "{{count}} OT ouverts n’ont pas d’estimation de durée (comptés 0 h)",
+      "byTeam": "Par équipe (métier) : {{teams}}",
+      "teamLine_one": "{{team}} {{hours}} ({{count}} OT)",
+      "teamLine_other": "{{team}} {{hours}} ({{count}} OT)",
+      "noTeam": "Sans équipe",
       "trend": "{{change}} semaines vs début de période",
       "formula": "Heures prévues des OT non encore réalisés ÷ heures hebdomadaires de l’équipe. Heures de l’équipe = postes des jours travaillés de l’horaire de chaque personne active.",
       "unit": "Semaines de travail",

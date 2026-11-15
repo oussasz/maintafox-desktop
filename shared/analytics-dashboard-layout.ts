@@ -246,19 +246,24 @@ export function buildRoleDefaultOverviewKpis(opts: {
   isSupervisorHeavy: boolean;
 }): OverviewKpiLayoutEntry[] {
   const K = OVERVIEW_KPI_SEMANTIC_KEYS;
-  const isReliabilityHeavy = opts.canRam || opts.canRep;
-  const isStorekeeperHeavy = opts.canInv && !opts.isSupervisorHeavy && !isReliabilityHeavy;
+  // Anyone who works on requests or OTs starts with the day's figures: late OTs, open requests,
+  // OTs in progress (field test L7-15). Reliability figures (MTBF, Aₒ, data quality) are the
+  // default only for a reliability profile without OT or request work; anyone can add them.
+  const isOperational = opts.canOt || opts.canDi;
+  const isReliabilityOnly = (opts.canRam || opts.canRep) && !isOperational;
+  const isStorekeeperHeavy =
+    opts.canInv && !opts.isSupervisorHeavy && !isReliabilityOnly && !opts.canDi;
 
   let ids: OverviewKpiSemanticKey[];
 
-  if (isReliabilityHeavy) {
-    ids = [K.MTBF, K.AVAILABILITY, K.DATA_QUALITY];
+  if (opts.isSupervisorHeavy) {
+    ids = [K.OT_OVERDUE, K.DI_OPEN, K.OT_IN_PROGRESS, K.PM_COMPLIANCE];
   } else if (isStorekeeperHeavy) {
     ids = [K.STOCK_OUT, K.REORDER_ALERT, K.OT_IN_PROGRESS];
-  } else if (opts.isSupervisorHeavy) {
-    ids = [K.DI_OPEN, K.OT_OVERDUE, K.PM_COMPLIANCE, K.AVAILABILITY];
+  } else if (isReliabilityOnly) {
+    ids = [K.MTBF, K.AVAILABILITY, K.DATA_QUALITY];
   } else {
-    ids = [K.DI_OPEN, K.OT_IN_PROGRESS, K.OT_OVERDUE, K.PM_DUE_TODAY];
+    ids = [K.OT_OVERDUE, K.DI_OPEN, K.OT_IN_PROGRESS, K.PM_DUE_TODAY];
   }
 
   const permissionFor: Partial<Record<OverviewKpiSemanticKey, PermissionName>> = {

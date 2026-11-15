@@ -21,7 +21,6 @@ use chrono::{DateTime, Utc};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
 use crate::errors::AppResult;
-use crate::reliability::compute::eligible_unplanned_mtbf;
 use crate::reliability::study::clock::{load_clock, parse_instant, parse_instant_opt, StudyClock};
 use crate::reliability::study::domain::{
     AssetClockInfo, DataCheck, ReliabilityStudy, StudyDataset, StudyRecord, RECORD_COMPETING, RECORD_END_OF_PERIOD,
@@ -67,7 +66,12 @@ struct FailureRow {
     cause_label: Option<String>,
     mechanism_label: Option<String>,
     cause_nd: bool,
-    eligible: bool,
+    /// In the study by default (the analyst can include or exclude it): the record has a failure
+    /// mode. Decided live from the record, never from the stored `eligible_flags_json` flag. A
+    /// study is a life-data analysis by failure mode, so a failure without a mode is left out by
+    /// default (and flagged `mode_missing`), while the fleet MTBF counts every unplanned failure
+    /// (`study::fleet_kpis`).
+    in_by_default: bool,
     wo_id: Option<i64>,
     wo_code: Option<String>,
     di_id: Option<i64>,
@@ -139,7 +143,7 @@ async fn load_failures_scoped(
     let sql = format!(
         "SELECT fe.id, fe.equipment_id, fe.failed_at, COALESCE(fe.failed_at, fe.detected_at, fe.created_at) AS ts,
                 fe.restored_at, fe.downtime_duration_hours, fe.failure_mode_id, fe.failure_cause_id,
-                fe.cause_not_determined, fe.eligible_flags_json,
+                fe.cause_not_determined,
                 m.code AS mode_code, m.label AS mode_label, c.label AS cause_label,
                 mech.label AS mechanism_label,
                 wo.id AS wo_id, wo.code AS wo_code, di.id AS di_id, di.code AS di_code,
@@ -178,10 +182,10 @@ async fn load_failures_scoped(
             continue;
         };
         let failed_at: Option<String> = get(r, "failed_at")?;
-        let flags: String = get(r, "eligible_flags_json")?;
         let cause_nd: i64 = get(r, "cause_not_determined")?;
         let restored: Option<String> = get(r, "restored_at")?;
         let di_at: Option<String> = get(r, "di_at")?;
+        let mode_id: Option<i64> = get(r, "failure_mode_id")?;
         out.push(FailureRow {
             id: get(r, "id")?,
             equipment_id: get(r, "equipment_id")?,
@@ -189,14 +193,14 @@ async fn load_failures_scoped(
             from_repair_start: failed_at.is_some(),
             restored_at: parse_instant_opt(restored.as_deref()),
             downtime: get(r, "downtime_duration_hours")?,
-            mode_id: get(r, "failure_mode_id")?,
+            mode_id,
             mode_code: get(r, "mode_code")?,
             mode_label: get(r, "mode_label")?,
             cause_id: get(r, "failure_cause_id")?,
             cause_label: get(r, "cause_label")?,
             mechanism_label: get(r, "mechanism_label")?,
             cause_nd: cause_nd != 0,
-            eligible: eligible_unplanned_mtbf(&flags),
+            in_by_default: mode_id.is_some(),
             wo_id: get(r, "wo_id")?,
             wo_code: get(r, "wo_code")?,
             di_id: get(r, "di_id")?,
@@ -320,7 +324,7 @@ pub async fn study_clocks(
 pub async fn build_dataset(db: &DatabaseConnection, study_id: i64) -> AppResult<BuiltDataset> {
     let study = get_study(db, study_id).await?;
     let period_start = parse_instant(&study.period_start)?;
-    let now = Utc::now();
+    let now = crate::clock::now();
     let period_end = {
         let e = parse_instant(&study.period_end)?;
         if e > now {
@@ -437,7 +441,7 @@ pub async fn build_dataset(db: &DatabaseConnection, study_id: i64) -> AppResult<
                     if start.is_none() {
                         flags.push("no_known_start".to_string());
                     }
-                    let default_in = f.eligible;
+                    let default_in = f.in_by_default;
                     let wanted = choice.include.unwrap_or(default_in);
                     let included = wanted && usable_age.is_some();
                     let state_reason = if usable_age.is_none() {
@@ -743,12 +747,12 @@ pub async fn failures_since(
     mode: Option<i64>,
     since: DateTime<Utc>,
 ) -> AppResult<(i64, f64)> {
-    let now = Utc::now();
+    let now = crate::clock::now();
     let mut count = 0_i64;
     let mut total = 0.0;
     for id in equipment_ids {
         let rows = load_failures(db, *id, &since.to_rfc3339(), &now.to_rfc3339(), mode).await?;
-        count += rows.iter().filter(|f| f.eligible && f.base_at > since).count() as i64;
+        count += rows.iter().filter(|f| f.in_by_default && f.base_at > since).count() as i64;
         let clock = clocks.get(id).cloned().unwrap_or(StudyClock::Calendar);
         total += clock.hours_between(since, now);
     }

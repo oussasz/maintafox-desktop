@@ -18,6 +18,7 @@ import { Label } from "@/components/ui/label";
 import { mfAlert, mfInput, mfTable } from "@/design-system/tokens";
 import { i18n } from "@/i18n";
 import { appErrorReason } from "@/lib/app-error";
+import { roleLabel } from "@/lib/role-labels";
 import { cn } from "@/lib/utils";
 import { useWoOpenRuleText } from "@/lib/wo-open-rule";
 import { clearPin, setPin } from "@/services/auth-service";
@@ -35,7 +36,10 @@ import {
   revokeMyDevice,
   updateMyProfile,
 } from "@/services/user-service";
-import { intlLocaleForLanguage } from "@/utils/format-date";
+import {
+  formatDate as formatLocalDate,
+  formatDateTime as formatLocalDateTime,
+} from "@/utils/formatters";
 import type {
   PersonnelWorkHistoryEntry,
   PersonnelWorkloadSummary,
@@ -50,11 +54,7 @@ import type {
 
 function formatDate(iso: string | null): string {
   if (!iso) return "—";
-  return new Date(iso).toLocaleDateString(intlLocaleForLanguage(i18n.language), {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
+  return formatLocalDate(iso, i18n.language);
 }
 
 function formatDuration(seconds: number | null): string {
@@ -237,7 +237,7 @@ export function ProfileSettingsPanel() {
             {profile.display_name ?? profile.username}
           </h2>
           <p className="text-sm text-text-secondary">
-            {profile.role_name ?? "—"} · {profile.email ?? "—"}
+            {profile.role_name ? roleLabel(t, profile.role_name) : "—"} · {profile.email ?? "—"}
           </p>
           <p className="text-xs text-text-muted">
             {t("profile.memberSince", "Member since")} {formatDate(profile.created_at)}
@@ -707,8 +707,8 @@ function ChangePasswordDialog({
     try {
       await changePassword({ current_password: current, new_password: next });
       onSuccess();
-    } catch {
-      setError(t("profile.passwordError", "Password change failed."));
+    } catch (err) {
+      setError(appErrorReason(err));
     } finally {
       setSubmitting(false);
     }
@@ -792,8 +792,8 @@ function PinSetupDialog({ onClose, onSuccess }: { onClose: () => void; onSuccess
     try {
       await setPin({ new_pin: pin, current_password: password });
       onSuccess();
-    } catch {
-      setError(t("profile.pinError", "PIN setup failed."));
+    } catch (err) {
+      setError(appErrorReason(err));
     } finally {
       setSubmitting(false);
     }
@@ -985,14 +985,7 @@ function TrustedDevicesDialog({
     }
   };
 
-  const formatDeviceDate = (iso: string) =>
-    new Date(iso).toLocaleDateString(intlLocaleForLanguage(i18n.language), {
-      year: "numeric",
-      month: "short",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
+  const formatDeviceDate = (iso: string) => formatLocalDateTime(iso, i18n.language);
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>

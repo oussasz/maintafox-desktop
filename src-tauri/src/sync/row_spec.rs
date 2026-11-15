@@ -399,22 +399,56 @@ pub const ROW_SPECS: &[RowSpec] = &[
         ],
     ),
     spec("equipment_meters", &[r("equipment_id", "equipment")]),
+    // Isolation points kept on the equipment, proposed on its permits (L4-12, migration 290).
+    spec(
+        "equipment_isolation_points",
+        &[
+            r("equipment_id", "equipment"),
+            r("energy_type_id", "reference_values"),
+            r("isolation_method_id", "reference_values"),
+        ],
+    ),
     spec(
         "asset_meter_readings",
         &[r("meter_id", "equipment_meters"), r("created_by_id", USER)],
     ),
+    // Repeat-failure follow-up of an equipment (L2-09, migration 289).
     spec(
-        "equipment_lifecycle_events",
+        "asset_five_why_analyses",
         &[
-            hist("equipment_id", "equipment"),
-            hist("performed_by_id", USER),
-            hist("from_node_id", "org_nodes"),
-            hist("to_node_id", "org_nodes"),
-            hist("related_work_order_id", "work_orders"),
-            hist("related_asset_id", "equipment"),
-            hist("approved_by_id", USER),
+            r("equipment_id", "equipment"),
+            r("created_by_id", USER),
+            r("updated_by_id", USER),
         ],
     ),
+    spec(
+        "asset_corrective_actions",
+        &[
+            r("equipment_id", "equipment"),
+            r("owner_personnel_id", "personnel"),
+            r("created_by_id", USER),
+            r("updated_by_id", USER),
+        ],
+    ),
+    RowSpec {
+        // The parents of a component move (`assets::lifecycle::record_parent_change_in`).
+        json_refs: &[
+            json_ref_hist("details_json", "$.from_parent_asset_id", "equipment"),
+            json_ref_hist("details_json", "$.to_parent_asset_id", "equipment"),
+        ],
+        ..spec(
+            "equipment_lifecycle_events",
+            &[
+                hist("equipment_id", "equipment"),
+                hist("performed_by_id", USER),
+                hist("from_node_id", "org_nodes"),
+                hist("to_node_id", "org_nodes"),
+                hist("related_work_order_id", "work_orders"),
+                hist("related_asset_id", "equipment"),
+                hist("approved_by_id", USER),
+            ],
+        )
+    },
     spec(
         "asset_document_links",
         &[r("asset_id", "equipment"), r("created_by_id", USER)],
@@ -428,7 +462,12 @@ pub const ROW_SPECS: &[RowSpec] = &[
     ),
     spec(
         "library_documents",
-        &[r("equipment_id", "equipment"), r("uploaded_by_id", USER)],
+        // `previous_version_id`: the version a document replaces (L7-17), sent by its identity.
+        &[
+            r("equipment_id", "equipment"),
+            r("uploaded_by_id", USER),
+            r("previous_version_id", "library_documents"),
+        ],
     ),
     // `relative_path` travels: it names the file's place under the app data directory (unique by a
     // UUID) on every device, the same value the attachment row carries; the bytes travel through
@@ -491,6 +530,8 @@ pub const ROW_SPECS: &[RowSpec] = &[
                 // A request converted to a work order points to it, and the work order points
                 // back to its source request.
                 soft("converted_to_wo_id", "work_orders"),
+                // The meter reading that crossed an alarm threshold and raised it (migration 289).
+                r("source_meter_reading_id", "asset_meter_readings"),
             ],
         )
     },
@@ -541,6 +582,8 @@ pub const ROW_SPECS: &[RowSpec] = &[
             r("permit_rule_cleared_by_id", USER),
             // Who gave an old work order without a site its site (migration 245).
             r("site_assigned_by_id", USER),
+            // Who validated a dépannage after the fact (migration 277).
+            r("validated_by_id", USER),
             r("assigned_team_id", "teams"),
             r("urgency_id", "reference_values"),
             r("source_di_id", "intervention_requests"),
@@ -559,6 +602,8 @@ pub const ROW_SPECS: &[RowSpec] = &[
         &[
             r("article_id", "articles"),
             r("stock_location_id", "stock_locations"),
+            // Who a received hors-stock part was handed to (migration 291).
+            r("handed_to_personnel_id", "personnel"),
             unmapped("cost_override_by_id"),
         ],
     ),
@@ -609,6 +654,8 @@ pub const ROW_SPECS: &[RowSpec] = &[
             r("assigned_team_id", "teams"),
             // A plan points to its current version, which points back to the plan.
             soft("current_version_id", "pm_plan_versions"),
+            // The plan whose work includes this plan's (nested plans, `pm::coverage`); back edge of the chain.
+            soft("covered_by_plan_id", "pm_plans"),
         ],
     ),
     RowSpec {
@@ -789,9 +836,41 @@ pub const ROW_SPECS: &[RowSpec] = &[
             r("created_by_id", USER),
             r("submitted_by_id", USER),
             r("approved_by_id", USER),
+            // Who cancelled it (L4-15, migration 272).
+            r("cancelled_by_id", USER),
+            // Who recorded its HSE approval (L4-03, migration 290).
+            r("hse_approved_by_id", USER),
         ],
     ),
     spec("permit_handover_logs", &[r("permit_id", "work_permits")]),
+    // Gas tests of a permit (L4-04, migration 290): append-only measurements.
+    spec(
+        "permit_gas_tests",
+        &[r("permit_id", "work_permits"), r("measured_by_id", USER)],
+    ),
+    // Workers of a permit and their padlocks on its group lock box (L4-05 / L4-18, migration 294).
+    spec(
+        "permit_workers",
+        &[
+            r("permit_id", "work_permits"),
+            r("personnel_id", "personnel"),
+            r("external_company_id", "external_companies"),
+            r("induction_by_id", USER),
+            r("added_by_id", USER),
+            r("withdrawn_by_id", USER),
+        ],
+    ),
+    spec(
+        "permit_personal_locks",
+        &[
+            r("permit_id", "work_permits"),
+            r("worker_id", "permit_workers"),
+            r("placed_by_id", USER),
+            r("removed_by_id", USER),
+            r("forced_authorized_by_id", USER),
+            r("informed_by_id", USER),
+        ],
+    ),
     spec(
         "permit_isolations",
         &[
@@ -830,10 +909,29 @@ pub const ROW_SPECS: &[RowSpec] = &[
     spec(
         "failure_events",
         &[
-            poly("source_id", "source_type", &[("work_order", "work_orders")]),
+            poly(
+                "source_id",
+                "source_type",
+                &[("work_order", "work_orders"), ("history_record", "wo_history_records")],
+            ),
             r("recorded_by_id", USER),
             // No command writes the failed component yet: synchronised only while empty.
             unmapped("component_id"),
+        ],
+    ),
+    // Imported maintenance history (L7-30): read-only records of the former system.
+    spec(
+        "wo_history_records",
+        &[
+            r("equipment_id", "equipment"),
+            r("type_id", "reference_values"),
+            r("failure_mode_id", "reference_values"),
+            r("failure_cause_id", "reference_values"),
+            r("failure_mechanism_id", "reference_values"),
+            r("detection_method_id", "reference_values"),
+            r("failure_effect_id", "reference_values"),
+            r("imported_by_id", USER),
+            r("coded_by_id", USER),
         ],
     ),
     spec("runtime_exposure_logs", &[]),
@@ -964,6 +1062,9 @@ pub const ROW_SPECS: &[RowSpec] = &[
             // The location before and after an equipment move (`assets::lifecycle` `asset.moved`).
             json_ref_hist("details_json", "$.detail.from_org_node_id", "org_nodes"),
             json_ref_hist("details_json", "$.detail.to_org_node_id", "org_nodes"),
+            // The parents of a component move (`assets::lifecycle` `asset.parent_changed`).
+            json_ref_hist("details_json", "$.detail.from_parent_asset_id", "equipment"),
+            json_ref_hist("details_json", "$.detail.to_parent_asset_id", "equipment"),
             // The work order of a qualification requirement before and after its change
             // (`qualification::requirements::audit_view`).
             json_ref_hist("details_json", "$.before.work_order_id", "work_orders"),
@@ -1003,9 +1104,17 @@ pub const ROW_SPECS: &[RowSpec] = &[
         // session closed by the stored-state check, a clock anomaly) stay on it too: the session
         // record is local to the device (`app_sessions`) and its id means nothing on another PC; the
         // actor is recorded in the event, on this PC.
+        // The audit of an applied bulk import (`bulk_import::apply_batch`, target `bulk_import_batch`)
+        // stays on this PC too: the staging batch is local-only (`bulk_import_batches`) and its id means
+        // nothing on another PC; the records the import created or updated travel on their own rows.
+        // A received execution change applied here without its author (`wo::execution_actor_sync`,
+        // `WO_EXECUTION_AUTHOR_NOT_RECEIVED`) is recorded on this PC only, like a conflict resolved
+        // here: it says what this PC did on arrival, and it names a work order or task that the
+        // sending PC may have deleted since (a travelling event would wait there for it forever).
+        // Only its stub travels (queued by `audit::chain::seal`, the apply suppresses capture).
         row_filter: Some(
-            "{row}.action_code NOT IN ('notification.safety_notice_acknowledged', 'sync.conflict_resolved') \
-             AND COALESCE({row}.target_type, '') NOT IN ('work_permit', 'permit_type', 'stock_location_article', 'stock_reservation', 'app_session') \
+            "{row}.action_code NOT IN ('notification.safety_notice_acknowledged', 'sync.conflict_resolved', 'WO_EXECUTION_AUTHOR_NOT_RECEIVED') \
+             AND COALESCE({row}.target_type, '') NOT IN ('work_permit', 'permit_type', 'stock_location_article', 'stock_reservation', 'app_session', 'bulk_import_batch') \
              AND substr(COALESCE({row}.chain_hash, ''), 1, 3) NOT IN ('L1:', 'L2:')",
         ),
         ..spec(
@@ -1019,6 +1128,11 @@ pub const ROW_SPECS: &[RowSpec] = &[
                         ("user_account", USER),
                         ("user_scope_assignment", "user_scope_assignments"),
                         ("work_order", "work_orders"),
+                        // A received execution change applied without its author here (`wo::execution_actor_sync`):
+                        // the target is the work order or one of its tasks. That audit is kept on
+                        // its PC (row filter above); the mapping stays for the work-order audits
+                        // that travel.
+                        ("work_order_task", "work_order_tasks"),
                         // A site given to an old record without one (`org::site_assignment`).
                         ("intervention_request", "intervention_requests"),
                         ("planning_window", "planning_windows"),
@@ -1034,6 +1148,10 @@ pub const ROW_SPECS: &[RowSpec] = &[
                         // conflict closed once it crosses no frozen week (`planning::sync_check`).
                         ("schedule_break_in", "schedule_break_ins"),
                         ("team", "teams"),
+                        // The failure coding of an imported history record changed
+                        // (`bulk_import::wo_history::save_coding`): the coding travels with the
+                        // record, so does its audit.
+                        ("wo_history_record", "wo_history_records"),
                         // A work-order type given its maintenance nature (`wo::types`): the target
                         // is already the type's sync id (a WORK.ORDER_TYPES value), sent as it is,
                         // so the audit is unchanged when the value is deleted later (a discarded
@@ -1056,12 +1174,29 @@ pub const ROW_SPECS: &[RowSpec] = &[
                         // is already the block's sync id, the same on every PC, sent as it is, so
                         // the audit is unchanged when the block is deleted later.
                         ("personnel_availability_block", NOT_A_ROW),
+                        // A skill validated or a certificate verified from the validation list
+                        // (`qualification::bulk_validation`): the target is already the row's sync id,
+                        // sent as it is, so the audit is unchanged when the skill is removed later.
+                        ("personnel_skill", NOT_A_ROW),
+                        ("personnel_certification", NOT_A_ROW),
+                        // A preventive plan duplicated (`pm::duplicate`): the target is already
+                        // the new plan's sync id, the same on every PC, sent as it is, so the
+                        // audit is unchanged when the draft plan is deleted later.
+                        ("pm_plan", NOT_A_ROW),
                         // Device, licence, activation, export, repair and import records stay on
                         // the device they belong to.
                         ("trusted_device", LOCAL_ROW),
                         ("machine_activation_contract", LOCAL_ROW),
                         ("license_admin_action", LOCAL_ROW),
                         ("licensing_trust_key", LOCAL_ROW),
+                        // Phone audits (`commands::mobile_enrolment`): an enrolment issued,
+                        // cancelled or used, a phone revoked, a revocation deferred or withdrawn,
+                        // and the failed attempts. The event travels with its target sent empty:
+                        // the target is a licence-server id, a person's sync id or a local account
+                        // id. Its details name people, sites and authors by sync id and name only
+                        // (no local id, so no JSON reference to translate); the licence server
+                        // keeps the enrolment's own audit.
+                        ("mobile_phone", LOCAL_ROW),
                         ("sync_repair_actions", LOCAL_ROW),
                         ("sync_conflict", LOCAL_ROW),
                         ("audit_events", LOCAL_ROW),
@@ -1074,9 +1209,18 @@ pub const ROW_SPECS: &[RowSpec] = &[
                         ("inventory_transactions", NOT_A_ROW),
                         ("inventory_mutation_audit_links", NOT_A_ROW),
                         ("inventory_count_sessions", NOT_A_ROW),
+                        // Goods sent back to the supplier (`inventory::procurement`,
+                        // `inventory.supplier_return`): the target is the receipt line, sent as
+                        // its sync id (receipt lines sync and are never hard-deleted).
+                        ("goods_receipt_line", "goods_receipt_lines"),
                         // An equipment move (D19, `assets::lifecycle` `asset.moved`): the target is
                         // the equipment, sent as its sync id (equipment rows are never hard-deleted).
                         ("equipment", "equipment"),
+                        // A meter reading cancelled (`assets::meters::cancel_meter_reading`): the
+                        // target is the cancelled reading, sent as its sync id. Readings are
+                        // append-only and never hard-deleted (a cancelled reading stays, with a
+                        // marker row beside it), so the named row is always there.
+                        ("asset_meter_readings", "asset_meter_readings"),
                     ],
                 ),
             ],
@@ -1292,7 +1436,15 @@ pub const ROW_SPECS: &[RowSpec] = &[
     spec("user_analytics_dashboard_layouts", &[r("user_id", USER)]),
     // ── Inventory and procurement ───────────────────────────────────────────────────────────
     spec("article_families", &[]),
-    spec("articles", &[]),
+    spec(
+        "articles",
+        &[
+            // A hors-stock article created from a work order, and the article a duplicate
+            // duplicates (migration 291). The origin is only a link back: written once known.
+            soft("origin_work_order_id", "work_orders"),
+            r("duplicate_of_article_id", "articles"),
+        ],
+    ),
     spec("unit_conversions", &[]),
     spec("inventory_lots", &[]),
     spec("currency_exchange_rates", &[]),

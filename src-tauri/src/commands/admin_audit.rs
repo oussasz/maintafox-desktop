@@ -31,6 +31,7 @@ pub(crate) const USER_ACTIONS: &[&str] = &[
     "user_reactivated",
     "role_assigned",
     "role_revoked",
+    crate::commands::admin_users::ROLE_REPLACED_ACTION,
     "session_revoked",
     "emergency_grant_created",
     "emergency_grant_revoked",

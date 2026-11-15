@@ -2,7 +2,7 @@
  * AssetDetailDialog.tsx
  *
  * Asset record (UX-DW-001 detail dialog, OT/DI pattern): header with code, name, status,
- * criticality, location and warranty; actions to raise an OT or a DI, edit, decommission;
+ * criticality, location and warranty; actions to raise an OT or a DI, edit, transfer, decommission;
  * tabs for overview, structure, maintenance (costs, OT/DI/PM), meters, spare parts,
  * documents & photos, criticality and history.
  *
@@ -12,16 +12,19 @@
 
 import {
   AlertTriangle,
+  ArrowRightLeft,
   ClipboardList,
   FileText,
   Gauge,
   GitFork,
   History,
   Info,
+  Lock,
   MoreHorizontal,
   Package,
   Pencil,
   Receipt,
+  Repeat,
   RotateCcw,
   ShieldAlert,
   Wrench,
@@ -36,20 +39,24 @@ import { AssetHealthBadge } from "@/components/assets/AssetHealthBadge";
 import { AssetQrCode } from "@/components/assets/AssetQrCode";
 import { AssetRecommissionDialog } from "@/components/assets/AssetRecommissionDialog";
 import { AssetStatusBadge } from "@/components/assets/AssetStatusBadge";
+import { AssetTransferDialog } from "@/components/assets/AssetTransferDialog";
 import { CriticalityBadge } from "@/components/assets/CriticalityBadge";
 import { CriticalityReviewMark } from "@/components/assets/CriticalityReviewMark";
 import { isRetiredStatus } from "@/components/assets/asset-tones";
 import { AssetCommercialDialog } from "@/components/assets/detail/AssetCommercialDialog";
 import { AssetCriticalityTab } from "@/components/assets/detail/AssetCriticalityTab";
 import { AssetDocumentsTab } from "@/components/assets/detail/AssetDocumentsTab";
+import { AssetIsolationPointsTab } from "@/components/assets/detail/AssetIsolationPointsTab";
 import { AssetMaintenanceTab } from "@/components/assets/detail/AssetMaintenanceTab";
 import { AssetMetersTab } from "@/components/assets/detail/AssetMetersTab";
 import { AssetOverviewTab } from "@/components/assets/detail/AssetOverviewTab";
+import { AssetRepeatFailureTab } from "@/components/assets/detail/AssetRepeatFailureTab";
 import { AssetSparePartsTab } from "@/components/assets/detail/AssetSparePartsTab";
 import { AssetStructureTab } from "@/components/assets/detail/AssetStructureTab";
 import { useLoad } from "@/components/assets/detail/use-load";
 import { WARRANTY_TONE, warrantyState } from "@/components/assets/detail/warranty";
 import { AssetHistoryView } from "@/components/assets/history/AssetHistoryView";
+import { BackToOriginButton } from "@/components/ui/back-to-origin-button";
 import { Button } from "@/components/ui/button";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import {
@@ -63,7 +70,6 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { StatusChip } from "@/components/ui/status-chip";
@@ -86,9 +92,11 @@ const TAB_IDS = [
   "structure",
   "maintenance",
   "meters",
+  "isolation",
   "spares",
   "documents",
   "criticality",
+  "repeatFailures",
   "history",
 ] as const;
 type AssetTab = (typeof TAB_IDS)[number];
@@ -98,13 +106,15 @@ const TAB_ICON: Record<AssetTab, typeof Info> = {
   structure: GitFork,
   maintenance: Wrench,
   meters: Gauge,
+  isolation: Lock,
   spares: Package,
   documents: FileText,
   criticality: ShieldAlert,
+  repeatFailures: Repeat,
   history: History,
 };
 
-export function AssetDetailDialog() {
+export function AssetDetailDialog({ onBackToOrigin }: { onBackToOrigin?: () => void } = {}) {
   const { t } = useTranslation("equipment");
   const { formatDate } = useFormatters();
   const assetId = useAssetSearchStore((s) => s.selectedResultId);
@@ -112,6 +122,8 @@ export function AssetDetailDialog() {
   const runSearch = useAssetSearchStore((s) => s.runSearch);
   const openEditForm = useAssetStore((s) => s.openEditForm);
   const showEditForm = useAssetStore((s) => s.showEditForm);
+  const transferRequestAssetId = useAssetStore((s) => s.transferRequestAssetId);
+  const clearTransferRequest = useAssetStore((s) => s.clearTransferRequest);
   const openCreateWo = useWoStore((s) => s.openCreateForm);
   const openCreateDi = useDiStore((s) => s.openCreateForm);
 
@@ -119,6 +131,7 @@ export function AssetDetailDialog() {
   const [showDecommission, setShowDecommission] = useState(false);
   const [showCommercial, setShowCommercial] = useState(false);
   const [showRecommission, setShowRecommission] = useState(false);
+  const [showTransfer, setShowTransfer] = useState(false);
 
   const load = useMemo(() => (assetId == null ? null : () => getAssetById(assetId)), [assetId]);
   const {
@@ -140,6 +153,14 @@ export function AssetDetailDialog() {
     if (editWasOpen.current && !showEditForm) void reload();
     editWasOpen.current = showEditForm;
   }, [showEditForm, reload]);
+
+  // "Transférer" asked for from the edit form (the location is changed only here).
+  useEffect(() => {
+    if (asset && transferRequestAssetId === asset.id) {
+      clearTransferRequest();
+      setShowTransfer(true);
+    }
+  }, [asset, transferRequestAssetId, clearTransferRequest]);
 
   const close = useCallback(() => selectAsset(null), [selectAsset]);
 
@@ -190,6 +211,7 @@ export function AssetDetailDialog() {
         ) : (
           <>
             <DialogHeader className="border-b border-surface-border px-6 pb-4 pt-5">
+              {onBackToOrigin ? <BackToOriginButton onClick={onBackToOrigin} /> : null}
               <div className="flex items-start justify-between gap-4 pr-10">
                 <div className="min-w-0 space-y-1.5">
                   <DialogTitle className="flex items-center gap-2 text-lg font-bold">
@@ -257,6 +279,34 @@ export function AssetDetailDialog() {
                   </PermissionGate>
                 ) : null}
                 <PermissionGate permission={P.EQ_MANAGE}>
+                  <Button
+                    variant="outline"
+                    className="h-11 gap-1.5"
+                    onClick={() => openEditForm(asset)}
+                  >
+                    <Pencil className="h-4 w-4" aria-hidden />
+                    {t("editForm.button")}
+                  </Button>
+                  {!retired ? (
+                    <Button
+                      variant="outline"
+                      className="h-11 gap-1.5"
+                      onClick={() => setShowTransfer(true)}
+                    >
+                      <ArrowRightLeft className="h-4 w-4" aria-hidden />
+                      {t("transfer.action")}
+                    </Button>
+                  ) : null}
+                  {!retired ? (
+                    <Button
+                      variant="outline"
+                      className="h-11 gap-1.5 text-status-danger"
+                      onClick={() => setShowDecommission(true)}
+                    >
+                      <AlertTriangle className="h-4 w-4" aria-hidden />
+                      {t("decommission.action")}
+                    </Button>
+                  ) : null}
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button
@@ -268,26 +318,10 @@ export function AssetDetailDialog() {
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="start" className="w-56">
-                      <DropdownMenuItem className="gap-2" onSelect={() => openEditForm(asset)}>
-                        <Pencil className="h-4 w-4" aria-hidden />
-                        {t("editForm.button")}
-                      </DropdownMenuItem>
                       <DropdownMenuItem className="gap-2" onSelect={() => setShowCommercial(true)}>
                         <Receipt className="h-4 w-4" aria-hidden />
                         {t("commercial.edit")}
                       </DropdownMenuItem>
-                      {!retired ? (
-                        <>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem
-                            className="gap-2 text-status-danger focus:text-status-danger"
-                            onSelect={() => setShowDecommission(true)}
-                          >
-                            <AlertTriangle className="h-4 w-4" aria-hidden />
-                            {t("decommission.action")}
-                          </DropdownMenuItem>
-                        </>
-                      ) : null}
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </PermissionGate>
@@ -314,13 +348,27 @@ export function AssetDetailDialog() {
                   />
                 </TabsContent>
                 <TabsContent value="structure" className="pt-3">
-                  <AssetStructureTab asset={asset} onOpenAsset={selectAsset} />
+                  <AssetStructureTab
+                    asset={asset}
+                    onOpenAsset={selectAsset}
+                    onMoved={async () => {
+                      pushAppToast({
+                        title: t("moveComponent.done", { code: asset.asset_code }),
+                        variant: "success",
+                      });
+                      await reload();
+                      void runSearch();
+                    }}
+                  />
                 </TabsContent>
                 <TabsContent value="maintenance" className="pt-3">
                   <AssetMaintenanceTab asset={asset} />
                 </TabsContent>
                 <TabsContent value="meters" className="pt-3">
                   <AssetMetersTab asset={asset} />
+                </TabsContent>
+                <TabsContent value="isolation" className="pt-3">
+                  <AssetIsolationPointsTab asset={asset} />
                 </TabsContent>
                 <TabsContent value="spares" className="pt-3">
                   <AssetSparePartsTab asset={asset} />
@@ -330,6 +378,9 @@ export function AssetDetailDialog() {
                 </TabsContent>
                 <TabsContent value="criticality" className="pt-3">
                   <AssetCriticalityTab asset={asset} onAssetChanged={onAssetChanged} />
+                </TabsContent>
+                <TabsContent value="repeatFailures" className="pt-3">
+                  <AssetRepeatFailureTab assetId={asset.id} />
                 </TabsContent>
                 <TabsContent value="history" className="pt-3">
                   <AssetHistoryView assetId={asset.id} />
@@ -365,6 +416,22 @@ export function AssetDetailDialog() {
                 });
                 await reload();
                 void runSearch();
+              }}
+            />
+            <AssetTransferDialog
+              open={showTransfer}
+              asset={asset}
+              onClose={() => setShowTransfer(false)}
+              onTransferred={(updated) => {
+                setShowTransfer(false);
+                pushAppToast({
+                  title: t("transfer.done", {
+                    code: updated.asset_code,
+                    to: updated.org_node_name ?? "",
+                  }),
+                  variant: "success",
+                });
+                onAssetChanged(updated);
               }}
             />
             <AssetCommercialDialog

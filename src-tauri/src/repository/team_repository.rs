@@ -1,7 +1,6 @@
 //! Operational maintenance crews (`teams` table) — repository SSOT.
 
 use crate::errors::{AppError, AppResult};
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, FromQueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
@@ -254,7 +253,7 @@ pub async fn create_team(db: &DatabaseConnection, input: TeamCreateInput) -> App
     let accent_color = validate_accent_color(input.accent_color.as_deref())?;
     crate::org::model_scope::assert_org_node_active(db, input.primary_node_id).await?;
 
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let entity_sync_id = crate::sync::identity::new_entity_sync_id();
 
     let txn = db.begin().await?;
@@ -361,7 +360,7 @@ pub async fn update_team(db: &DatabaseConnection, input: TeamUpdateInput) -> App
         return Ok(existing);
     }
 
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     sets.push("updated_at = ?".into());
     values.push(now.into());
     sets.push("row_version = row_version + 1".into());
@@ -376,7 +375,8 @@ pub async fn update_team(db: &DatabaseConnection, input: TeamUpdateInput) -> App
     // in the transaction that writes it, on the crew as it stands there.
     if let Some(node_id) = new_node {
         if let Some(block) =
-            crate::planning::crew_site::crew_site_change_block(&txn, input.id, Some(node_id), Utc::now()).await?
+            crate::planning::crew_site::crew_site_change_block(&txn, input.id, Some(node_id), crate::clock::now())
+                .await?
         {
             return Err(block.refusal());
         }

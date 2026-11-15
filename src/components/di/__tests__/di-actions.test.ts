@@ -92,6 +92,13 @@ describe("diActions — decisions offered match the backend gates", () => {
   it("conversion also needs the work-order create right (the work order is created there)", () => {
     expect(diActions(di({ status: "approved" }), 7, roles(P.DI_CONVERT)).convert).toBe(false);
   });
+
+  it("the declarer neither approves nor converts their own request (L1-34)", () => {
+    const can = roles(P.DI_APPROVE, P.DI_CONVERT, P.OT_CREATE);
+    expect(diActions(di({ status: "awaiting_approval" }), 42, can).approve).toBe(false);
+    expect(diActions(di({ status: "approved" }), 42, can).convert).toBe(false);
+    expect(diActions(di({ status: "awaiting_approval" }), 7, can).approve).toBe(true);
+  });
 });
 
 describe("diNextStep", () => {

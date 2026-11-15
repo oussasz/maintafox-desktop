@@ -1,6 +1,43 @@
 {
+  "actionReason": {
+    "saving": "Enregistrement en cours…",
+    "photosBusy": "Envoi des photos en cours…",
+    "catalogLoading": "Chargement des listes de référence (classe, criticité, statut) en cours…",
+    "catalogFailed": "Les listes de référence ne sont pas chargées : fermez puis rouvrez le formulaire pour réessayer."
+  },
   "criticalityReview": {
     "hint": "Criticité reprise de l'ancienne liste de criticité : un planificateur doit la fixer dans l'onglet Criticité."
+  },
+  "transfer": {
+    "action": "Transférer",
+    "title": "Transférer l'équipement",
+    "description": "{{code}} quitte {{from}} pour une autre unité de l'organisation (ligne, atelier, site). Le transfert est enregistré dans l'historique avec le motif, la date et votre nom.",
+    "noLocation": "Aucune unité",
+    "target": "Unité de destination",
+    "targetHint": "Seules les unités où vous gérez les équipements sont proposées.",
+    "targetPlaceholder": "Choisir une unité…",
+    "targetRequired": "Choisissez l'unité de destination.",
+    "noDestination": "Aucune autre unité ne peut recevoir cet équipement dans votre périmètre.",
+    "date": "Date d'effet",
+    "dateRequired": "Indiquez une date d'effet valide (pas dans le futur).",
+    "reason": "Motif du transfert",
+    "reasonRequired": "Indiquez le motif du transfert.",
+    "impact": {
+      "title": "Restent rattachés à l'équipement",
+      "none": "Aucun plan préventif actif, aucune pièce de rechange et aucun OT ouvert sur cet équipement.",
+      "pmPlans_one": "{{count}} plan préventif actif",
+      "pmPlans_other": "{{count}} plans préventifs actifs",
+      "spareParts_one": "{{count}} ligne de pièces de rechange (dont {{critical}} critique)",
+      "spareParts_other": "{{count}} lignes de pièces de rechange (dont {{critical}} critiques)",
+      "openWo_one": "{{count}} OT non clôturé",
+      "openWo_other": "{{count}} OT non clôturés",
+      "notChanged": "Rien n'est arrêté ni réaffecté automatiquement : vérifiez-les après le transfert."
+    },
+    "cancel": "Annuler",
+    "confirm": "Transférer",
+    "done": "{{code}} transféré vers {{to}}.",
+    "editHint": "L'unité se change par « Transférer » : motif, date et historique.",
+    "saveEditFirst": "Enregistrez ou annulez d'abord vos modifications."
   },
   "recommission": {
     "action": "Remettre en service",
@@ -27,12 +64,13 @@
       "code": "Code",
       "name": "Désignation",
       "class": "Classe",
-      "site": "Site",
+      "site": "Unité d'organisation",
       "status": "Statut",
       "criticality": "Criticité",
       "family": "Famille",
       "parentName": "Équipement parent",
-      "primaryMeter": "Compteur principal"
+      "primaryMeter": "Compteur principal",
+      "repeatFailures": "Pannes répétitives"
     },
     "filters": {
       "status": "Statut",
@@ -60,7 +98,7 @@
       "parentEquipment": "Équipement parent",
       "criticality": "Criticité",
       "status": "Statut",
-      "site": "Site",
+      "site": "Unité d'organisation",
       "entity": "Entité",
       "manufacturer": "Fabricant",
       "model": "Modèle",
@@ -69,11 +107,11 @@
       "endOfLifeDate": "Date de fin de vie",
       "technicalNotes": "Notes techniques",
       "maintainableBoundary": "Élément maintenable (ISO 14224)",
-      "decommissionedAt": "Déclassé le"
+      "decommissionedAt": "Réformé le"
     },
     "loadingTitle": "Chargement de l’équipement…",
     "noClassification": "Ni classe ni localisation renseignées",
-    "retiredHint": "Un équipement déclassé ou mis au rebut ne peut plus recevoir de travaux.",
+    "retiredHint": "Un équipement réformé ou mis au rebut ne peut plus recevoir de travaux.",
     "close": "Fermer",
     "yes": "Oui",
     "no": "Non",
@@ -85,7 +123,9 @@
       "spares": "Pièces de rechange",
       "documents": "Documents et photos",
       "criticality": "Criticité",
-      "history": "Historique"
+      "history": "Historique",
+      "isolation": "Points d'isolement",
+      "repeatFailures": "Pannes répétitives"
     }
   },
   "form": {
@@ -108,7 +148,7 @@
   "status": {
     "operational": "En service",
     "maintenance": "En maintenance",
-    "decommissioned": "Déclassé",
+    "decommissioned": "Réformé",
     "standby": "En veille",
     "scrapped": "Mis au rebut",
     "inStock": "En stock",
@@ -129,6 +169,7 @@
     "more": "Plus d'actions"
   },
   "history": {
+    "orgMove": "De {{from}} vers {{to}}",
     "noRightToOpen": "Vous n'avez pas le droit d'ouvrir cet élément.",
     "loadError": "Impossible de charger l'historique de cet équipement",
     "partial": "Les {{count}} événements les plus récents sont affichés ; des événements plus anciens peuvent exister.",
@@ -140,16 +181,18 @@
     },
     "summary": {
       "title": "Vie de l'équipement",
-      "created": "Créé",
+      "commissioned": "Mise en service",
+      "commissionedMissing": "Date de mise en service non renseignée (Modifier l'actif)",
       "age": "Âge",
       "wo": "OT",
-      "pm": "PM",
+      "pm": "MP",
       "failures": "Pannes",
       "availability": "Disponibilité opérationnelle",
       "ageYm": "{{years}}a {{months}}m",
       "ageM": "{{months}}m",
       "ageD": "{{days}}j",
       "availabilityAsOf": "Dernière analyse de fiabilité, au {{date}}",
+      "failuresRams": "Même calcul que le module RAMS, sur les {{months}} derniers mois",
       "availabilityNone": "Aucune analyse de fiabilité calculée pour cet actif"
     },
     "today": "Aujourd'hui",
@@ -160,7 +203,7 @@
     "eventTypes": {
       "asset_created": "Création",
       "asset_updated": "Modification",
-      "decommissioned": "Déclassement",
+      "decommissioned": "Réforme",
       "assignment_changed": "Affectation",
       "location_changed": "Emplacement",
       "org_changed": "Organisation",
@@ -171,23 +214,25 @@
       "wo_closed": "OT fermé",
       "di_created": "DI créée",
       "di_closed": "DI clôturée",
-      "pm_scheduled": "PM planifié",
-      "pm_executed": "PM exécuté",
+      "pm_scheduled": "MP planifié",
+      "pm_executed": "MP exécuté",
       "inspection_recorded": "Inspection",
       "failure_recorded": "Panne",
       "meter_reading": "Compteur",
       "document_linked": "Document",
-      "photo_added": "Photo"
+      "photo_added": "Photo",
+      "history_imported": "Historique importé"
     },
     "filters": {
       "types": {
         "all": "Tous",
         "ot": "OT",
         "di": "DI",
-        "pm": "PM",
+        "pm": "MP",
         "inspection": "Inspection",
         "documents": "Documents",
-        "failures": "Pannes"
+        "failures": "Pannes",
+        "history": "Historique importé"
       },
       "periods": {
         "today": "Aujourd'hui",
@@ -200,7 +245,7 @@
     "titles": {
       "asset_created": "Équipement créé",
       "asset_updated": "Équipement modifié",
-      "decommissioned": "Équipement déclassé",
+      "decommissioned": "Équipement réformé",
       "assignment_changed": "Affectation modifiée",
       "location_changed": "Emplacement modifié",
       "org_changed": "Déplacé vers une autre unité",
@@ -216,7 +261,12 @@
       "failure_recorded": "Panne enregistrée",
       "meter_reading": "Relevé de compteur",
       "document_linked": "Document lié",
-      "photo_added": "Photo ajoutée"
+      "photo_added": "Photo ajoutée",
+      "history_imported": "Historique importé {{code}}",
+      "component_installed": "Posé le {{date}} sur {{parent}}",
+      "component_removed": "Déposé le {{date}} de {{parent}}",
+      "child_installed": "Composant {{component}} posé le {{date}}",
+      "child_removed": "Composant {{component}} déposé le {{date}}"
     },
     "quality": {
       "accepted": "Accepté",
@@ -238,9 +288,34 @@
     "failureSource": {
       "work_order": "Issue d’un ordre de travail",
       "inspection": "Issue d’une inspection",
-      "manual": "Saisie manuelle"
+      "manual": "Saisie manuelle",
+      "history_record": "Historique importé"
     },
-    "title": "Historique de l’équipement"
+    "title": "Historique de l’équipement",
+    "record": {
+      "readOnly": "Intervention reprise de l’ancien système : seule la codification de défaillance peut être modifiée.",
+      "nature": "Nature",
+      "started": "Début",
+      "ended": "Fin",
+      "failure": "Défaillance",
+      "yes": "Oui",
+      "no": "Non",
+      "downtime": "Arrêt",
+      "cost": "Coût",
+      "description": "Description",
+      "workDone": "Travaux réalisés",
+      "interveners": "Intervenants",
+      "coding": "Codification de la défaillance",
+      "failureMode": "Mode de défaillance",
+      "failureCause": "Cause",
+      "mechanism": "Mécanisme",
+      "detection": "Méthode de détection",
+      "failureEffect": "Effet",
+      "noRight": "Modifier la codification demande le droit de modifier les OT sur le site de l’équipement.",
+      "close": "Fermer",
+      "save": "Enregistrer la codification",
+      "saving": "Enregistrement…"
+    }
   },
   "empty": {
     "list": "Aucun équipement trouvé.",
@@ -368,8 +443,8 @@
     "unsavedTitle": "Modifications non enregistrées",
     "unsavedDescription": "Vous avez des modifications non enregistrées. Voulez-vous continuer l'édition ou les abandonner ?",
     "keepEditing": "Continuer l'édition",
-    "retireHint": "Pour retirer cet équipement, utilisez Déclasser : le déclassement vérifie les travaux ouverts et enregistre le motif.",
-    "retiredHint": "Cet équipement est retiré : son statut a été fixé par le déclassement.",
+    "retireHint": "Pour retirer cet équipement, utilisez Réformer : la réforme vérifie les travaux ouverts et enregistre le motif.",
+    "retiredHint": "Cet équipement est retiré : son statut a été fixé par la réforme.",
     "photoDeleteTitle": "Supprimer la photo ?",
     "photoDeleteBody_one": "La photo est supprimée immédiatement, même si vous annulez ensuite le formulaire.",
     "photoDeleteBody_other": "Les {{count}} photos sont supprimées immédiatement, même si vous annulez ensuite le formulaire.",
@@ -403,7 +478,7 @@
     "edit": "Modifier",
     "copyCode": "Copier le code",
     "move": "Déplacer",
-    "decommission": "Déclasser"
+    "decommission": "Réformer"
   },
   "qr": {
     "button": "Code QR",
@@ -438,8 +513,8 @@
       "pm": "Plans de maintenance",
       "failure": "Événements de panne",
       "document": "Documents",
-      "iot": "Signaux IoT",
-      "erp": "Mapping ERP"
+      "iot": "Mesures de capteurs",
+      "erp": "Correspondance avec l'ERP"
     }
   },
   "import": {
@@ -488,7 +563,11 @@
       "title": "Téléverser un fichier CSV",
       "description": "Sélectionnez un fichier CSV contenant les équipements à importer.",
       "hint": "Glissez un fichier CSV ici ou cliquez pour parcourir.",
-      "selectFile": "Choisir un fichier"
+      "selectFile": "Choisir un fichier",
+      "templateSaved": "Modèle enregistré",
+      "templateFailed": "Le modèle n'a pas pu être enregistré",
+      "template": "Télécharger le modèle (Excel/CSV)",
+      "columnsHelp": "Colonnes : {{columns}}. Obligatoires : code_equipement, nom, classe, criticite, statut (classe, famille, criticite et statut reprennent les codes des Données de référence ; emplacement est le code du nœud tel qu'affiché dans Organisation ; parent est le code d'un autre équipement, déjà créé ou présent dans le fichier). Le séparateur « ; » (Excel français) ou « , » est reconnu automatiquement."
     },
     "validate": {
       "title": "Validation des données",
@@ -508,12 +587,15 @@
         "action": "Action",
         "messages": "Messages"
       },
-      "includeWarnings": "Inclure les lignes avec avertissements"
+      "includeWarnings": "Inclure les lignes avec avertissements",
+      "onlyWarnings": "Seules des lignes avec avertissement sont disponibles : cochez « Inclure les lignes avec avertissements » pour les importer, ou corrigez le fichier.",
+      "nothingToImport": "Aucune ligne ne peut être importée : corrigez le fichier selon les messages ci-dessus, puis relancez l'import."
     },
     "apply": {
       "confirmTitle": "Appliquer l'import ?",
       "confirmBody": "{{valid}} ligne(s) valide(s) et {{warning}} avec avertissement seront créées ou mises à jour dans le registre ; {{error}} ligne(s) en erreur ne seront pas importées. Les équipements modifiés ne reviennent pas automatiquement à leur état précédent.",
-      "run": "Appliquer l'import"
+      "run": "Appliquer l'import",
+      "noneImportable": "Aucune ligne valide à importer. Corrigez les erreurs du fichier ou incluez les lignes avec avertissement."
     },
     "done": {
       "title": "Import terminé",
@@ -526,21 +608,22 @@
     },
     "warnings": {
       "reclassification": "La reclassification d'un actif existant nécessite une vérification manuelle.",
-      "decommission": "Le passage au statut déclassé via l'import est interdit. Utilisez le cycle de vie."
+      "decommission": "Le passage au statut réformé via l'import est interdit. Utilisez le cycle de vie."
     }
   },
   "decommission": {
-    "title": "Déclasser l'équipement",
-    "description": "Vérifiez les dépendances avant de déclasser cet actif.",
-    "action": "Déclasser",
-    "confirm": "Confirmer le déclassement",
+    "title": "Réformer l'équipement",
+    "description": "Vérifiez les dépendances avant de réformer cet actif.",
+    "action": "Réformer",
+    "confirm": "Confirmer la réforme",
     "cancel": "Annuler",
-    "success": "Équipement déclassé avec succès.",
+    "success": "Équipement réformé avec succès.",
     "targetStatus": "Statut cible",
     "reasonLabel": "Motif",
-    "reasonPlaceholder": "Expliquez la raison du déclassement…",
-    "blockerBanner": "Impossible de déclasser — {{count}} élément(s) de travail ouvert(s). Fermez-les d'abord.",
-    "blockerDetail": "bloque le déclassement",
+    "reasonPlaceholder": "Expliquez la raison de la réforme…",
+    "blockerBanner": "Impossible de réformer — {{count}} élément(s) de travail ouvert(s). Fermez-les d'abord.",
+    "blockerDetail": "bloque la réforme",
+    "openBlockers": "Voir la liste",
     "pmWarning": "seront suspendus",
     "iotWarning": "seront déliés",
     "docInfo": "restent archivés",
@@ -548,7 +631,7 @@
       "decommissioned": "Mis hors service",
       "scrapped": "Mis au rebut"
     },
-    "dependenciesError": "Les travaux ouverts de cet actif n'ont pas pu être vérifiés : le déclassement reste indisponible",
+    "dependenciesError": "Les travaux ouverts de cet actif n'ont pas pu être vérifiés : la réforme reste indisponible",
     "statusesError": "Les statuts d'équipement n'ont pas pu être chargés",
     "targetStatusPlaceholder": "Choisir le statut final"
   },
@@ -558,6 +641,7 @@
     "fair": "Moyen",
     "poor": "Mauvais",
     "noData": "Aucun score de santé",
+    "noDataHint": "Pas encore de données : le score apparaît après un premier relevé de compteur, une demande d'intervention ou un ordre de travail sur cet équipement.",
     "unavailable": "Données de santé indisponibles",
     "loading": "Santé…",
     "hint": "Score de suivi indicatif (0–100) issu de l'activité récente, des DI et OT ouverts et des relevés de compteurs. Ce n'est ni une disponibilité ni une mesure d'état."
@@ -657,8 +741,32 @@
     "title": "Profil de fiabilité",
     "schedule": "Régime de fonctionnement",
     "scheduleNone": "Non défini (24 h/24 supposé)",
-    "utilization": "Facteur d’utilisation (K_u)",
+    "utilization": "Facteur d’utilisation",
+    "failures": "Pannes ({{months}} derniers mois)",
+    "mtbf": "MTBF",
+    "hoursUnit": "h",
+    "tooShort": "Période trop courte pour calculer le MTBF.",
+    "noMtbf": "Aucune panne sur la période : pas de MTBF.",
+    "open": "Ouvrir dans RAMS",
     "hint": "Utilisé par le module RAMS pour convertir le temps calendaire en temps de fonctionnement."
+  },
+  "moveComponent": {
+    "action": "Déplacer le composant",
+    "title": "Déplacer le composant",
+    "descriptionInstalled": "{{code}} est actuellement posé sur {{parent}}. Il garde sa fiche et son numéro de série.",
+    "descriptionStock": "{{code}} n’est posé sur aucun équipement (en stock). Il garde sa fiche et son numéro de série.",
+    "target": "Nouvel équipement parent",
+    "targetHint": "Laissez vide pour déposer le composant en stock (sans parent).",
+    "sameParent": "Le composant est déjà posé sur cet équipement.",
+    "alreadyInStock": "Le composant est déjà en stock : choisissez l’équipement sur lequel le poser.",
+    "date": "Date d’effet",
+    "dateRequired": "Indiquez une date valide (aujourd’hui ou avant).",
+    "notes": "Motif / note",
+    "cancel": "Annuler",
+    "confirm": "Déplacer",
+    "confirmRemove": "Déposer en stock",
+    "done": "Déplacement de {{code}} enregistré.",
+    "severalParents": "Ce composant est rattaché à {{count}} équipements parents à la fois ; corrigez la structure avant de le déplacer."
   },
   "structure": {
     "parent": "Équipement parent",
@@ -680,18 +788,21 @@
     "rollUp": "Inclure les composants",
     "rollUpScope_one": "Chiffres de cet équipement seul.",
     "rollUpScope_other": "Chiffres de cet équipement et de ses composants ({{count}} équipements).",
-    "openRams": "Ouvrir dans RAMS",
+    "openRams": "Analyser cet équipement",
     "kpi": {
       "workOrders": "Ordres de travail",
       "openHint_one": "{{count}} en cours",
       "openHint_other": "{{count}} en cours",
       "failures": "Pannes (correctif et urgence)",
       "lastFailure": "Dernière le {{date}}",
+      "failuresRams": "Même calcul que le module RAMS, sur les {{months}} derniers mois",
       "noFailure": "Aucune panne enregistrée",
       "downtime": "Arrêts",
       "hours": "h",
       "downtimeHint": "Saisis sur les ordres de travail",
-      "costLifetime": "Coût de maintenance (depuis l’origine)",
+      "costLifetime": "Coût de maintenance (depuis le {{date}})",
+      "costLifetimeNone": "Coût de maintenance (total)",
+      "noCostYet": "Aucun ordre de travail sur cet équipement",
       "costSplit": "Main-d’œuvre {{labor}} · Pièces {{parts}} · Prestations {{services}}",
       "costRecent": "Coût de maintenance ({{months}} derniers mois)",
       "costVsReplacement": "Coût / valeur de remplacement",
@@ -730,11 +841,27 @@
     "source": "Origine",
     "reference": "Référence",
     "referenceHint": "Par exemple la ronde, l’ordre de travail ou le capteur qui a fourni la valeur.",
+    "readBy": "Relevé par",
+    "cancel": "Annuler ce relevé",
+    "cancelTitle": "Annuler le relevé — {{name}}",
+    "cancelIntro": "Le relevé de {{value}} {{unit}} du {{date}} restera visible dans l’historique, marqué « annulé », avec votre nom et le motif. Le compteur reviendra au relevé précédent.",
+    "cancelReason": "Motif de l’annulation",
+    "cancelReasonHint": "Par exemple : erreur de saisie, mauvais compteur lu.",
+    "cancelPmNote": "Les ordres de travail de maintenance déjà créés à partir de ce relevé ne sont pas supprimés : vérifiez-les.",
+    "cancelThenRecord": "Saisir ensuite le bon relevé",
+    "cancelConfirm": "Annuler le relevé",
+    "cancelOnlyLatest": "Seul le dernier relevé peut être annulé.",
+    "cancelledBadge": "Annulé",
+    "cancelledBy": "Annulé par {{name}} le {{date}} — {{reason}}",
+    "jumpTitle": "Valeur inhabituelle",
+    "jumpBody": "Ce relevé ajoute {{delta}} {{unit}} depuis le précédent ({{previous}} {{unit}}), alors que l’usage habituel donne environ {{expected}} {{unit}} sur la même période. Avez-vous bien saisi {{value}} {{unit}} ?",
+    "jumpConfirm": "Oui, la valeur est exacte",
+    "jumpBack": "Corriger la valeur",
     "recordTitle": "Nouveau relevé — {{name}}",
     "currentValue": "Valeur actuelle : {{value}} {{unit}}",
     "errors": {
       "number": "Saisissez un nombre.",
-      "belowCurrent": "La valeur ne peut pas être inférieure au relevé actuel ({{current}}).",
+      "belowCurrent": "La valeur ne peut pas être inférieure au relevé actuel ({{current}}). Si le compteur a été changé, utilisez « Remplacer le compteur ».",
       "future": "Un relevé ne peut pas être dans le futur.",
       "positive": "Saisissez zéro ou un nombre positif."
     },
@@ -750,7 +877,39 @@
     "rateHint": "Sert à prévoir la maintenance basée sur le compteur.",
     "rollover": "Valeur de retour à zéro",
     "rolloverHint": "Valeur à laquelle le compteur repart de zéro, le cas échéant.",
-    "primary": "Compteur principal de l’équipement"
+    "primary": "Compteur principal de l’équipement",
+    "thresholds": {
+      "edit": "Seuils d'alarme",
+      "title": "Seuils d'alarme — {{name}}",
+      "description": "Un relevé qui franchit un seuil crée une demande d'intervention (une seule par seuil tant qu'elle est ouverte).",
+      "direction": "Le seuil est franchi",
+      "directionPlaceholder": "Choisir le sens",
+      "above": "Par le haut (valeur trop haute : température, vibration…)",
+      "below": "Par le bas (valeur trop basse : niveau, débit…)",
+      "alert": "Seuil d'alerte {{unit}}",
+      "critical": "Seuil critique {{unit}}",
+      "hint": "Laissez les deux seuils vides pour ne plus surveiller ce compteur. Le seuil critique crée une demande urgente, le seuil d'alerte une demande de priorité haute.",
+      "save": "Enregistrer les seuils",
+      "none": "—",
+      "orderError": "Le seuil d'alerte doit être atteint avant le seuil critique.",
+      "summary": {
+        "above": "Alerte à partir de {{alert}} {{unit}} · critique à partir de {{critical}} {{unit}}",
+        "below": "Alerte sous {{alert}} {{unit}} · critique sous {{critical}} {{unit}}"
+      },
+      "level": {
+        "alert": "d'alerte",
+        "critical": "critique"
+      },
+      "raised": "Seuil {{level}} franchi : demande {{code}} créée.",
+      "alreadyOpen": "Seuil {{level}} franchi : la demande {{code}} est déjà ouverte, aucune nouvelle demande.",
+      "notRaised": "Seuil {{level}} franchi, mais aucune demande n'a été créée.",
+      "raisedChip": "Seuil {{level}} → {{code}}"
+    },
+    "replace": {
+      "action": "Remplacer le compteur",
+      "title": "Nouveau compteur posé — {{name}}",
+      "body": "Saisissez la valeur affichée par le nouveau compteur (souvent 0). Elle peut être inférieure à l'ancienne : le total de vie de l'équipement continue sans retour en arrière et les préventifs au compteur restent justes."
+    }
   },
   "spares": {
     "searchFailed": "La recherche d'articles a échoué (ce n'est pas une absence de résultat).",
@@ -799,7 +958,6 @@
     "title": "Documents",
     "noPermission": "La consultation des documents nécessite le droit Documentation.",
     "saved": "{{name}} enregistré.",
-    "size": "{{kb}} Ko",
     "download": "Télécharger",
     "downloadNamed": "Télécharger {{name}}",
     "upload": "Ajouter un document",
@@ -809,7 +967,9 @@
     "categoryRequired": "Choisissez la catégorie du document.",
     "file": "Fichier",
     "tooBig": "Le fichier dépasse {{mb}} Mo.",
-    "docTitle": "Titre"
+    "docTitle": "Titre",
+    "onWoTitle": "Documents de l'équipement — {{asset}}",
+    "onWoHint": "Manuels, modes opératoires et certificats de cet équipement, issus de la documentation. Pour en ajouter un, ouvrez l'équipement, onglet Documents."
   },
   "critMethod": {
     "title": "Évaluation de la criticité",
@@ -841,7 +1001,9 @@
     "history": "Historique des évaluations",
     "noHistory": "Aucune évaluation : la classe a été saisie à la main.",
     "historyLine": "Risque {{risk}} (classe précédente {{previous}})",
-    "historyScores": "S {{s}} · E {{e}} · P {{p}} · Q {{q}} · C {{c}} · Pr {{l}}"
+    "historyScores": "S {{s}} · E {{e}} · P {{p}} · Q {{q}} · C {{c}} · Pr {{l}}",
+    "differs": "La classe affichée partout reste {{current}} : cette évaluation donne {{next}}. Enregistrez l'évaluation pour appliquer {{next}}, ou ajustez les notes.",
+    "usedFor": "La classe de criticité sert aux délais de réponse des demandes d'intervention (« Règles SLA » du module Demandes) et aux filtres et classements des équipements."
   },
   "errors": {
     "ASSET_DATE_INVALID": "Saisissez une date de calendrier.",
@@ -857,11 +1019,96 @@
     "ASSET_SPARE_NOTES_TOO_LONG": "Les notes sont limitées à {{max}} caractères.",
     "ASSET_SPARE_ARTICLE_INACTIVE": "L’article {{code}} est inactif.",
     "ASSET_SPARE_DUPLICATE": "L’article {{code}} est déjà dans les pièces de rechange de cet équipement.",
-    "ASSET_RETIRE_THROUGH_DECOMMISSION": "Un équipement ne se retire qu'avec Déclasser : le déclassement vérifie les travaux ouverts et enregistre le motif. Utilisez Déclasser depuis la fiche de l'équipement.",
+    "ASSET_RETIRE_THROUGH_DECOMMISSION": "Un équipement ne se retire qu'avec Réformer : la réforme vérifie les travaux ouverts et enregistre le motif. Utilisez Réformer depuis la fiche de l'équipement.",
     "ASSET_RECOMMISSION_REQUIRED": "Un équipement retiré revient en service par une remise en service (enregistrée avec l'auteur et le motif), pas en modifiant son statut.",
-    "ASSET_RECOMMISSION_NOT_RETIRED": "Seul un équipement retiré (déclassé ou mis au rebut) peut être remis en service.",
+    "ASSET_RECOMMISSION_NOT_RETIRED": "Seul un équipement retiré (réformé ou mis au rebut) peut être remis en service.",
     "ASSET_RECOMMISSION_REASON_REQUIRED": "Indiquez le motif de la remise en service.",
     "ASSET_RECOMMISSION_TARGET_RETIRED": "Choisissez un statut en service : un statut retiré n'est pas une remise en service.",
     "ASSET_RECOMMISSION_VERSION_REQUIRED": "Rechargez l'équipement avant de le remettre en service."
+  },
+  "isolationPoints": {
+    "title": "Points d'isolement",
+    "description": "Où les énergies de cet équipement sont isolées. Ils sont proposés sur chaque permis de travail établi pour l'équipement.",
+    "empty": "Aucun point d'isolement défini.",
+    "add": "Ajouter un point",
+    "edit": "Modifier",
+    "deactivate": "Désactiver",
+    "reactivate": "Réactiver",
+    "inactive": "Désactivé",
+    "showInactive": "Afficher les points désactivés",
+    "code": "Code",
+    "label": "Libellé",
+    "energy": "Type d'énergie",
+    "method": "Méthode / dispositif d'isolement",
+    "normalState": "État normal",
+    "normalStatePlaceholder": "ex. fermé, sous tension",
+    "listsHint": "Types d'énergie et méthodes : Données de référence (listes des permis).",
+    "save": "Enregistrer",
+    "cancel": "Annuler",
+    "dialogTitleNew": "Nouveau point d'isolement",
+    "dialogTitleEdit": "Modifier le point d'isolement",
+    "required": "Ce champ est obligatoire.",
+    "optionsError": "Les listes de types d'énergie et de méthodes n'ont pas pu être lues."
+  },
+  "characteristics": {
+    "title": "Caractéristiques techniques",
+    "noFamily": "Choisissez une famille pour cet équipement : ses caractéristiques s'affichent ici.",
+    "none": "Aucune caractéristique n'est définie pour la famille {{family}}. Ajoutez-les dans Données de référence (Caractéristiques techniques par famille).",
+    "hint": "Définies pour la famille {{family}} dans Données de référence.",
+    "edit": "Modifier",
+    "save": "Enregistrer",
+    "cancel": "Annuler",
+    "yes": "Oui",
+    "no": "Non",
+    "notSet": "Non renseigné",
+    "required": "obligatoire",
+    "definitionProblem": "Définition à corriger dans Données de référence : {{problem}}",
+    "unlisted": "Valeurs dont la caractéristique n'est plus dans la liste de la famille",
+    "saved": "Caractéristiques enregistrées.",
+    "numberError": "Saisissez un nombre.",
+    "requiredError": "Obligatoire pour cette famille."
+  },
+  "repeatFailures": {
+    "badge": "Pannes répétitives",
+    "badgeCount": "Pannes répétitives ({{count}})",
+    "badgeTitle": "{{count}} défaillances non planifiées en {{days}} jours (seuil : {{min}}).",
+    "listUnavailable": "Pannes répétitives indisponibles : {{reason}}",
+    "status": {
+      "flagged": "Pannes répétitives : {{count}} défaillances non planifiées en {{days}} jours (seuil : {{min}} — Paramètres > Fiabilité).",
+      "notFlagged": "{{count}} défaillance(s) non planifiée(s) en {{days}} jours (pannes répétitives à partir de {{min}}).",
+      "actions": "{{open}} action(s) ouverte(s), dont {{overdue}} en retard."
+    },
+    "fiveWhy": {
+      "title": "5 pourquoi",
+      "add": "Nouvelle analyse",
+      "empty": "Aucune analyse « 5 pourquoi » pour cet équipement.",
+      "problem": "Problème analysé",
+      "why": "Pourquoi {{n}} ?",
+      "rootCause": "Cause racine",
+      "save": "Enregistrer l'analyse",
+      "edit": "Modifier",
+      "cancel": "Annuler",
+      "by": "Par {{name}}, le {{date}}",
+      "saved": "Analyse enregistrée."
+    },
+    "actions": {
+      "title": "Actions correctives",
+      "add": "Nouvelle action",
+      "empty": "Aucune action corrective pour cet équipement.",
+      "action": "Action",
+      "owner": "Responsable",
+      "dueDate": "Échéance",
+      "status": "Statut",
+      "overdue": "En retard",
+      "save": "Enregistrer l'action",
+      "cancel": "Annuler",
+      "edit": "Modifier",
+      "saved": "Action enregistrée.",
+      "statuses": {
+        "open": "Ouverte",
+        "done": "Réalisée",
+        "cancelled": "Annulée"
+      }
+    }
   }
 }

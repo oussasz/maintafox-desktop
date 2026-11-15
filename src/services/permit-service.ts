@@ -39,7 +39,7 @@ const PermitTypeSchema = z.object({
   row_version: z.number(),
 });
 
-const WorkPermitSchema = z.object({
+export const WorkPermitSchema = z.object({
   id: z.number(),
   entity_sync_id: z.string(),
   code: z.string(),
@@ -78,6 +78,11 @@ const WorkPermitSchema = z.object({
   approved_at: z.string().nullable(),
   /** Approved without a verified second person, on a site that opted out of four-eyes. */
   self_approved: z.boolean(),
+  /** Why, by whom and when the permit was cancelled (null: cancelled before it was recorded). */
+  cancel_reason: z.string().nullable(),
+  cancelled_by_id: z.number().nullable(),
+  cancelled_by_name: z.string().nullable(),
+  cancelled_at: z.string().nullable(),
 });
 
 const PermitSuspensionSchema = z.object({
@@ -121,7 +126,7 @@ const PermitHandoverRoleOptionSchema = z.object({
   review_required: z.boolean(),
 });
 
-const PermitHandoverReceiverPageSchema = z.object({
+export const PermitHandoverReceiverPageSchema = z.object({
   items: z.array(z.object({ id: z.number(), display_name: z.string() })),
   total: z.number(),
   empty_reason: z.string().nullable(),
@@ -147,6 +152,8 @@ const PermitIsolationSchema = z.object({
   verified_by_id: z.number().nullable(),
   applied_at: z.string().nullable(),
   verified_at: z.string().nullable(),
+  /** The zero-energy test recorded by the verifier; null when verified before it was recorded. */
+  zero_energy_note: z.string().nullable(),
   removal_verified_at: z.string().nullable(),
   removal_verified_by_id: z.number().nullable(),
   row_version: z.number(),
@@ -198,6 +205,8 @@ const LotoCardViewSchema = z.object({
   isolation_point: z.string(),
   lock_number: z.string().nullable(),
   verifier_signature: z.string().nullable(),
+  /** The zero-energy test recorded at verification (null when not recorded). */
+  zero_energy_note: z.string().nullable(),
   expires_at: z.string().nullable(),
   /** Taken off by a forced removal (applier absent): printed "Retrait forcé". */
   forced_removal: z.boolean(),
@@ -230,7 +239,7 @@ const IsolationOptionSchema = z.object({
   review_required: z.boolean(),
 });
 
-const IsolationOptionsSchema = z.object({
+export const IsolationOptionsSchema = z.object({
   energy_types: z.array(IsolationOptionSchema),
   isolation_methods: z.array(IsolationOptionSchema),
 });
@@ -309,6 +318,12 @@ export async function listOpenPermitsReport(): Promise<WorkPermitListPage> {
   return WorkPermitListPageSchema.parse(raw);
 }
 
+/** Open permits past their expiry (isolations possibly still in place), the user's sites only. */
+export async function listOverduePermitsReport(): Promise<WorkPermitListPage> {
+  const raw = await invoke<unknown>("list_overdue_permits_report");
+  return WorkPermitListPageSchema.parse(raw);
+}
+
 export async function permitComplianceKpi30d(): Promise<PermitComplianceKpi30dRecord> {
   const raw = await invoke<unknown>("permit_compliance_kpi_30d");
   return PermitComplianceKpi30dSchema.parse(raw);
@@ -355,6 +370,15 @@ export async function updateWorkPermit(input: WorkPermitUpdateInput): Promise<Wo
 export async function setWorkPermitStatus(input: WorkPermitStatusInput): Promise<WorkPermitRecord> {
   const raw = await invoke<unknown>("set_work_permit_status", { input });
   return WorkPermitSchema.parse(raw);
+}
+
+/**
+ * Resolves when the session user may approve the permit now (four-eyes); rejects with the
+ * server's refusal otherwise. Nothing is written: the approval is checked again when made.
+ */
+export async function checkWorkPermitApproval(permitId: number): Promise<void> {
+  // The screen shows the refusal next to the step: no toast for a check the user did not ask for.
+  await invoke<unknown>("check_work_permit_approval", { permitId }, { notifyOnError: false });
 }
 
 export async function suspendWorkPermit(

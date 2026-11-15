@@ -5,14 +5,11 @@
  * @see docs/UX_ENTITY_FORM_DIALOG_PATTERN.md
  */
 
-import { CircleHelp, Loader2 } from "lucide-react";
+import { ArrowRightLeft, CircleHelp, Loader2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import {
-  type EquipmentSearchOption,
-  EquipmentSearchSelect,
-} from "@/components/assets/EquipmentSearchSelect";
+import { assetFormDisabledReasonKey } from "@/components/assets/asset-form-reason";
 import { isRetiredStatus } from "@/components/assets/asset-tones";
 import {
   EntityFormCollapsible,
@@ -42,12 +39,10 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ListAccessNote } from "@/components/ui/list-access-note";
 import { useFormatters } from "@/hooks/use-formatters";
-import { useToast } from "@/hooks/use-toast";
+import { useAppToast } from "@/hooks/use-toast";
 import { appErrorReason } from "@/lib/app-error";
 import { useZodForm } from "@/lib/form-helpers";
-import { useCanReadList } from "@/lib/list-access";
 import { assetEditSchema } from "@/schemas/asset-edit.schema";
 import {
   deleteAssetPhoto,
@@ -56,10 +51,10 @@ import {
   uploadAssetPhoto,
 } from "@/services/asset-lifecycle-service";
 import { getEquipmentTaxonomyCatalog } from "@/services/asset-service";
-import { listOrgTree } from "@/services/org-node-service";
+import { useAssetSearchStore } from "@/stores/asset-search-store";
 import { useAssetStore } from "@/stores/asset-store";
 import { useEquipmentTaxonomy } from "@/stores/equipment-taxonomy-store";
-import type { OrgTreeRow, UpdateAssetIdentityPayload } from "@shared/ipc-types";
+import type { UpdateAssetIdentityPayload } from "@shared/ipc-types";
 
 const FORM_ID = "asset-edit-form";
 
@@ -76,11 +71,12 @@ function photoDataUrl(preview: { mime_type: string; data_base64: string }): stri
 
 export function AssetEditForm() {
   const { t } = useTranslation("equipment");
-  const canReadOrg = useCanReadList("orgNodes");
-  const { toast } = useToast();
+  const { toast } = useAppToast();
   const open = useAssetStore((s) => s.showEditForm);
   const asset = useAssetStore((s) => s.editingAsset);
   const closeForm = useAssetStore((s) => s.closeEditForm);
+  const requestTransfer = useAssetStore((s) => s.requestTransfer);
+  const openAssetDetail = useAssetSearchStore((s) => s.selectAsset);
   const submitUpdate = useAssetStore((s) => s.updateAsset);
   const saving = useAssetStore((s) => s.saving);
   const { formatDate, formatDateTime } = useFormatters();
@@ -98,8 +94,6 @@ export function AssetEditForm() {
   const fieldError = (message: string | undefined) => translateFieldError(message, t);
 
   const [catalogReady, setCatalogReady] = useState(false);
-  const [orgNodes, setOrgNodes] = useState<OrgTreeRow[]>([]);
-  const [orgTreeError, setOrgTreeError] = useState<string | null>(null);
   const [referenceCatalogError, setReferenceCatalogError] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [showUnsavedPrompt, setShowUnsavedPrompt] = useState(false);
@@ -167,21 +161,6 @@ export function AssetEditForm() {
     }
   }, []);
 
-  // The lists are re-read when the rights or the language change; the form itself is reset only
-  // when it opens or shows another asset (below), so typed edits survive a rights reload.
-  useEffect(() => {
-    if (!open) return;
-    setOrgTreeError(null);
-    // Without the organisation view right the list is not requested; the field says why.
-    if (!canReadOrg) return;
-    void listOrgTree()
-      .then(setOrgNodes)
-      .catch((err) => {
-        console.error("[AssetEditForm] listOrgTree failed", err);
-        setOrgTreeError(`${t("createForm.orgTreeLoadFailed")} ${appErrorReason(err)}`);
-      });
-  }, [open, t, canReadOrg]);
-
   useEffect(() => {
     if (!open) return;
     setReferenceCatalogError(null);
@@ -220,16 +199,6 @@ export function AssetEditForm() {
       rams_utilization_factor: asset.rams_utilization_factor ?? 1.0,
     });
   }, [open, asset, reset, loadPhotos]);
-
-  const orgOptions: EquipmentSearchOption[] = useMemo(
-    () =>
-      orgNodes.map((n) => ({
-        value: String(n.node.id),
-        label: n.node.name,
-        description: n.node.code,
-      })),
-    [orgNodes],
-  );
 
   const watchedClassCode = watch("class_code");
   const watchedFamilyCode = watch("family_code");
@@ -346,10 +315,6 @@ export function AssetEditForm() {
       setSubmitError(t("createForm.validation.referenceRequired"));
       return;
     }
-    if (!values.org_node_id || values.org_node_id === 0) {
-      setSubmitError(t("createForm.validation.orgRequired"));
-      return;
-    }
 
     const payload: UpdateAssetIdentityPayload = {
       asset_name: values.asset_name ?? asset.asset_name,
@@ -372,8 +337,6 @@ export function AssetEditForm() {
       ...(values.decommissioned_at !== undefined
         ? { decommissioned_at: values.decommissioned_at }
         : {}),
-      // A new location is saved with the edit, in one transaction (D19).
-      ...(values.org_node_id !== asset.org_node_id ? { org_node_id: values.org_node_id } : {}),
     };
 
     try {
@@ -384,8 +347,13 @@ export function AssetEditForm() {
     }
   };
 
-  const watchedOrgNode = watch("org_node_id");
   const busy = saving || photosBusy;
+  const disabledReasonKey = assetFormDisabledReasonKey({
+    saving,
+    photosBusy,
+    catalogReady,
+    catalogFailed: referenceCatalogError != null,
+  });
 
   if (!asset) {
     return null;
@@ -411,16 +379,12 @@ export function AssetEditForm() {
             onCancel={() => handleCloseRequest()}
             cancelDisabled={busy}
             primaryDisabled={!catalogReady}
+            primaryDisabledReason={disabledReasonKey ? t(disabledReasonKey) : undefined}
             primaryLoading={busy}
           />
         }
       >
-        {(orgTreeError || referenceCatalogError) && (
-          <div className="space-y-2">
-            {orgTreeError && <EntityFormHint>{orgTreeError}</EntityFormHint>}
-            {referenceCatalogError && <EntityFormHint>{referenceCatalogError}</EntityFormHint>}
-          </div>
-        )}
+        {referenceCatalogError && <EntityFormHint>{referenceCatalogError}</EntityFormHint>}
 
         <form id={FORM_ID} onSubmit={(e) => void handleSubmit(onSubmit)(e)} className="space-y-6">
           <EntityFormSection title={t("createForm.sections.identification")}>
@@ -519,27 +483,33 @@ export function AssetEditForm() {
           </EntityFormSection>
 
           <EntityFormSection title={t("createForm.sections.organization")}>
-            <FormField
-              name="org_node_id"
-              label={t("detail.fields.site")}
-              error={fieldError(errors.org_node_id?.message)}
-              required
-            >
-              {canReadOrg ? (
-                <EquipmentSearchSelect
+            {/* The location changes only through "Transférer" (reason, date, warnings, history). */}
+            <FormField name="org_node_id" label={t("detail.fields.site")}>
+              <div className="flex flex-wrap items-center gap-2">
+                <Input
                   id="org_node_id"
-                  options={orgOptions}
-                  value={watchedOrgNode ? String(watchedOrgNode) : ""}
-                  onChange={(v) =>
-                    setValue("org_node_id", Number(v), { shouldValidate: true, shouldDirty: true })
-                  }
-                  placeholder={t("createForm.selectOrg")}
-                  disabled={orgOptions.length === 0}
-                  aria-invalid={!!errors.org_node_id}
+                  value={asset.org_node_name ?? ""}
+                  placeholder={t("transfer.noLocation")}
+                  readOnly
+                  className="min-w-0 flex-1 bg-surface-2 text-text-secondary"
                 />
-              ) : (
-                <ListAccessNote list="orgNodes" />
-              )}
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-10 gap-1.5"
+                  disabled={busy || isDirty}
+                  title={isDirty ? t("transfer.saveEditFirst") : undefined}
+                  onClick={() => {
+                    closeForm();
+                    requestTransfer(asset.id);
+                    openAssetDetail(asset.id);
+                  }}
+                >
+                  <ArrowRightLeft className="h-4 w-4" aria-hidden />
+                  {t("transfer.action")}
+                </Button>
+              </div>
+              <p className="mt-1 text-[11px] text-text-muted">{t("transfer.editHint")}</p>
             </FormField>
           </EntityFormSection>
 

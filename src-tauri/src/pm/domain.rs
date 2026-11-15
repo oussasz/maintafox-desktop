@@ -39,6 +39,11 @@ pub struct PmPlan {
     /// accepted here or a planner publishes another version (AU-76b, CMMS Advisor S4 option A).
     #[serde(default)]
     pub source_decision_to_review: bool,
+    /// The org node the plan's rights are checked at (`pm::access`): the equipment's installed
+    /// node, or the location's node. `None`: a family / criticality-group plan, or equipment
+    /// installed nowhere — plant-wide roles only. Derived on read.
+    #[serde(default)]
+    pub access_node_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -152,6 +157,34 @@ pub struct UpdatePmPlanVersionInput {
     pub estimated_parts_cost: Option<f64>,
     pub estimated_service_cost: Option<f64>,
     pub change_reason: Option<String>,
+}
+
+/// "Dupliquer ce plan" (L6-11): a new plan copied from the source plan's current published version
+/// (else its latest draft), onto a target asset or scope.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DuplicatePmPlanInput {
+    pub source_plan_id: i64,
+    /// Code of the new plan (same rule as a new plan: trimmed, upper case, unique).
+    pub code: String,
+    pub title: String,
+    /// Target scope: the source plan's scope when omitted.
+    #[serde(default)]
+    pub target_scope_type: Option<String>,
+    #[serde(default)]
+    pub target_scope_id: Option<i64>,
+    /// Meter of the target asset for a trigger on a chosen meter (same unit as the source meter);
+    /// omitted: the meter is left to choose and publishing is refused until it is.
+    #[serde(default)]
+    pub target_meter_id: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DuplicatePmPlanResult {
+    pub plan: PmPlan,
+    /// Version 1 of the new plan, a draft.
+    pub version: PmPlanVersion,
+    /// The trigger counts on a meter still to choose before publishing.
+    pub meter_to_choose: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -526,4 +559,7 @@ pub struct RecordPmMeterReadingInput {
     pub reading_value: f64,
     pub reading_at: Option<String>,
     pub kind: Option<String>,
+    /// Set once the person has confirmed a value far above the meter's usual use.
+    #[serde(default)]
+    pub confirm_jump: Option<bool>,
 }

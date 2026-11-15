@@ -13,6 +13,7 @@ import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
 import { describeAppError } from "@/lib/app-error";
+import { useWithdrawRefusalToast } from "@/lib/refusal-toast";
 import { cn } from "@/lib/utils";
 
 export interface LoadingStateProps {
@@ -55,6 +56,7 @@ export function ErrorState({
 }: ErrorStateProps) {
   const { t } = useTranslation("common");
   const described = describeAppError(error);
+  useWithdrawRefusalToast(error);
   return (
     <div
       role="alert"

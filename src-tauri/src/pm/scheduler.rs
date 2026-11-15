@@ -27,7 +27,7 @@ pub async fn run_due_pm_generation(db: &DatabaseConnection) -> AppResult<()> {
         return Ok(());
     };
     let due = DateTime::parse_from_rfc3339(next_run_at)
-        .map(|d| d.with_timezone(&Utc) <= Utc::now())
+        .map(|d| d.with_timezone(&Utc) <= crate::clock::now())
         .unwrap_or(false);
     if !due {
         return Ok(());

@@ -5,7 +5,7 @@
       "outsideScope_other": "{{count}} work orders are not shown: outside your sites.",
       "withoutSite_one": "{{count}} work order is not shown: it has no site.",
       "withoutSite_other": "{{count}} work orders are not shown: they have no site.",
-      "allWorkOrders": "These counts cover all work orders, whatever the filters or search.",
+      "allWorkOrders": "Total over all work orders, ignoring the filters.",
       "askPlantWide": "Ask a user with a plant-wide role to see them."
     },
     "noSite": {
@@ -16,7 +16,16 @@
   "permitRule": {
     "requiredBy": "Permit required by rule {{rule}} (permit type {{permitType}}).",
     "requiredByNoType": "Permit required by rule {{rule}}.",
-    "severalTypes": "Several permit rules: {{types}}",
+    "listTitle": "Permits required by the plant's rules: a live permit of each type to start or resume.",
+    "listRule": "rule {{rule}}",
+    "listPrimary": "primary",
+    "listLive": "Permit {{permit}} ({{status}})",
+    "listMissing": "No permit of this type linked",
+    "listCleared": "Lifted on {{date}} by {{by}}: {{reason}}",
+    "listClearedNoName": "Lifted on {{date}}: {{reason}}",
+    "listClear": "Lift",
+    "clearTypeTitle": "Lift the {{permitType}} permit requirement?",
+    "clearTypeBody": "{{code}} will no longer require a {{permitType}} permit (rule {{rule}}). The other required permits stay required. The reason, date and your name are kept on the work order and in its history.",
     "requiredShort": "Required (rule {{rule}})",
     "clearHint": "Only a person allowed to issue permits can clear this requirement, with a reason, before the work starts.",
     "checkboxLocked": "Required by rule {{rule}}: cleared with “Clear the requirement” below.",
@@ -62,8 +71,73 @@
     "fromSafetyDi": "Set automatically: the originating request reported a safety risk."
   },
   "woPeople": {
-    "none": "No active staff member has a user account: link personnel to an account in Personnel.",
+    "none": "Nobody to offer. If you cannot see the staff register, ask the administrator to link your account to your record in Personnel so you can book your hours.",
     "loadFailed": "The staff list could not be loaded."
+  },
+  "join": {
+    "action": "Join",
+    "hint": "Help on this work order: your labour starts now and the assignee is told. You do not become responsible for it.",
+    "done": "You joined the work order: your labour has started."
+  },
+  "depannage": {
+    "validation": {
+      "badgeToValidate": "Breakdown — to validate",
+      "pending": "Validation after the fact pending (an approver of the site other than the person who started it).",
+      "validate": "Validate the breakdown",
+      "validated": "Breakdown validated on {{date}}",
+      "autoApproved": "Approved automatically at the close (site rule), with no validator.",
+      "notStarter": "You started this breakdown: another approver must validate it."
+    },
+    "times": {
+      "response": "Response time",
+      "activeRepair": "Active repair",
+      "restore": "Time to restore",
+      "hours": "{{value}} h"
+    },
+    "action": "Breakdown",
+    "title": "Breakdown: immediate work",
+    "intro": "For a failure to deal with now: the corrective work order is created and started in one go. Its planning is validated afterwards.",
+    "badge": "Breakdown work",
+    "breakdownAt": {
+      "save": "Save",
+      "edit": "Correct the breakdown time",
+      "label": "Breakdown found at",
+      "required": "Enter the date and time the breakdown was found.",
+      "future": "A breakdown cannot be found in the future."
+    },
+    "machineStopped": {
+      "label": "Machine stopped",
+      "required": "Say whether the machine is stopped.",
+      "yes": "Yes",
+      "no": "No"
+    },
+    "titlePlaceholder": "E.g. oil leak on the gearbox",
+    "type": {
+      "default": "Plant type for immediate corrective work"
+    },
+    "assignee": {
+      "label": "Technician",
+      "me": "Me",
+      "onlyMe": "Naming someone else needs the emergency assignment right."
+    },
+    "openWos": {
+      "title_one": "{{count}} work order already open on this equipment",
+      "title_other": "{{count}} work orders already open on this equipment",
+      "open": "Open",
+      "hint": "Open the existing work order if it already covers this breakdown; otherwise launch the breakdown work."
+    },
+    "submit": "Launch breakdown work",
+    "close": "Close",
+    "openWo": "Open work order {{code}}",
+    "result": {
+      "started": "Work order {{code}} created and started.",
+      "waiting": "Work order {{code}} created, ready and waiting for its permit: it starts once the permit is live.",
+      "permitTypes": "Waiting for permit: {{types}}",
+      "draftsWritten_one": "{{count}} permit draft prepared.",
+      "draftsWritten_other": "{{count}} permit drafts prepared.",
+      "issuersNotified": "The site's permit issuers have been notified.",
+      "oldBreakdown": "The breakdown was found more than 7 days ago: check the date entered."
+    }
   },
   "page": {
     "title": "Work Orders",
@@ -79,22 +153,24 @@
   },
   "integrity": {
     "title": "Data integrity findings",
-    "empty": "No open findings. Run detectors to scan work orders and related rows.",
-    "contractFrozen": "Analytics contract {{id}} v{{ver}} (sha256 {{hash}}…)",
-    "runDetectors": "Run detectors",
+    "empty": "No open issues. Run the check to review work orders and their lines.",
+    "runDetectors": "Run the check",
     "waiverDefaultReason": "Waived via operator workbench",
-    "approverId": "Approver user ID",
     "approverPlaceholder": "Required for error findings",
     "waiverReason": "Waiver reason",
     "waiverReasonPlaceholder": "Justification",
     "waive": "Waive",
+    "waiveNeedsApprover": "Choose an approver first: an error-level issue must be waived with another person's agreement.",
     "repair": "Repair",
     "applyRepair": "Apply repair",
     "repair.clearFailureMode": "Clear invalid failure mode",
     "repair.swapDowntime": "Swap segment start/end (negative duration)",
     "repair.closeAtStart": "Close segment at start time",
     "repair.trimOverlap": "Trim first segment end to remove overlap",
-    "severity": { "error": "Error", "warning": "Warning" },
+    "severity": {
+      "error": "Error",
+      "warning": "Warning"
+    },
     "code": {
       "FK_ORPHAN_FAILURE_MODE": "Failure mode not found",
       "WO_DOWNTIME_NEGATIVE_DURATION": "Downtime with negative duration",
@@ -149,10 +225,13 @@
     },
     "filters": {
       "scopeNotClosed": "Not yet closed",
+      "planner": "Planner",
+      "plannerToName": "Planner to be named",
       "scopeOverdue": "Overdue (open, planned end passed)",
       "mix": "Work mix",
       "completed": "Completed in the period",
       "completedValue": "{{from}} to {{to}}",
+      "ramsFailures": "Failures counted by RAMS",
       "mixValue": {
         "planned": "Planned (preventive and improvement)",
         "reactive": "Reactive (corrective)",
@@ -169,6 +248,10 @@
     }
   },
   "form": {
+    "createdToast": "Work order {{code}} created",
+    "savedToast": "Work order {{code}} saved",
+    "openCreated": "Open the work order",
+    "missingHint": "To complete before continuing: {{items}}",
     "title": {
       "label": "Title",
       "placeholder": "Short description of the work"
@@ -187,7 +270,8 @@
       "none": "No sub-type"
     },
     "urgency": {
-      "label": "Urgency"
+      "label": "Urgency",
+      "placeholder": "Choose an urgency"
     },
     "equipment": {
       "label": "Equipment",
@@ -206,20 +290,23 @@
       "label": "Planned end"
     },
     "duration": {
-      "label": "Estimated duration (h)"
+      "label": "Estimated duration (h)",
+      "exceedsWindow": "Warning: the estimated duration ({{hours}} h) is longer than the time between the planned start and end ({{window}} h)."
     },
     "notes": {
       "label": "Notes"
     },
     "cancel": "Cancel",
+    "missingFields": "To continue, fill in: {{fields}}.",
     "submit": "Create work order",
     "update": "Save changes",
     "validation": {
       "titleRequired": "Title is required",
       "typeRequired": "Work order type is required.",
-      "urgencyRequired": "Priority is required.",
-      "urgencyInvalid": "The selected priority is no longer valid.",
-      "equipmentRequired": "Equipment is required."
+      "urgencyRequired": "Urgency is required.",
+      "urgencyInvalid": "The selected urgency is no longer valid.",
+      "equipmentRequired": "Equipment is required.",
+      "plannedEndBeforeStart": "The planned end cannot be before the planned start."
     }
   },
   "status": {
@@ -280,12 +367,42 @@
     "fullDay": "Full day",
     "full_day": "Full day"
   },
+  "nonStockPurchase": {
+    "open": "Buy a non-stock part",
+    "title": "Buy a non-stock part for this work order",
+    "description": "For a part the store does not hold: it is ordered for this work order, received without entering stock and counted in the work order's actual parts. The purchase request follows the usual approvals.",
+    "search": "Known non-stock part",
+    "searchPlaceholder": "Search by code or description",
+    "matches": "Existing non-stock parts",
+    "reused": "Part reused: {{code}} — {{name}}",
+    "notThisOne": "Another part",
+    "name": "Part description",
+    "namePlaceholder": "E.g. O-ring Ø212 Viton",
+    "unit": "Unit",
+    "newHint": "No existing part fits? A non-stock part is created from this work order, \"to review\" by the catalogue manager.",
+    "qty": "Quantity",
+    "estimate": "Estimated unit price (optional)",
+    "reason": "Reason for the purchase (optional)",
+    "reasonPlaceholder": "E.g. part not found in the store",
+    "nameRequired": "Describe the part to buy.",
+    "unitRequired": "Choose the part's unit.",
+    "submit": "Request the purchase",
+    "cancel": "Cancel",
+    "error": "The non-stock purchase request could not be created.",
+    "created": "Purchase request {{number}} created for this work order.",
+    "badge": "Non-stock",
+    "awaiting": "Purchase in progress",
+    "received": "Received: {{received}} / {{planned}}",
+    "handedTo": "Handed to {{name}}"
+  },
   "planning": {
     "timing": "Timing",
     "shift": "Shift",
     "save": "Save planning",
     "endBeforeStart": "End date must be after start date",
     "plannerId": "Planner",
+    "plannerToName": "planner to be named",
+    "plannerRightRequired": "Only an approver or a planner can choose the work order's planner.",
     "plannedStart": "Planned start",
     "plannedEnd": "Planned end",
     "selectShift": "Select shift",
@@ -313,7 +430,9 @@
     "primaryResponsibleId": "Technician (primary responsible)",
     "scheduledAt": "Scheduled at",
     "scheduleStripTitle": "Committed schedule",
-    "scheduleLockedHint": "Dates, crew, and technician are owned by Planning. Use Open in Planning to change the slot, or Emergency reassign for night dispatch (skips capacity gates).",
+    "scheduleLockedHint": "Dates are managed by Planning (Open in Planning). The crew and technician are assigned here.",
+    "assignAction": "Assign",
+    "assignHint": "Choose the crew and/or technician, then Assign. The slot stays managed by Planning.",
     "scheduleEmpty": "Not yet committed on the Planning board.",
     "scheduleFrozenHint": "This commitment is frozen. Use Planning break-in — emergency reassign is blocked.",
     "openInPlanning": "Open in Planning",
@@ -387,6 +506,8 @@
       "description": "Some planned parts are not fully available in stock.",
       "createRequisition": "Create purchase requisition",
       "requisitionCreated": "Purchase requisition created",
+      "requisitionInProgress": "Purchase requisition {{number}} already in progress",
+      "requisitionCreatedNumber": "Purchase requisition {{number}} created",
       "columns": {
         "article": "Article",
         "requested": "Requested",
@@ -395,6 +516,9 @@
       }
     },
     "parts": {
+      "available": "Available: {{qty}} {{unit}}",
+      "shortage": "Not enough stock (available: {{available}} {{unit}}): the line is saved, the missing quantity has to be bought.",
+      "willReserve": "Available stock is reserved when the line is saved.",
       "noMatch": "No matching article",
       "stockLocation": "Stock location",
       "locationPlaceholder": "Location",
@@ -418,6 +542,9 @@
   },
   "cancel": {
     "title": "Cancel work order",
+    "keep": "Keep the work order",
+    "partsIssued_one": "{{count}} part line has already been issued from the store for this work order: cancelling does not put it back in stock. Make a store return for unused parts.",
+    "partsIssued_other": "{{count}} part lines have already been issued from the store for this work order: cancelling does not put them back in stock. Make a store return for unused parts.",
     "warning": "Cancelling stops the lifecycle. This cannot be undone from the same path.",
     "reason": "Cancellation reason",
     "reasonPlaceholder": "Explain why this work order is being cancelled…",
@@ -436,6 +563,15 @@
     "blockers": "Blocking issues",
     "gates": {
       "title": "Work order completion",
+      "fix": {
+        "PARTS": "Do it in the Parts tab: confirm the quantity actually used on each line.",
+        "TASKS": "Do it in the Tasks tab: complete or cancel each open task.",
+        "OPEN_LABOR": "Do it in the Labour tab: stop the time entries still running.",
+        "OPEN_DOWNTIME": "Do it in the Return to service section: close the open production stops.",
+        "FAILURE_MODE": "Do it further down, Failure analysis section: choose the failure mode.",
+        "SYMPTOM": "Do it further down, Symptom section: choose the observed symptom.",
+        "ROOT_CAUSE": "Do it further down, Action taken section: summarise the root cause, or tick “Cause not known yet”."
+      },
       "blockingCount": "{{count}} blocking items remaining ({{done}}/{{total}} ready).",
       "PARTS": "Parts confirmed",
       "TASKS": "Tasks completed",
@@ -454,6 +590,9 @@
       "planned": "Planned",
       "actual": "Actual",
       "efficiency": "Efficiency",
+      "notEstimated": "Not estimated",
+      "efficiencyNeedsEstimate": "No estimate: cannot be computed",
+      "noHours": "No hours recorded",
       "laborTitle": "Hours",
       "partsTitle": "Parts",
       "partsLine": "{{planned}} planned · {{used}} used · {{unused}} unused · {{extra}} extra",
@@ -507,6 +646,9 @@
     "taskFollowUp": "Follow-up WO",
     "taskFollowUpPlaceholder": "Follow-up WO number (optional)",
     "taskFollowUpNotFound": "No work order \"{{code}}\"",
+    "taskRaiseCorrective": "Create a linked corrective work order",
+    "taskCorrectiveTitle": "Corrective: {{task}}",
+    "taskCorrectiveDescription": "Found on work order {{code}}, step \"{{task}}\". Finding: {{note}}",
     "taskNokEvidenceHint": "Mandatory NOK task: enter the finding or the follow-up WO.",
     "reopenTask": "Reopen task",
     "reopenTaskComment": "Reason for reopening",
@@ -527,6 +669,11 @@
       "hint": "Enter technician time for this intervention. Worked hours are calculated automatically.",
       "rateHint": "Labor cost uses the technician’s active hourly rate card when available; otherwise the entry is saved with a missing-rate warning.",
       "technician": "Technician",
+      "technicianPlaceholder": "Choose a technician",
+      "team": "Team",
+      "allTeams": "All teams",
+      "rateShown": "Hourly rate applied: {{rate}}",
+      "rateUnknown": "No hourly rate is set for this person: the entry will be saved without cost.",
       "date": "Date",
       "startTime": "Start time",
       "endTime": "End time",
@@ -584,6 +731,7 @@
       "confirmNoParts": "Unable to confirm no parts used.",
       "unconfirmNoParts": "Unable to undo the no-parts confirmation.",
       "completeTask": "Unable to complete task.",
+      "raiseCorrective": "Unable to create the corrective work order.",
       "loadData": "Unable to load execution data.",
       "openDowntime": "Unable to open downtime segment.",
       "closeDowntime": "Unable to close downtime segment.",
@@ -628,6 +776,10 @@
       "summaryPlanned": "{{pending}} / {{total}} planned lines still need Used or Not used",
       "markUsed": "Used",
       "usedQtyLabel": "Qty: {{qty}}",
+      "toIssue": {
+        "badge": "To issue: {{qty}} {{unit}}",
+        "hint": "Part recorded without the stock right: the storekeeper issues it from stock at the issue desk. The work order cannot be closed before."
+      },
       "badge": {
         "used": "Used ({{qty}})",
         "notUsed": "Not used"
@@ -642,9 +794,10 @@
         "qty": "Quantity used",
         "save": "Add part",
         "stockHint": "Choose the article and the location it was taken from: the quantity is reserved and issued from stock. Use “Non-stock” only for an item the store does not manage.",
+        "stockHintRequest": "Choose the article and the location it was taken from. Without the stock right (for example at night, with no storekeeper), the part is recorded “to regularise”: the storekeeper issues it from stock the next day, nothing moves before. Choose “Non-stock part” only for an item the store does not manage.",
         "modeLabel": "Part origin",
         "modeStock": "Stock article",
-        "modeNonStock": "Non-stock",
+        "modeNonStock": "Non-stock part (direct purchase)",
         "searchArticle": "Search an article",
         "searchPlaceholder": "Code or description",
         "article": "Article",
@@ -716,6 +869,8 @@
       "partUsed": "Part used: {{label}}",
       "partNotUsed": "Part marked unused: {{label}}",
       "partCancelled": "Planned part line cancelled: {{label}}",
+      "partIssued": "Part issued from the store: {{label}}",
+      "partToIssueCancelled": "Part to issue cancelled: {{label}}",
       "partSetRequired": "Part line set to required: {{label}}",
       "partSetOptional": "Part line set to optional: {{label}}",
       "partAdded": "Part added during execution: {{label}}",
@@ -731,6 +886,30 @@
       "toolNotUsed": "Tool not used: {{label}}",
       "partsNoneConfirmed": "Confirmed: no parts used",
       "partsNoneCleared": "No-parts confirmation cleared"
+    }
+  },
+  "subcontracting": {
+    "title": "Contractor",
+    "hint": "The external company doing this work, its order reference, the hours it declares and the cost it invoices. The cost is the work order's service cost.",
+    "manageContractors": "Manage contractors",
+    "company": "Contractor company",
+    "noContractor": "No contractor",
+    "orderRef": "Contractor order / contract reference",
+    "hours": "Contractor hours",
+    "cost": "Contractor cost ({{currency}})",
+    "contractEnd": "Contract ends {{date}}",
+    "contractState": {
+      "active": "Contract running",
+      "expiring": "Contract ending soon",
+      "expired": "Contract expired"
+    },
+    "save": "Save contractor details",
+    "loadError": "The contractor details of this work order could not be loaded.",
+    "warranty": {
+      "label": "Repair under warranty (to charge back to the supplier)",
+      "assetUntil": "Equipment under warranty until {{date}}.",
+      "note": "Charge-back note",
+      "noteHint": "Claim reference, parts or hours to recover from the supplier or the maker."
     }
   },
   "closeout": {
@@ -762,7 +941,7 @@
     "temporary": "Temporary",
     "permanent": "Permanent",
     "notApplicable": "N/A",
-    "serviceCost": "Service cost (€)",
+    "serviceCost": "Service cost ({{currency}})",
     "detailsSaved": "Details saved.",
     "saveDetails": "Save details",
     "sectionReturn": "Return to service",
@@ -793,6 +972,11 @@
     "fmecaOverrideSignerPasswordPlaceholder": "Signer password confirmation",
     "fmecaOverrideHint": "Required only when critical FMECA suggested parts were not consumed. Signer must be Supervisor/Admin, different from closer, and re-authenticated.",
     "closeWo": "Close WO",
+    "blocked": {
+      "closed": "The work order is closed: its details can no longer be changed.",
+      "cancelled": "The work order is cancelled: its details can no longer be changed.",
+      "rightRequired": "Right required: {{right}}."
+    },
     "confirmVerifyTitle": "Record the technical verification?",
     "confirmVerifyDescription": "{{code}}: result \"{{result}}\"{{rts}}. The verification is recorded in your name in the audit trail.",
     "confirmVerifyReturnToService": ", equipment returned to service",
@@ -826,13 +1010,16 @@
     "title": "Work order history",
     "permitRequired": "Permit / lockout now required",
     "permitNotRequired": "Permit / lockout no longer required",
+    "originDepannage": "Origin: breakdown",
     "actions": {
       "task_reopened": "Task reopened",
       "labor_closed_by_cancellation": "Open labour closed by the cancellation",
       "labor_closed_by_closeout": "Open labour closed by the close-out",
+      "labor_added": "Labour hours recorded",
       "permit_rule_flag_cleared": "Permit requirement (rule) cleared",
       "shutdown_required_set": "Flagged as needing a shutdown",
       "shutdown_required_cleared": "“Needs shutdown” removed",
+      "updated": "Work order updated",
       "created": "Work order created",
       "submitted": "Submitted to planning",
       "planned": "Planned",
@@ -876,6 +1063,7 @@
   "detail": {
     "close": "Close",
     "loading": "Loading work order…",
+    "backToOrigin": "Back",
     "loadingHint": "Fetching the latest work order details.",
     "cancelledBanner": "This work order was cancelled",
     "sections": {
@@ -913,7 +1101,8 @@
       "sourceDi": "Source DI",
       "sourceRca": "Source RCA",
       "sourceRcaDiagram": "Ishikawa diagram #{{id}}",
-      "sourceRcaCause": "Cause"
+      "sourceRcaCause": "Cause",
+      "sourceRcaOpen": "Open the cause analysis (RAMS)"
     }
   },
   "footer": {
@@ -1037,7 +1226,9 @@
   "archive": {
     "title": "Archive (Closed / Cancelled)",
     "loadError": "Failed to load archived work orders.",
-    "retry": "Retry"
+    "retry": "Retry",
+    "shown": "{{shown}} of {{total}} shown",
+    "loadMore": "Load more ({{count}} left)"
   },
   "search": {
     "placeholder": "Search by code, title, equipment…"

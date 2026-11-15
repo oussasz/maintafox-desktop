@@ -17,7 +17,8 @@ const INTL_LOCALE_MAP: Record<string, string> = {
 };
 
 function toIntlLocale(locale: string): string {
-  return INTL_LOCALE_MAP[locale] ?? "fr-FR";
+  // "fr", "fr-FR", "en-US"... : the language decides, never a hardcoded fallback region.
+  return INTL_LOCALE_MAP[locale] ?? INTL_LOCALE_MAP[locale.slice(0, 2).toLowerCase()] ?? "fr-FR";
 }
 
 // ─── Number Formatting ─────────────────────────────────────────────────────
@@ -126,11 +127,19 @@ export function formatPercent(value: number, locale: string): string {
  * A date-only text ("2026-10-22", a calendar day with no time) is that day in the user's own
  * time zone; `new Date("2026-10-22")` would be midnight UTC, i.e. the day before west of Greenwich.
  */
-function toDate(value: Date | string | number): Date {
+export function toDate(value: Date | string | number): Date {
   if (value instanceof Date) return value;
   if (typeof value === "string") {
-    const day = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+    const text = value.trim();
+    const day = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
     if (day) return new Date(Number(day[1]), Number(day[2]) - 1, Number(day[3]));
+    // The database writes its instants in UTC, often with no "Z" ("2026-10-31 21:00:00" from
+    // SQLite, "2026-10-31T21:00:00" from a naive timestamp). JavaScript would read those as local
+    // time and show them shifted by the zone offset: they are UTC. A "T" value with no seconds is
+    // a local entry field value ("2026-10-31T22:00") and stays local.
+    if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?$/.test(text)) {
+      return new Date(`${text.replace(" ", "T")}Z`);
+    }
   }
   return new Date(value);
 }
@@ -197,12 +206,37 @@ export function formatDateTime(
     year: "numeric",
     hour: "2-digit",
     minute: "2-digit",
-    hour12: locale === "en",
+    hour12: toIntlLocale(locale) === "en-US",
   }).format(date);
 }
 
 /**
- * Formats a time-only value.
+ * A day without its year, for narrow cells: "31/10" (fr), "10/31" (en). Never the raw
+ * "10-31" of an ISO date.
+ */
+export function formatDayMonth(
+  value: Date | string | number | null | undefined,
+  locale: string,
+): string {
+  if (value == null) return "—";
+  const date = toDate(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return new Intl.DateTimeFormat(toIntlLocale(locale), {
+    day: "2-digit",
+    month: "2-digit",
+  }).format(date);
+}
+
+/** A month and year from "2026-10": "oct. 2026" (fr), "Oct 2026" (en). */
+export function formatYearMonth(value: string | null | undefined, locale: string): string {
+  const m = value ? /^(\d{4})-(\d{2})/.exec(value) : null;
+  if (!m) return "—";
+  return new Intl.DateTimeFormat(toIntlLocale(locale), { month: "short", year: "numeric" }).format(
+    new Date(Number(m[1]), Number(m[2]) - 1, 1),
+  );
+}
+
+/** Formats a time-only value.
  *
  * French:  14:30
  * English: 2:30 PM
@@ -217,7 +251,7 @@ export function formatTime(
   return new Intl.DateTimeFormat(toIntlLocale(locale), {
     hour: "2-digit",
     minute: "2-digit",
-    hour12: locale === "en",
+    hour12: toIntlLocale(locale) === "en-US",
   }).format(date);
 }
 

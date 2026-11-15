@@ -43,7 +43,7 @@ fn decode_err(field: &str, err: impl std::fmt::Display) -> AppError {
 }
 
 fn now_z() -> String {
-    Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
+    crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
 
 /// The first instant of `day` in a time zone (`resolve` maps a local time to its instants):

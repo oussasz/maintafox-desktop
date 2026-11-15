@@ -32,7 +32,7 @@ vi.mock("@/components/PermissionGate", () => ({
 }));
 
 const toast = vi.fn();
-vi.mock("@/hooks/use-toast", () => ({ useToast: () => ({ toast }) }));
+vi.mock("@/hooks/use-toast", () => ({ useAppToast: () => ({ toast }) }));
 
 const service = vi.hoisted(() => ({
   listCapacityRules: vi.fn(),

@@ -33,7 +33,7 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use chrono::{Duration, Utc};
+use chrono::Duration;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -585,7 +585,7 @@ pub async fn assign_site(
         }
     }
 
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     // A window flagged "Site to re-enter" is settled by its site, as when a planner re-enters it.
     let settle_review = if kind == NoSiteKind::PlanningWindow {
         ", scope_review_required = 0"
@@ -824,7 +824,7 @@ pub(crate) async fn inbound_site_assignment_check(
                 format!("{what}: the time of its site assignment is unreadable ({at})"),
             )
         }
-        Some(t) if t > Utc::now() + Duration::minutes(MAX_CLOCK_SKEW_MINUTES) => {
+        Some(t) if t > crate::clock::now() + Duration::minutes(MAX_CLOCK_SKEW_MINUTES) => {
             return conflict(
                 "SITE_ASSIGNMENT_INCOMPLETE",
                 format!("{what}: its site assignment is dated in the future ({at})"),

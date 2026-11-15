@@ -273,6 +273,17 @@ const PlanningCrewLaneSchema = z.object({
   commitments_json: z.string(),
 });
 
+const ProposedWorkOrderSchema = z.object({
+  work_order_id: z.number(),
+  code: z.string(),
+  title: z.string(),
+  planned_start: z.string(),
+  planned_end: z.string(),
+  assigned_team_id: z.number().nullable(),
+  assigned_team_name: z.string().nullable(),
+  equipment_label: z.string().nullable(),
+});
+
 const PlanningGanttSnapshotSchema = z.object({
   period_start: z.string(),
   period_end: z.string(),
@@ -281,6 +292,7 @@ const PlanningGanttSnapshotSchema = z.object({
   capacity: z.array(TeamCapacityLoadSchema),
   assignee_lanes: z.array(PlanningAssigneeLaneSchema),
   crew_lanes: z.array(PlanningCrewLaneSchema).optional(),
+  proposed_work_orders: z.array(ProposedWorkOrderSchema).optional(),
 });
 
 const NotifyTeamsResultSchema = z.object({
@@ -497,6 +509,7 @@ export async function getPlanningGanttSnapshot(
   return {
     ...snap,
     crew_lanes: snap.crew_lanes ?? [],
+    proposed_work_orders: snap.proposed_work_orders ?? [],
   };
 }
 

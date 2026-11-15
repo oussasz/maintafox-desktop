@@ -38,6 +38,13 @@ const SMRP: SmrpKpis = {
     work_orders: 4,
   },
   pm_compliance: { current: ratio(1, 3, 33.3), previous: ratio(0, 0, null) },
+  pm_breakdown: {
+    by_site: [
+      { id: 2, label: "Sétif", due_count: 2, on_time_count: 1, compliance_pct: 50 },
+      { id: null, label: null, due_count: 1, on_time_count: 0, compliance_pct: 0 },
+    ],
+    by_team: [{ id: 7, label: "Mécanique", due_count: 3, on_time_count: 1, compliance_pct: 33.3 }],
+  },
   backlog: {
     backlog_hours: 20,
     previous_backlog_hours: 0,
@@ -45,6 +52,11 @@ const SMRP: SmrpKpis = {
     open_work_orders: 4,
     open_work_orders_rule: "open_work_to_do",
     work_orders_without_estimate: 1,
+    without_estimate_list: [{ id: 7, code: "OT-0007", title: "Fuite vanne" }],
+    by_team: [
+      { team_name: "Équipe mécanique", backlog_hours: 14, work_orders: 3, without_estimate: 0 },
+      { team_name: null, backlog_hours: 6, work_orders: 1, without_estimate: 1 },
+    ],
     weekly_capacity_hours: 64,
     people_counted: 2,
     people_without_schedule: 1,
@@ -137,6 +149,13 @@ describe("SmrpIndicatorsSection", () => {
     const backlog = screen.getByTestId("smrp-backlog");
     expect(within(backlog).getByText(/smrp\.backlog\.capacity/)).toBeInTheDocument();
     expect(within(backlog).getByText(/smrp\.backlog\.withoutSchedule/)).toBeInTheDocument();
+    // L1-21: the OT without estimate are named and the backlog is split by team.
+    expect(within(backlog).getByTestId("smrp-backlog-unestimated")).toHaveTextContent(
+      "OT-0007 Fuite vanne",
+    );
+    expect(within(backlog).getByTestId("smrp-backlog-by-team")).toHaveTextContent(
+      "smrp.backlog.byTeam",
+    );
   });
 
   it("says a replacement value is needed instead of inventing a ratio", () => {
@@ -183,6 +202,30 @@ describe("SmrpIndicatorsSection", () => {
     ).toBeInTheDocument();
     fireEvent.click(within(backlog).getAllByRole("button").at(-1) as HTMLElement);
     expect(screen.getByTestId("list-location")).toHaveTextContent("/work-orders?scope=open");
+  });
+
+  it("splits PM compliance by site and by trade (L7-26)", () => {
+    renderSection();
+    const bySite = screen.getByTestId("smrp-pm-by-site");
+    expect(within(bySite).getByText("Sétif")).toBeInTheDocument();
+    expect(within(bySite).getByText("smrp.pmBy.no_site")).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("smrp-pm-by-team")).getByText("Mécanique"),
+    ).toBeInTheDocument();
+  });
+
+  it("shows a dash and one line when nothing is measurable, never 0 h of 0 h (L7-25)", () => {
+    renderSection({
+      ...SMRP,
+      schedule_compliance: { current: ratio(0, 0, null), previous: ratio(0, 0, null) },
+    });
+    const tile = screen.getByTestId("smrp-schedule");
+    expect(within(tile).getByText("—")).toBeInTheDocument();
+    expect(within(tile).getByText("smrp.schedule.none")).toBeInTheDocument();
+    expect(within(tile).queryByText(/smrp.schedule.detail/)).not.toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("smrp-planned")).getByTestId("smrp-planned-basis"),
+    ).toHaveTextContent("smrp.mix.basisHoursShort");
   });
 
   it("renders nothing without data", () => {

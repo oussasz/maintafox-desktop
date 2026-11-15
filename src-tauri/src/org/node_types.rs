@@ -13,7 +13,6 @@
 
 use crate::errors::{AppError, AppResult};
 use crate::org::fail::{fail, fail_params};
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -249,7 +248,7 @@ pub async fn create_node_type(db: &DatabaseConnection, payload: CreateNodeTypePa
         }
     }
 
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
     let entity_sync_id = Uuid::new_v4().to_string();
 
     db.execute(Statement::from_sql_and_values(
@@ -325,7 +324,7 @@ pub async fn deactivate_node_type(db: &DatabaseConnection, id: i32) -> AppResult
         ));
     }
 
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE org_node_types SET is_active = 0, updated_at = ? WHERE id = ?",
@@ -406,7 +405,7 @@ pub async fn update_node_type(db: &DatabaseConnection, payload: UpdateNodeTypePa
         return get_node_type_by_id(db, payload.id).await;
     }
 
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
     sets.push("updated_at = ?".to_string());
     values.push(now.into());
     values.push(payload.id.into());

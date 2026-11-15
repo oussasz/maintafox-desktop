@@ -48,6 +48,7 @@ import { pushAppToast } from "@/store/app-toast-store";
 import { useDiReviewStore } from "@/stores/di-review-store";
 import { useDiStore } from "@/stores/di-store";
 import { intlLocaleForLanguage } from "@/utils/format-date";
+import { formatDateTime as formatLocalDateTime } from "@/utils/formatters";
 import type { InterventionRequest, WoConversionResult } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
@@ -75,20 +76,8 @@ function printApprovalSheet(
   symptomLabel: string,
   urgencyLabel: string,
 ) {
-  const now = new Date().toLocaleString(locale);
-  const fmt = (iso: string) => {
-    try {
-      return new Date(iso).toLocaleString(locale, {
-        day: "2-digit",
-        month: "2-digit",
-        year: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-      });
-    } catch {
-      return iso;
-    }
-  };
+  const now = formatLocalDateTime(new Date(), locale);
+  const fmt = (iso: string) => formatLocalDateTime(iso, locale);
 
   const html = `<!DOCTYPE html>
 <html lang="${i18n.language.split("-")[0] ?? "fr"}">
@@ -190,7 +179,10 @@ export function DiApprovalDialog() {
   const [note, setNote] = useState("");
   // Approve and convert are confirmed in a dialog (no password re-entry; RBAC + audit on the backend).
   const [confirmOpen, setConfirmOpen] = useState(false);
-  const [confirmMode, setConfirmMode] = useState<"approve" | "convert">("approve");
+  // "approveConvert": the simple case in one confirmation (L1-30): approve, then create the OT.
+  const [confirmMode, setConfirmMode] = useState<"approve" | "convert" | "approveConvert">(
+    "approve",
+  );
   const [conversionResult, setConversionResult] = useState<{
     woId: number | null;
     woCode: string | null;
@@ -201,6 +193,9 @@ export function DiApprovalDialog() {
   const loadDis = useDiStore((s) => s.loadDis);
 
   const open = di !== null;
+  // L1-34: the declarer of a request neither approves nor converts it (GATE_DI_SELF_*).
+  const isDeclarer = info?.user_id != null && di != null && info.user_id === di.submitter_id;
+  const canConvertHere = can(P.DI_CONVERT) && can(P.OT_CREATE);
   const approverName = info?.display_name ?? info?.username ?? "";
 
   const handoffToWorkOrder = useCallback(
@@ -241,6 +236,11 @@ export function DiApprovalDialog() {
     setConfirmOpen(true);
   }, []);
 
+  const handleApproveConvertClick = useCallback(() => {
+    setConfirmMode("approveConvert");
+    setConfirmOpen(true);
+  }, []);
+
   const handleCloseRequest = useCallback(() => {
     if (!di) return;
     closeApproval();
@@ -249,7 +249,8 @@ export function DiApprovalDialog() {
 
   const handleConfirmed = useCallback(async () => {
     if (!di) return;
-    if (confirmMode === "approve") {
+    let convertFrom = retryRowVersion ?? di.row_version;
+    if (confirmMode === "approve" || confirmMode === "approveConvert") {
       try {
         const result = await approve({
           di_id: di.id,
@@ -260,16 +261,18 @@ export function DiApprovalDialog() {
         void loadDis();
         setRetryRowVersion(result.approvedRowVersion);
         setConversionResult(null);
+        if (confirmMode === "approve") return;
+        convertFrom = result.approvedRowVersion;
       } catch {
         // error is set in store; dialog stays open so user can retry
+        return;
       }
-      return;
     }
 
     try {
       const result = await convertDiToWo({
         diId: di.id,
-        expectedRowVersion: retryRowVersion ?? di.row_version,
+        expectedRowVersion: convertFrom,
         ...(note ? { conversionNotes: note } : {}),
       });
       void loadDis();
@@ -373,17 +376,23 @@ export function DiApprovalDialog() {
         title={
           confirmMode === "approve"
             ? t("review.confirmApproveTitle")
-            : t("review.confirmConvertTitle")
+            : confirmMode === "approveConvert"
+              ? t("review.confirmApproveConvertTitle")
+              : t("review.confirmConvertTitle")
         }
         description={
           confirmMode === "approve"
             ? t("review.confirmApproveDescription", { code: di.code })
-            : t("review.confirmConvertDescription", { code: di.code })
+            : confirmMode === "approveConvert"
+              ? t("review.confirmApproveConvertDescription", { code: di.code })
+              : t("review.confirmConvertDescription", { code: di.code })
         }
         confirmLabel={
           confirmMode === "approve"
             ? t("review.confirmApproveAction")
-            : t("review.confirmConvertAction")
+            : confirmMode === "approveConvert"
+              ? t("review.approveAndConvert")
+              : t("review.confirmConvertAction")
         }
         onConfirm={handleConfirmed}
       />
@@ -393,7 +402,9 @@ export function DiApprovalDialog() {
           onPointerDownOutside={(e) => e.preventDefault()}
         >
           <DialogHeader className="px-6 pt-5 pb-3">
-            <DialogTitle className="text-lg font-bold">{t("review.approvalTitle")}</DialogTitle>
+            <DialogTitle className="text-lg font-bold">
+              {di.status === "approved" ? t("review.convertTitle") : t("review.approvalTitle")}
+            </DialogTitle>
           </DialogHeader>
 
           <Separator />
@@ -465,13 +476,7 @@ export function DiApprovalDialog() {
                     {t("detail.fields.reportedAt")}:
                   </span>{" "}
                   <span className="font-medium">
-                    {new Date(di.submitted_at).toLocaleString(dateLocale, {
-                      day: "2-digit",
-                      month: "2-digit",
-                      year: "numeric",
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
+                    {formatLocalDateTime(di.submitted_at, dateLocale)}
                   </span>
                 </div>
 
@@ -510,10 +515,19 @@ export function DiApprovalDialog() {
                 <span className="text-muted-foreground">{t("review.approver")}:</span>
                 <span className="font-medium">{approverName}</span>
                 <span className="ml-auto text-muted-foreground">
-                  {new Date().toLocaleString(dateLocale)}
+                  {formatLocalDateTime(new Date(), dateLocale)}
                 </span>
               </CardContent>
             </Card>
+
+            {isDeclarer && (di.status === "awaiting_approval" || di.status === "approved") && (
+              <p
+                role="note"
+                className="rounded-md border border-tone-warning-border bg-tone-warning-bg px-3 py-2 text-sm text-tone-warning-fg"
+              >
+                {t("review.selfDecision")}
+              </p>
+            )}
 
             {/* Error feedback */}
             {storeError && (
@@ -574,7 +588,28 @@ export function DiApprovalDialog() {
               <Button variant="outline" size="sm" onClick={handleClose}>
                 {t("form.cancel")}
               </Button>
-              {di.status === "awaiting_approval" && (
+              {di.status === "awaiting_approval" && !isDeclarer && canConvertHere && (
+                <>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={handleApproveClick}
+                    disabled={saving}
+                  >
+                    {t("review.approveOnly")}
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={handleApproveConvertClick}
+                    disabled={saving}
+                    className="gap-1.5"
+                  >
+                    {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                    {t("review.approveAndConvert")}
+                  </Button>
+                </>
+              )}
+              {di.status === "awaiting_approval" && !isDeclarer && !canConvertHere && (
                 <Button
                   size="sm"
                   onClick={handleApproveClick}
@@ -586,8 +621,8 @@ export function DiApprovalDialog() {
                 </Button>
               )}
               {di.status === "approved" &&
-                can(P.DI_CONVERT) &&
-                can(P.OT_CREATE) &&
+                !isDeclarer &&
+                canConvertHere &&
                 di.converted_to_wo_id == null && (
                   <Button
                     size="sm"

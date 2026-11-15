@@ -6,9 +6,9 @@ use crate::auth::rbac::PermissionScope;
 use crate::errors::AppResult;
 use crate::rbac::permissions::{OT_CREATE, PM_EDIT, RAM_ANALYZE, RAM_MANAGE, RAM_VIEW};
 use crate::reliability::study::domain::{
-    ApproverOption, CreateDecisionInput, CreateStudyInput, DecideDecisionInput, FleetView, FleetViewFilter,
-    LifeAnalysis, LifeAnalysisRequest, ReliabilityStudy, SaveStudyCostsInput, SetStudyRecordInput, StudyDataset,
-    StudyDecision, UpdateStudyInput, DECISION_PM_INTERVAL,
+    ApproverOption, AssetReliabilityFigures, CreateDecisionInput, CreateStudyInput, DecideDecisionInput, FleetView,
+    FleetViewFilter, LifeAnalysis, LifeAnalysisRequest, ReliabilityStudy, ReviseDecisionInput, SaveStudyCostsInput,
+    SetStudyRecordInput, StudyDataset, StudyDecision, UpdateStudyInput, DECISION_PM_INTERVAL,
 };
 use crate::reliability::study::{analysis, decisions, fleet_view, records, store};
 use crate::state::AppState;
@@ -19,6 +19,19 @@ pub async fn get_reliability_fleet_view(filter: FleetViewFilter, state: State<'_
     let user = require_session!(state);
     require_permission!(state, &user, RAM_VIEW, PermissionScope::Global);
     fleet_view::fleet_view(&state.db, filter).await
+}
+
+/// Failure figures of one equipment over a period (the RAMS calculation), for the asset record.
+#[tauri::command]
+pub async fn get_reliability_asset_figures(
+    equipment_id: i64,
+    period_start: String,
+    period_end: String,
+    state: State<'_, AppState>,
+) -> AppResult<AssetReliabilityFigures> {
+    let user = require_session!(state);
+    require_permission!(state, &user, RAM_VIEW, PermissionScope::Global);
+    fleet_view::asset_figures(&state.db, equipment_id, &period_start, &period_end).await
 }
 
 #[tauri::command]
@@ -163,6 +176,19 @@ pub async fn reject_reliability_study_decision(
     decisions::reject_decision(&state.db, input, actor).await
 }
 
+/// Edits a proposed decision: its proposer records the corrected decision and the one it replaces
+/// is withdrawn with the reason (a decision never changes once proposed). Same right as proposing
+/// (`ram.analyze`); the proposer check is in `decisions::revise_decision`.
+#[tauri::command]
+pub async fn revise_reliability_study_decision(
+    input: ReviseDecisionInput,
+    state: State<'_, AppState>,
+) -> AppResult<StudyDecision> {
+    let user = require_session!(state);
+    require_permission!(state, &user, RAM_ANALYZE, PermissionScope::Global);
+    decisions::revise_decision(&state.db, input, i64::from(user.user_id)).await
+}
+
 /// Create the PM plan draft version or the work order of an approved decision.
 #[tauri::command]
 pub async fn apply_reliability_study_decision(
@@ -185,7 +211,7 @@ pub async fn apply_reliability_study_decision(
 use crate::reliability::study::advanced::{
     EventTreeInput, EventTreeResult, MarkovInput, MarkovResult, SimulationInput, SimulationResult,
 };
-use crate::reliability::study::data_quality::DataQualityView;
+use crate::reliability::study::data_quality::{DataQualityFilter, DataQualityView};
 use crate::reliability::study::fmeca::{FmecaWorksheet, SaveFmecaItemInput};
 use crate::reliability::study::rcm::{RcmWorksheet, SaveRcmInput};
 use crate::reliability::study::scales::RatingScales;
@@ -349,10 +375,10 @@ pub async fn simulate_reliability_study_system(
 /// Data-quality worklist of the reliability module.
 #[tauri::command]
 pub async fn get_reliability_data_quality(
-    months: Option<i64>,
+    filter: DataQualityFilter,
     state: State<'_, AppState>,
 ) -> AppResult<DataQualityView> {
     let user = require_session!(state);
     require_permission!(state, &user, RAM_VIEW, PermissionScope::Global);
-    data_quality::data_quality(&state.db, months.unwrap_or(24), user.user_id).await
+    data_quality::data_quality(&state.db, &filter, user.user_id).await
 }

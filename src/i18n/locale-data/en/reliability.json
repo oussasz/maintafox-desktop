@@ -218,14 +218,16 @@
       "motherNature": "Mother nature"
     },
     "promoteMenu": "Promote to corrective action",
+    "promoteMenuFmeca": "Promote to FMECA row",
     "promoteTitle": "Create corrective action from cause",
-    "promoteBody": "Creates a traceable link to this Ishikawa diagram. Save the diagram first if you have not already.",
+    "promoteBody": "Choose what the cause becomes: a corrective work order or a row of the study's FMECA. The link to this diagram is kept; the diagram is saved first if needed.",
+    "promoteBodyWoOnly": "Creates a corrective work order linked to this Ishikawa diagram. The diagram is saved first if needed.",
     "promoteTargetWo": "Corrective work order",
     "promoteTargetFmeca": "FMECA row",
     "promoteNeedSave": "Save the diagram before promoting a cause.",
     "promoteNeedUser": "You must be signed in to create a work order.",
     "promoteSubmit": "Create",
-    "promoteSuccessWo": "Work order created from RCA cause.",
+    "promoteSuccessWo": "Work order {{code}} created from the cause.",
     "promoteSuccessFmeca": "FMECA row created from the root cause.",
     "unreadable": "The saved diagram cannot be read. It is kept as stored; nothing is saved over it.",
     "diagramTitle": "Root-cause diagram",
@@ -236,6 +238,18 @@
     "promoteFmecaHint": "The study's FMECA form opens with this cause: choose the failure mode and rate severity, occurrence and detection.",
     "promoteOpenFmeca": "Open the FMECA form",
     "promoteBusy": "Saving…",
+    "promoteOpenWo": "Open the work order",
+    "promoteSelectFirst": "Click a cause in the diagram to promote it.",
+    "promoteEquipment": "Equipment of the work order",
+    "promoteEquipmentChange": "Change",
+    "canvas": {
+      "controls": "Diagram controls",
+      "zoomIn": "Zoom in",
+      "zoomOut": "Zoom out",
+      "fitView": "Fit to window",
+      "interactive": "Lock or unlock the diagram",
+      "minimap": "Diagram overview"
+    },
     "unsaved": "Unsaved changes",
     "unsavedTitle": "Discard the diagram changes?",
     "unsavedBody": "Moves, links or deletions on the root-cause diagram are not saved yet. They are lost if you leave.",
@@ -711,6 +725,10 @@
     "emptyCanvasRbd": "RBD empty canvas — create a model to begin."
   },
   "rams": {
+    "rights": {
+      "required": "Right required: {{right}}",
+      "readOnly": "Read-only: editing actions need the {{right}} right."
+    },
     "title": "Reliability (RAMS)",
     "common": {
       "cancel": "Cancel",
@@ -730,14 +748,35 @@
     },
     "kpi": {
       "availability": "Operational availability",
-      "availabilityHint": "Fleet Aₒ, {{period}}",
+      "availabilityHint": "Aₒ = MTBF / (MTBF + MTTR), {{period}}, {{basis}}",
+      "availabilityOf": "Operational availability — {{scope}}",
       "mtbf": "MTBF",
+      "mtbfHint": "all unplanned failures, {{period}}, {{basis}}",
       "mttr": "MTTR",
-      "mttrHint": "mean active repair time",
+      "mttrHint": "from work start to work-order close, or from failure to back in service for imported records; {{period}}, in clock hours",
+      "repair": "Mean repair person-hours",
+      "repairHint": "hours booked by the technicians, per failure, {{period}}",
       "failures": "Failures",
-      "failuresHint": "{{hours}} h of downtime in the period",
+      "failuresHint": "unplanned, {{period}}; {{hours}} h of downtime (clock hours)",
       "dataQuality": "Data quality",
-      "dataQualityHint": "{{mode}} without mode, {{cause}} without cause"
+      "dataQualityHint": "{{period}}; complete = mode + cause + mechanism; {{mode}} without mode, {{cause}} without cause, {{mechanism}} without mechanism",
+      "tooShort": "period too short for the MTBF (under {{days}} days)",
+      "excluded": {
+        "outsideService": "{{count}} excluded: outside service period",
+        "missingDate": "{{count}} excluded (all periods): failure date missing",
+        "failedAt": "{{count}} excluded: failure time missing",
+        "restoredAt": "{{count}} excluded: back-in-service time missing",
+        "inconsistent": "{{count}} excluded: back in service before the failure",
+        "repairHours": "{{count}} excluded: repair time missing"
+      },
+      "formula": {
+        "availability": "Operational availability Aₒ = uptime ÷ (uptime + downtime due to failures), over the chosen period and scope.",
+        "mtbf": "MTBF (mean time between failures) = observed time (on the basis shown under the value) ÷ number of unplanned failures.",
+        "mttr": "MTTR (mean time to repair) = sum of repair durations ÷ number of repairs, in clock hours.",
+        "repair": "Mean repair man-hours = hours booked by technicians on failure work orders ÷ number of failures.",
+        "failures": "Number of unplanned corrective work orders in the period; click to open the work order list.",
+        "dataQuality": "Data quality = share of failures whose coding is complete (mode, cause, dates). The point-by-point detail is on the “Data quality” page."
+      }
     },
     "fleet": {
       "period": "Period",
@@ -749,13 +788,24 @@
       "allClasses": "All classes",
       "basisOperating": "on operating hours",
       "basisCalendar": "on calendar hours (no operating hours)",
-      "basisMixed": "operating hours ({{operating}} eq.) and calendar hours ({{calendar}} eq.)",
+      "basisMixed": "operating hours: {{operating}} equipment / calendar: {{calendar}}",
       "studySelection": "Study the selection",
       "studyN_one": "Study 1 equipment",
       "studyN_other": "Study {{count}} equipment",
       "selectFirst": "Tick at least one equipment in the table",
+      "scopeFleet": "whole fleet",
+      "refreshed": "Figures recalculated at {{time}}.",
+      "calculatedAt": "Calculated on {{date}} at {{time}} (recalculated on every opening or refresh).",
+      "signals": "Round signals",
+      "signalsHint": "Warnings, failures and anomalies found during rounds, and their recalculation",
+      "viewsLabel": "Ranking view",
+      "view": {
+        "all": "Whole ranking",
+        "topFailing": "{{count}} most failing",
+        "topCostly": "{{count}} most costly"
+      },
       "badActorsTitle": "Worst-performing equipment",
-      "badActorsHint": "Ranked by downtime hours in the period. Tick the equipment to study together (same class: their failure data are pooled), then “Study”.",
+      "badActorsHint": "Ranked by downtime hours in the period; click a column title to sort, the code to open the equipment record. Tick the equipment to study together (same class: their failure data are pooled), then “Study”.",
       "mixedClassesTitle": "Different equipment classes",
       "mixedClassesBody": "Pooling failures only makes sense for similar equipment in the same duty. Check the selection before opening the study.",
       "emptyTitle": "No failures in the period",
@@ -767,20 +817,55 @@
       "colDowntime": "Downtime (h)",
       "colShare": "Share of downtime",
       "colMtbf": "MTBF (h)",
+      "colCost": "Cost",
       "colMttr": "MTTR (h)",
       "colLastStudy": "Last study",
       "colData": "Data",
       "noStudy": "None",
       "selectAsset": "Select {{code}}",
+      "openFailures": "Show the work orders of the failures of {{code}}",
       "shareLabel": "{{share}} of fleet downtime",
+      "openAsset": "Open the record of {{code}}",
       "handedError": "The equipment handed over could not be loaded",
-      "handedSelected": "{{code}} is selected for a study."
+      "handedSelected": "{{code}} is selected for a study.",
+      "resetFilters": "Reset filters",
+      "countLabel_one": "asset",
+      "countLabel_other": "assets"
     },
     "dataQuality": {
       "complete": "Complete",
       "to_check_one": "1 to check",
       "to_check_other": "{{count}} to check",
       "no_operating_hours": "No operating hours"
+    },
+    "methods": {
+      "title": "Which analysis?",
+      "hint": "Tick one or more assets of the same kind in the list below, then choose the analysis.",
+      "selectTitle": "No asset ticked",
+      "selectBody": "First tick one or more assets in the list below, then start the analysis again.",
+      "choose": "Choose assets",
+      "start": "Analyse the selection ({{count}})",
+      "weibull": {
+        "title": "Life analysis (Weibull)",
+        "line": "Estimates when and how the asset fails: wear-out, early failure or random failure."
+      },
+      "fmeca": {
+        "title": "FMECA",
+        "line": "Lists the possible failures, their cause and severity, to decide where to act first."
+      },
+      "rcm": {
+        "title": "RCM (reliability-centred maintenance)",
+        "line": "Picks the right action for each failure: inspection, planned replacement or nothing."
+      },
+      "ishikawa": {
+        "title": "Ishikawa (cause tree)",
+        "line": "Looks for the causes of a repeating failure: people, method, equipment, environment, material."
+      },
+      "studies": {
+        "title": "Saved studies",
+        "line": "Resume a study in progress or review the decisions already taken.",
+        "open": "See the studies"
+      }
     },
     "studies": {
       "title": "Saved studies",
@@ -791,7 +876,12 @@
       "archive": "Archive",
       "archiveNamed": "Archive study {{title}}",
       "archiveConfirm": "Study “{{title}}” will no longer be listed. Its records, costs and decisions are kept.",
-      "archiveAction": "Archive study"
+      "archiveAction": "Archive study",
+      "search": "Search a study",
+      "searchPlaceholder": "Name, equipment or mode",
+      "noMatch": "No study matches \"{{query}}\".",
+      "rename": "Rename",
+      "renameNamed": "Rename the study {{title}}"
     },
     "steps": {
       "data": "Failure data",
@@ -866,7 +956,7 @@
       "reason": {
         "analyst": "Excluded by the analyst",
         "analyst_included": "Included by the analyst",
-        "not_eligible": "Excluded by default: no mode or cause not determined",
+        "not_eligible": "Excluded by default: no failure mode",
         "no_known_start": "Age unknown: no earlier renewal known (its repair starts the next age)",
         "zero_age": "Zero age: no operating hours since the previous renewal",
         "pm_not_confirmed": "To confirm: did this preventive work replace the part?"
@@ -890,7 +980,15 @@
       "excludeTitle": "Exclude this record",
       "excludeBody": "{{record}} will no longer be used in the analyses of this study. The reason is kept in the history.",
       "excludeReason": "Reason (required)",
-      "excludeAction": "Exclude the record"
+      "excludeAction": "Exclude the record",
+      "readOnlyReason": "Read only: the study is archived or you lack the reliability analysis right needed to include or exclude a row.",
+      "historyEmpty": "No inclusion or exclusion has been recorded yet.",
+      "flag": {
+        "di_earlier": "Request raised before the failure date",
+        "cause_missing": "Cause not coded",
+        "mechanism_missing": "Mechanism not coded",
+        "mode_missing": "Failure mode not coded"
+      }
     },
     "checks": {
       "useDi": "Use the request time",
@@ -1009,7 +1107,8 @@
       "proposedLegend": "Proposed interval",
       "currentLegend": "Current practice",
       "recomputeError": "The analysis could not be recomputed: the figures shown are from the last successful calculation",
-      "recomputeRetry": "Recompute"
+      "recomputeRetry": "Recompute",
+      "goToData": "Go to step 1 (data)"
     },
     "cost": {
       "title": "Optimal replacement interval",
@@ -1042,7 +1141,8 @@
       "costRateLegend": "Cost per hour",
       "rtfLegend": "Run to failure",
       "currentLegend": "Current practice ({{hours}} h)",
-      "proposedLegend": "Optimum"
+      "proposedLegend": "Optimum",
+      "unsaved": "Costs not saved: they are used in the calculation above but will be lost if you leave the study without “Save costs”."
     },
     "memo": {
       "title": "Decision note for management",
@@ -1054,7 +1154,8 @@
         "no_wear_out": "Without clear wear-out (β ≤ 1), scheduled replacement does not lower the cost per hour. Keep condition monitoring and review the study after the next failures.",
         "failure_not_costlier": "A breakdown costs no more than a planned replacement: replacing before failure saves nothing.",
         "no_benefit": "The best interval saves less than 1 % against running to failure.",
-        "invalid_input": "The costs entered are not valid."
+        "invalid_input": "The costs entered are not valid.",
+        "wear_out_not_proven": "β is estimated above 1, but its 90 % confidence interval goes below 1: wear-out is not shown. No replacement interval is recommended; keep condition monitoring and review the study after the next failures."
       },
       "colStrategy": "Strategy",
       "colRate": "Cost per {{unit}}",
@@ -1101,15 +1202,24 @@
       "noPlans": "No interval PM plan targets this equipment: choose a work order.",
       "plan": "PM plan",
       "planOption": "{{code}} · {{title}} ({{hours}} h)",
-      "interval": "New interval (study hours)",
+      "interval": "New interval ({{unit}}, study basis)",
       "equipment": "Equipment",
       "chooseEquipment": "Choose…",
       "woType": "Work order type",
       "approver": "Approver",
       "anyApprover": "Anyone authorised",
-      "justification": "Justification",
+      "justification": "Justification (required)",
       "submit": "Send for approval",
-      "loadError": "The plans, work-order types or approvers could not be loaded"
+      "loadError": "The plans, work-order types or approvers could not be loaded",
+      "chooseWoType": "Choose the work-order type…",
+      "choosePlan": "Choose the plan…",
+      "justificationHint": "What the decision rests on: study evidence, field finding…",
+      "intervalHint": "Converted when recorded into the plan's unit ({{planUnit}}) with the observed running ratio: the log shows both values.",
+      "approverHint": "With no designated approver, anyone holding the right to approve reliability decisions may approve it, except you.",
+      "reviseTitle": "Edit the decision",
+      "reviseHint": "A decision no longer changes once proposed: the corrected decision is recorded and the previous one is withdrawn with the reason.",
+      "reviseReason": "What changes (required)",
+      "reviseSubmit": "Save the change"
     },
     "decisions": {
       "title": "Decision log",
@@ -1131,7 +1241,7 @@
       "evB10": "B10 {{b10}} h",
       "evFailures_one": "1 failure",
       "evFailures_other": "{{count}} failures",
-      "evSaving": "saves {{saving}} {{currency}}/yr",
+      "evSaving": "saving {{saving}}/yr",
       "status": {
         "proposed": "Awaiting approval",
         "approved": "Approved",
@@ -1169,7 +1279,18 @@
       "selfApproved": "Self-approved",
       "selfApprovedHint": "Approved by the person who proposed it.",
       "syncRefused": "Refused at synchronisation",
-      "syncRefusedHint": "This decision's approval is not valid on a PC: it can no longer be approved or applied. Propose a new decision."
+      "syncRefusedHint": "This decision's approval is not valid on a PC: it can no longer be approved or applied. Propose a new decision.",
+      "edit": "Edit",
+      "editNamed": "Edit the decision {{title}}",
+      "approverAny": "approver: anyone authorised",
+      "newIntervalFrom": "new interval {{value}} {{unit}} (that is {{hours}} {{basis}} of the study, converted to the plan's unit)",
+      "justificationText": "Justification: {{text}}",
+      "decidedBy": {
+        "approved": "Approved by {{name}} on {{date}}",
+        "applied": "Approved by {{name}} on {{date}}",
+        "rejected": "Rejected by {{name}} on {{date}}",
+        "withdrawn": "Withdrawn by {{name}} on {{date}}"
+      }
     },
     "backToModule": "Fleet and studies",
     "fmeca": {
@@ -1214,7 +1335,7 @@
         "monitor": "To monitor",
         "acceptable": "Acceptable"
       },
-      "rpnThreshold": "Plant critical RPN threshold: {{threshold}}.",
+      "rpnThreshold": "Plant critical RPN threshold: {{threshold}}. RPN (risk priority number) = severity × occurrence × detection, each rated 1 to 10. From this threshold the mode is critical and needs an action. The administrator sets the threshold in Settings.",
       "proposalsTitle": "Observed modes",
       "proposalsHint": "Recorded in the work orders of this equipment (period) and its class (history).",
       "noProposals": "Every observed mode is already in the FMECA.",
@@ -1292,45 +1413,45 @@
       "modesTitle": "FMECA modes",
       "rpn": "RPN {{rpn}}",
       "title": "RCM decision: {{mode}}",
-      "hint": "SAE JA1011 decision logic, one failure mode at a time. Answers pre-filled from the FMECA and the life analysis, editable.",
+      "hint": "SAE JA1011 decision logic, one failure mode at a time. No answer is ticked in advance: choose Yes or No for each question. The suggestion from the FMECA and the life analysis is shown under the question.",
       "yes": "Yes",
       "no": "No",
       "q": {
         "failure_evident": {
-          "code": "H",
-          "text": "Will the loss of function be evident to operators under normal circumstances?"
+          "text": "Will the loss of function be evident to operators under normal circumstances?",
+          "label": "Visible failure?"
         },
         "safety_or_environmental": {
-          "code": "S",
-          "text": "Could it hurt someone or breach an environmental limit?"
+          "text": "Could it hurt someone or breach an environmental limit?",
+          "label": "Safety or environment?"
         },
         "operational_impact": {
-          "code": "O",
-          "text": "Does it affect output, quality or customer service?"
+          "text": "Does it affect output, quality or customer service?",
+          "label": "Effect on production?"
         },
         "multiple_failure_affects_safety": {
-          "code": "H5",
-          "text": "Would the multiple failure (with the protected function) have safety consequences?"
+          "text": "Would the multiple failure (with the protected function) have safety consequences?",
+          "label": "Dangerous multiple failure?"
         },
         "on_condition_feasible": {
-          "code": "1",
-          "text": "Is an on-condition task feasible and worth doing? (detectable P-F interval)"
+          "text": "Is an on-condition task feasible and worth doing? (detectable P-F interval)",
+          "label": "Monitoring possible?"
         },
         "scheduled_restoration_feasible": {
-          "code": "2",
-          "text": "Is scheduled restoration feasible? (clear wear-out, β > 1)"
+          "text": "Is scheduled restoration feasible? (clear wear-out, β > 1)",
+          "label": "Periodic restoration?"
         },
         "scheduled_discard_feasible": {
-          "code": "3",
-          "text": "Is scheduled discard feasible and worth doing?"
+          "text": "Is scheduled discard feasible and worth doing?",
+          "label": "Periodic replacement?"
         },
         "failure_finding_feasible": {
-          "code": "H4",
-          "text": "Is a failure-finding test feasible and worth doing?"
+          "text": "Is a failure-finding test feasible and worth doing?",
+          "label": "Failure-finding test?"
         },
         "combination_feasible": {
-          "code": "S4",
-          "text": "Does a combination of tasks bring the risk to a tolerable level?"
+          "text": "Does a combination of tasks bring the risk to a tolerable level?",
+          "label": "Combination of tasks?"
         }
       },
       "basis": {
@@ -1379,7 +1500,9 @@
         "time_based": "Replace or restore the part at a fixed age; economic interval from step 2: {{replacement}} {{unit}}.",
         "failure_finding": "Test the hidden function periodically to find the failure before it is called upon.",
         "run_to_failure": "No proactive task is justified: repair on failure.",
-        "redesign": "No task brings the risk to a tolerable level: modify the installation."
+        "redesign": "No task brings the risk to a tolerable level: modify the installation.",
+        "condition_based_noInterval": "Monitor the warning sign and act before the failure. Enter the P-F interval: monitoring is done at half of it.",
+        "time_based_noInterval": "Replace or restore the part at a fixed age. Step 2 gives no economic interval: set the interval in the decision."
       },
       "redesignCompulsory": "Redesign is compulsory (safety or environmental risk).",
       "fitNote": "Life of this mode: β = {{beta}} — {{pattern}}.",
@@ -1397,7 +1520,15 @@
       "decisionRedesign": "Modification: {{element}}",
       "rowsToReviewBody": "Rate them in the FMECA step to analyse them here.",
       "previewError": "The recommendation could not be recomputed: the one shown may be out of date, saving waits",
-      "previewRetry": "Recompute"
+      "previewRetry": "Recompute",
+      "suggested": "Suggested: {{answer}}.",
+      "answerAll_one": "Answer the last question to get the recommended tactic.",
+      "answerAll_other": "Answer the {{count}} remaining questions to get the recommended tactic.",
+      "criticalTitle": "Critical mode: RPN {{rpn}}, plant critical threshold {{threshold}}",
+      "criticalBody": "Running to failure is not accepted for this mode. Choose a task or a modification, and justify it.",
+      "refusedOption": "{{tactic}} (refused: critical mode)",
+      "decisionTimeBasedNoInterval": "Fixed-age replacement: {{element}}",
+      "decisionConditionNoInterval": "Condition monitoring: {{element}}"
     },
     "system": {
       "tool": "Modelling tool",
@@ -1426,7 +1557,7 @@
       "newEvent": "New event",
       "newGate": "New gate",
       "rbdTitle": "Reliability block diagram",
-      "rbdHint": "Select a block or a branch to edit its structure and the source of its reliability; the results update.",
+      "rbdHint": "Series: the system stops as soon as one of its blocks stops (a production line). Parallel: one working block is enough (standby machines). Select a block or a branch to change its structure and the source of its reliability; the results update.",
       "kOfN": "{{k}} out of {{n}}",
       "selectBlock": "Edit {{label}}, reliability {{r}}",
       "selectEvent": "Edit {{label}}, probability {{p}}",
@@ -1526,7 +1657,7 @@
       "perYear": "/yr",
       "markov": {
         "title": "Markov chain",
-        "hint": "Availability of a repairable system with degraded states: states and rates (λ, μ per hour) in a table.",
+        "hint": "Use it for equipment that can run degraded (for example one pump out of two): describe its states (running, degraded, stopped) and the failure rate λ and repair rate μ per hour; the tool gives the share of time spent in each state.",
         "fromEquipment": "Start from a study equipment",
         "equipmentOption": "{{code}} — MTBF {{mtbf}} h, MTTR {{mttr}} h",
         "running": "{{code}} running",
@@ -1552,7 +1683,7 @@
       },
       "simulation": {
         "title": "Monte Carlo simulation",
-        "hint": "Availability and cost over the mission with uncertainty, simulated on the study reliability block diagram.",
+        "hint": "Use it when durations are uncertain: the tool replays the mission thousands of times on the study's reliability diagram (Monte Carlo method) and gives the mean availability and cost with their range.",
         "needRbd": "Build the reliability block diagram and give the mission time first.",
         "trials": "Number of trials",
         "seed": "Seed (optional)",
@@ -1604,10 +1735,13 @@
       "complete": "Complete failures",
       "completeHint": "{{complete}} of {{total}} with mode, cause and mechanism",
       "codingGaps": "Incomplete coding",
+      "codingGapsHint": "{{mode}} without mode, {{cause}} without cause, {{mechanism}} without mechanism",
+      "notListed_one": "1 incomplete record not from a work order, not listed here",
+      "notListed_other": "{{count}} incomplete records not from a work order, not listed here",
       "noHours": "Without operating hours",
       "review": "Review points",
       "codingTitle": "Incomplete failure coding",
-      "codingHint": "Closed corrective work orders without an ISO 14224 mode, cause or mechanism: they leave the analyses or weaken them.",
+      "codingHint": "Failures of the period (same filters as the RAMS home page) raised from a work order, without an ISO 14224 mode, cause (or \"not determined\") or mechanism: they leave the analyses or weaken them.",
       "noCodingGap": "Every failure of the period is coded.",
       "closedAt": "Closed",
       "gap": "Missing",
@@ -1634,10 +1768,65 @@
       },
       "openInspections": "Open inspections",
       "refreshKpi": "Refresh the indicator",
+      "refreshKpiDone": "Indicator refreshed for {{code}}.",
       "dismiss": "Dismiss this point",
       "dismissTitle": "Dismiss this data issue?",
       "dismissBody": "\"{{issue}}\" on {{asset}} will no longer be listed. Dismiss it only when the data is right as it is.",
-      "truncated": "Only the first ones are listed: fix these, then refresh to see the next."
+      "truncated": "Only the first ones are listed: fix these, then refresh to see the next.",
+      "dismissHint": "Removes this point from the list when the data is right as it is (for example a failure whose cause is truly unknown). A dismissed point is no longer counted."
+    },
+    "studyName": {
+      "createTitle": "New study",
+      "createHint": "Give the study a name to find it again among the saved studies.",
+      "renameTitle": "Rename the study",
+      "name": "Study name",
+      "autoHint": "Left empty: the study is named after its equipment, its mode and today's date.",
+      "mixedBody": "The selection mixes several classes ({{classes}}). The Weibull analysis pools the failures as if the equipment were alike: the result only makes sense for one class.",
+      "mixedAck": "I confirm studying these equipment together despite their different classes.",
+      "noClass": "no class",
+      "create": "Create the study",
+      "renameAction": "Rename"
+    },
+    "export": {
+      "button": "Export",
+      "noteButton": "Export the note",
+      "print": "Print or save as PDF",
+      "csv": "Export (Excel/CSV)",
+      "saved": "File saved",
+      "failed": "The export failed",
+      "studyTitle": "Reliability study: {{title}}",
+      "noteTitle": "Decision note: {{title}}",
+      "printedAt": "Printed on {{date}}",
+      "scope": "Scope",
+      "equipment": "Equipment",
+      "period": "Period",
+      "periodValue": "from {{from}} to {{to}}",
+      "mode": "Failure mode",
+      "basis": "Time basis",
+      "author": "Created by",
+      "lifeTitle": "Life analysis (Weibull)",
+      "noFit": "No Weibull fit",
+      "reading": "Reading",
+      "noCosts": "Costs not entered: no interval computed.",
+      "colSection": "Section",
+      "colItem": "Item",
+      "colValue": "Value",
+      "colApproval": "Approval",
+      "noDecisions": "No decision recorded.",
+      "fileBase": "reliability-study",
+      "noteFileBase": "decision-note",
+      "labelled": "{{label}}: {{value}}",
+      "plannedCost": "Cost of a planned replacement",
+      "failureCost": "Cost of a breakdown (lost production included)"
+    },
+    "summary": {
+      "title": "In short:",
+      "failures_one": "{{count}} failure used, {{hours}} h of downtime.",
+      "failures_other": "{{count}} failures used, {{hours}} h of downtime.",
+      "topAsset_one": "Most affected equipment: {{code}} ({{count}} time).",
+      "topAsset_other": "Most affected equipment: {{code}} ({{count}} times).",
+      "topMode_one": "Most frequent failure: {{mode}} ({{count}} time).",
+      "topMode_other": "Most frequent failure: {{mode}} ({{count}} times)."
     }
   },
   "errors": {

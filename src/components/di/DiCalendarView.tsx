@@ -63,7 +63,7 @@ export function DiCalendarView({ items, onChipClick, onChipContextMenu }: DiCale
   const [mode, setMode] = useState<CalendarMode>("month");
   const [cursor, setCursor] = useState(() => new Date());
 
-  const dayNames = i18n.language === "fr" ? DAY_NAMES_FR : DAY_NAMES_EN;
+  const dayNames = i18n.language.startsWith("fr") ? DAY_NAMES_FR : DAY_NAMES_EN;
 
   // Index DIs by date
   const disByDate = useMemo(() => {

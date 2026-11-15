@@ -215,8 +215,10 @@ pub async fn save_schedule(db: &DatabaseConnection, input: WoScheduleSaveInput) 
                 updated_at = ? \
              WHERE id = ? AND row_version = ?",
             [
+                // No planner (none sent, or a `0` / negative id): the recorded one is kept.
                 input
                     .planner_id
+                    .filter(|&id| id > 0)
                     .map(sea_orm::Value::from)
                     .unwrap_or(sea_orm::Value::from(None::<i64>)),
                 start_raw.unwrap().to_string().into(),
@@ -262,8 +264,10 @@ pub async fn save_schedule(db: &DatabaseConnection, input: WoScheduleSaveInput) 
                 updated_at = ? \
              WHERE id = ? AND row_version = ?",
             [
+                // No planner (none sent, or a `0` / negative id): the recorded one is kept.
                 input
                     .planner_id
+                    .filter(|&id| id > 0)
                     .map(sea_orm::Value::from)
                     .unwrap_or(sea_orm::Value::from(None::<i64>)),
                 input

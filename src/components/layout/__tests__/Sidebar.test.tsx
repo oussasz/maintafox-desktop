@@ -55,7 +55,7 @@ describe("Sidebar ΓÇö permission-based filtering", () => {
     mockCan.mockImplementation(() => true);
   });
 
-  it("V1 ΓÇö Admin sees all 27 nav items", async () => {
+  it("V1 - Admin sees every nav item", async () => {
     mockCan.mockImplementation((permission: PermissionName) =>
       ALL_PERMISSIONS.includes(permission),
     );
@@ -75,7 +75,7 @@ describe("Sidebar ΓÇö permission-based filtering", () => {
     renderSidebar();
 
     await waitFor(() => {
-      expect(screen.getAllByRole("link")).toHaveLength(4);
+      expect(screen.getAllByRole("link")).toHaveLength(5);
     });
 
     expect(screen.getByText("nav.dashboard")).toBeInTheDocument();
@@ -90,12 +90,12 @@ describe("Sidebar ΓÇö permission-based filtering", () => {
     expect(screen.queryByText("nav.planning")).not.toBeInTheDocument();
   });
 
-  it("Dashboard and Settings are always visible regardless of role", async () => {
+  it("Dashboard, Settings and Help are always visible regardless of role", async () => {
     mockCan.mockImplementation(() => false);
     renderSidebar();
 
     await waitFor(() => {
-      expect(screen.getAllByRole("link")).toHaveLength(2);
+      expect(screen.getAllByRole("link")).toHaveLength(3);
     });
 
     expect(screen.getByText("nav.dashboard")).toBeInTheDocument();
@@ -109,7 +109,7 @@ describe("Sidebar ΓÇö permission-based filtering", () => {
     renderSidebar();
 
     await waitFor(() => {
-      expect(screen.getAllByRole("link")).toHaveLength(3);
+      expect(screen.getAllByRole("link")).toHaveLength(4);
     });
 
     expect(screen.queryByText("nav.groups.planning")).not.toBeInTheDocument();

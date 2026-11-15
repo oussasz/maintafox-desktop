@@ -19,7 +19,7 @@ pub const INSPECTION_COVERAGE_WARNING_THRESHOLD: f64 = 0.85;
 /// Eligible event count below which `LOW_SAMPLE` warning fires.
 pub const LOW_SAMPLE_EVENT_THRESHOLD: i64 = 5;
 
-/// JSON flag value for MTBF-eligible unplanned events (`compute::eligible_unplanned_mtbf`).
+/// JSON flag value for unplanned events (`ReadinessEvent::eligible`, `compute::counts_in_mtbf`).
 pub const ELIGIBLE_FLAGS_JSON_TRUE: &str = "{\"eligible_unplanned_mtbf\":true}";
 
 /// JSON flag value for ineligible (planned) events.

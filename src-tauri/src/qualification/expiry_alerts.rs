@@ -1,4 +1,4 @@
-use chrono::{Datelike, NaiveDate, Utc};
+use chrono::{Datelike, NaiveDate};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -28,7 +28,7 @@ fn parse_day(s: &str) -> Option<NaiveDate> {
 }
 
 fn today() -> NaiveDate {
-    Utc::now().date_naive()
+    crate::clock::now().date_naive()
 }
 
 async fn has_active_work_order_for_personnel(db: &impl ConnectionTrait, personnel_id: i64) -> AppResult<bool> {
@@ -144,7 +144,7 @@ async fn scan(db: &DatabaseConnection, lookahead_days: Option<i64>) -> AppResult
         .await?;
 
     let wb = week_bucket(today());
-    let now_ts = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now_ts = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let mut created: Vec<TrainingExpiryAlertEvent> = Vec::new();
 
     for r in rows {

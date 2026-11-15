@@ -6,11 +6,11 @@ import { z } from "zod";
 
 import { invoke } from "@/lib/ipc-invoke";
 import type {
+  ActivatePolicyPayload,
+  AppSetting,
   CurrencyOption,
   DocumentBrandingLogoPreview,
   DocumentBrandingLogoUploadResult,
-  ActivatePolicyPayload,
-  AppSetting,
   PolicySnapshot,
   PolicyTestResult,
   SavePolicyDraftPayload,
@@ -137,8 +137,12 @@ export async function listSettingsCategories(): Promise<string[]> {
  * Read a single setting by key and optional scope.
  * Any authenticated session may read settings.
  */
-export async function getSetting(key: string, scope?: string): Promise<AppSetting | null> {
-  const raw = await invoke<AppSetting | null>("get_setting", { key, scope });
+export async function getSetting(
+  key: string,
+  scope?: string,
+  options?: { notifyOnError?: boolean },
+): Promise<AppSetting | null> {
+  const raw = await invoke<AppSetting | null>("get_setting", { key, scope }, options);
   if (raw === null) return null;
   return AppSettingSchema.parse(raw);
 }
@@ -154,8 +158,11 @@ export interface SetSettingPayload {
  * Write a setting value. Requires `adm.settings` permission.
  * High-risk settings additionally require an active step-up session.
  */
-export async function setSetting(payload: SetSettingPayload): Promise<void> {
-  await invoke<void>("set_setting", { payload });
+export async function setSetting(
+  payload: SetSettingPayload,
+  options?: { notifyOnError?: boolean },
+): Promise<void> {
+  await invoke<void>("set_setting", { payload }, options);
 }
 
 /**
@@ -239,7 +246,12 @@ const PolicyTestResultSchema = z.object({
  * Requires `adm.settings` permission.
  */
 export async function savePolicyDraft(payload: SavePolicyDraftPayload): Promise<PolicySnapshot> {
-  const raw = await invoke<PolicySnapshot>("save_policy_draft", { payload });
+  // The policy panel shows the failure itself (title + reason): no global toast.
+  const raw = await invoke<PolicySnapshot>(
+    "save_policy_draft",
+    { payload },
+    { notifyOnError: false },
+  );
   return PolicySnapshotSchema.parse(raw);
 }
 
@@ -249,7 +261,11 @@ export async function savePolicyDraft(payload: SavePolicyDraftPayload): Promise<
  * Requires `adm.settings` permission.
  */
 export async function testPolicyDraft(domain: string): Promise<PolicyTestResult[]> {
-  const raw = await invoke<PolicyTestResult[]>("test_policy_draft", { domain });
+  const raw = await invoke<PolicyTestResult[]>(
+    "test_policy_draft",
+    { domain },
+    { notifyOnError: false },
+  );
   return z.array(PolicyTestResultSchema).parse(raw);
 }
 
@@ -259,7 +275,11 @@ export async function testPolicyDraft(domain: string): Promise<PolicyTestResult[
  * Requires `adm.settings` permission.
  */
 export async function activatePolicy(payload: ActivatePolicyPayload): Promise<PolicySnapshot> {
-  const raw = await invoke<PolicySnapshot>("activate_policy", { payload });
+  const raw = await invoke<PolicySnapshot>(
+    "activate_policy",
+    { payload },
+    { notifyOnError: false },
+  );
   return PolicySnapshotSchema.parse(raw);
 }
 
@@ -268,7 +288,7 @@ export async function activatePolicy(payload: ActivatePolicyPayload): Promise<Po
  * Requires `adm.settings` permission.
  */
 export async function discardPolicyDraft(domain: string): Promise<void> {
-  await invoke<void>("discard_policy_draft", { domain });
+  await invoke<void>("discard_policy_draft", { domain }, { notifyOnError: false });
 }
 
 /**
@@ -349,7 +369,10 @@ export async function clearDocumentBrandingLogo(): Promise<void> {
 
 /** Read tenant document branding logo preview for a `data:` URL. */
 export async function readDocumentBrandingLogoPreview(): Promise<DocumentBrandingLogoPreview | null> {
-  const raw = await invoke<unknown>("read_document_branding_logo_preview");
+  // Callers treat a failed preview as "no logo": no toast of its own.
+  const raw = await invoke<unknown>("read_document_branding_logo_preview", undefined, {
+    notifyOnError: false,
+  });
   if (raw === null) return null;
   return DocumentBrandingLogoPreviewSchema.parse(raw);
 }
@@ -384,7 +407,8 @@ export type SiteSettingEvent = z.infer<typeof SiteSettingEventSchema>;
 
 /** A per-site rule at every planning site. */
 export async function listSiteSettings(key: string): Promise<SiteSettingView[]> {
-  const raw = await invoke<unknown>("list_site_settings", { key });
+  // The rules panel shows a failed read inline: no global toast.
+  const raw = await invoke<unknown>("list_site_settings", { key }, { notifyOnError: false });
   return z.array(SiteSettingViewSchema).parse(raw);
 }
 
@@ -408,6 +432,10 @@ export async function listSiteSettingEvents(
   siteNodeId: number,
   key: string,
 ): Promise<SiteSettingEvent[]> {
-  const raw = await invoke<unknown>("list_site_setting_events", { siteNodeId, key });
+  const raw = await invoke<unknown>(
+    "list_site_setting_events",
+    { siteNodeId, key },
+    { notifyOnError: false },
+  );
   return z.array(SiteSettingEventSchema).parse(raw);
 }

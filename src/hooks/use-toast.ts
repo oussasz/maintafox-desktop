@@ -1,5 +1,7 @@
 import { useCallback, useState } from "react";
 
+import { pushAppToast } from "@/store/app-toast-store";
+
 export interface ToastMessage {
   id: string;
   title: string;
@@ -30,3 +32,15 @@ export function useToast() {
 
   return { toasts, toast, dismiss };
 }
+
+/**
+ * Toasts shown by the application-wide host (AppToastHost). Use this unless the component
+ * renders `toasts` from `useToast()` itself: a `useToast()` toast nobody renders is never seen.
+ */
+export function useAppToast() {
+  return APP_TOAST;
+}
+
+const APP_TOAST = {
+  toast: (msg: Omit<ToastMessage, "id" | "durationMs">) => pushAppToast(msg),
+} as const;

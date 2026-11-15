@@ -387,6 +387,15 @@
   color: var(--text-secondary);
 }
 
+/* A planned OT with no commitment yet ("to commit"): muted, dashed, read-only. */
+.mf-resource-timeline .react-calendar-timeline .rct-item.mf-rt-item--proposed {
+  background: transparent;
+  border-style: dashed;
+  border-color: var(--rt-border);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
 .mf-resource-timeline .react-calendar-timeline .rct-item.mf-rt-item--selected {
   box-shadow: 0 0 0 2px var(--ring);
   z-index: 90;

@@ -12,12 +12,15 @@ import {
   Archive,
   BookOpen,
   HelpCircle,
+  LibraryBig,
   Calendar,
   Settings,
   GraduationCap,
   ShieldCheck,
   DollarSign,
   CheckSquare,
+  FileUp,
+  Lock,
 } from "lucide-react";
 
 import type { NavItem } from "@/components/layout/Sidebar";
@@ -91,6 +94,14 @@ export const defaultNavItems: NavItem[] = [
     path: "/permits",
     icon: <ShieldCheck className="h-4 w-4" />,
     requiredPermission: P.PTW_VIEW,
+  },
+  {
+    // "Mes cadenas" (L4-18): a worker's own padlocks, with the narrow padlock right alone.
+    key: "my-padlocks",
+    labelKey: "nav.myPadlocks",
+    path: "/my-padlocks",
+    icon: <Lock className="h-4 w-4" />,
+    requiredPermission: P.PTW_LOCK_OWN,
   },
   {
     key: "inspections",
@@ -187,10 +198,20 @@ export const defaultNavItems: NavItem[] = [
     requiredPermission: P.REF_VIEW,
   },
   {
+    key: "imports",
+    labelKey: "nav.imports",
+    path: "/imports",
+    icon: <FileUp className="h-4 w-4" />,
+    requiredPermission: P.ORG_MANAGE,
+    // Each import type names its own right (cost centres: fin.budget; crews and skills: per.manage;
+    // certificates: trn.certify); the page lists only those.
+    alsoVisibleWith: [P.FIN_BUDGET, P.PER_MANAGE, P.TRN_CERTIFY],
+  },
+  {
     key: "documentation",
     labelKey: "nav.documentation",
     path: "/documentation",
-    icon: <HelpCircle className="h-4 w-4" />,
+    icon: <LibraryBig className="h-4 w-4" />,
     requiredPermission: P.DOC_VIEW,
   },
   {
@@ -205,6 +226,13 @@ export const defaultNavItems: NavItem[] = [
     labelKey: "nav.settings",
     path: "/settings",
     icon: <Settings className="h-4 w-4" />,
+  },
+  // In-app user guide: open to every signed-in user (no right needed).
+  {
+    key: "help",
+    labelKey: "nav.help",
+    path: "/help",
+    icon: <HelpCircle className="h-4 w-4" />,
   },
 ];
 

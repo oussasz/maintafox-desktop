@@ -93,7 +93,13 @@ struct Data {
 ///
 /// Reliability snapshots: E1 latest (2 days ago: 1000 h, 4 failures, 4 repairs / 8 h, 20 h down,
 /// MTBF 250), E1 older (10 days ago: 99 failures, MTBF 9), E2 (3 days ago: 500 h, 1 failure,
-/// 1 repair / 2 h, 5 h down, DQ 0.9, MTBF 500).
+/// 1 repair / 2 h, 5 h down, DQ 0.9, MTBF 500). Only the sample-size score, the snapshot count, the
+/// trend series and the bad actors read them.
+///
+/// Failure records (the live figures, `study::fleet_kpis`; no meter, so calendar hours; no
+/// coding): E1 unplanned −20 d (restored after 4 h), −100 d (6 h), −200 d (not restored), −400 d
+/// (before the 12-month window); E1 planned −30 d (never a failure of the MTBF); E2 unplanned
+/// −50 d (2 h).
 async fn seed_dataset(db: &DatabaseConnection) -> Data {
     for sql in [
         "INSERT OR IGNORE INTO org_structure_models (id, entity_sync_id, version_number, status, created_at, updated_at) \
@@ -286,7 +292,63 @@ async fn seed_dataset(db: &DatabaseConnection) -> Data {
         )
         .await;
     }
+    for (tag, eq, ago, restore_h, planned) in [
+        ("f1", e1, 20, Some(4), 0),
+        ("f2", e1, 100, Some(6), 0),
+        ("f3", e1, 200, None, 0),
+        ("f4", e1, 400, None, 0),
+        ("p1", e1, 30, Some(1), 1),
+        ("g1", e2, 50, Some(2), 0),
+    ] {
+        let at = format!("strftime('%Y-%m-%dT%H:%M:%SZ','now','-{ago} days')");
+        let restored = restore_h.map_or("NULL".to_string(), |h| {
+            format!("strftime('%Y-%m-%dT%H:%M:%SZ','now','-{ago} days','+{h} hours')")
+        });
+        exec(
+            db,
+            &format!(
+                "INSERT INTO failure_events (entity_sync_id, source_type, source_id, equipment_id, detected_at, \
+                 failed_at, restored_at, downtime_duration_hours, active_repair_hours, waiting_hours, is_planned, \
+                 failure_mode_id, failure_cause_id, cause_not_determined, verification_status, eligible_flags_json, \
+                 row_version, created_at, updated_at) \
+                 VALUES ('an-fe-{tag}', 'manual', (SELECT COALESCE(MAX(id), 0) + 100000 FROM failure_events), {eq}, \
+                 {at}, {at}, {restored}, 3.0, 1.0, 0, {planned}, NULL, NULL, 0, 'recorded', \
+                 '{{\"eligible_unplanned_mtbf\":false}}', 1, {at}, {at})"
+            ),
+        )
+        .await;
+    }
     Data { e1, e2 }
+}
+
+/// The live fleet figures of the window a payload reports (same bounds, same site): what the
+/// Analytique and Overview cards must equal.
+async fn live_kpis(
+    db: &DatabaseConnection,
+    start: &str,
+    end: &str,
+    org: Option<i64>,
+) -> crate::reliability::study::domain::FleetKpis {
+    use crate::reliability::study::fleet_kpis::{fleet_kpis, FleetScope};
+    let scope = FleetScope::new(start, end, None, org).expect("scope");
+    fleet_kpis(db, &scope).await.expect("fleet kpis")
+}
+
+/// Hours of the last 12 calendar months ending at `end` and of the 12 months before (the window
+/// of "12 mois" on every screen, `fleet_kpis::months_before`).
+fn twelve_month_hours(end: chrono::DateTime<chrono::Utc>) -> (f64, f64) {
+    use crate::reliability::study::fleet_kpis::months_before;
+    let start = months_before(end, 12);
+    let before = months_before(start, 12);
+    (
+        (end - start).num_seconds() as f64 / 3600.0,
+        (start - before).num_seconds() as f64 / 3600.0,
+    )
+}
+
+/// Relative closeness for hour figures computed from the clock.
+fn near(a: f64, b: f64) -> bool {
+    (a - b).abs() <= 1e-6 * b.abs().max(1.0)
 }
 
 /// The Finance settlement flow's budget actuals for the seeded OTs: WO-3 settled 100 (−5 d),
@@ -685,19 +747,40 @@ async fn overview_kpis_count_the_seeded_dataset() {
     assert_eq!((bl.value, bl.previous_value), (10.0, 0.0));
     assert_eq!(bl.value_kind, "hours");
 
-    // Fleet RAMS over the latest snapshot per asset: T = 1000 + 500, F = 4 + 1.
+    // Fleet RAMS: the live calculation over the last 12 months (L2-10; the stored snapshots, MTBF
+    // 300 h, no longer feed these cells). Calendar hours of E1 + E2 over the last 12 calendar
+    // months / 4 unplanned failures (the planned record and the one before the window are out).
+    let (year_h, prev_year_h) = twelve_month_hours(chrono::Utc::now());
     let mtbf = cell(&p, k::MTBF);
-    assert!(close(mtbf.value, 300.0), "{}", mtbf.value);
-    assert_eq!(mtbf.previous_value, 0.0, "no snapshot 30-60 days ago");
+    let basis = mtbf.fleet.as_ref().expect("fleet cell states its window and basis");
     assert_eq!(
-        mtbf.quality_badge.as_deref(),
-        Some(kpi_definitions::quality_badge::INSUFFICIENT_BASELINE)
+        (
+            basis.window_months,
+            basis.kpis.window_too_short,
+            basis.kpis.operating_basis_count,
+            basis.kpis.calendar_basis_count
+        ),
+        (12, false, 0, 2)
     );
-    assert!(close(cell(&p, k::MTTR).value, 2.0));
+    assert!(near(mtbf.value, 2.0 * year_h / 4.0), "{}", mtbf.value);
+    // The 12 months before: one failure (−400 d) over the hours of that window.
+    assert!(near(mtbf.previous_value, 2.0 * prev_year_h), "{}", mtbf.previous_value);
+    assert!(mtbf.baseline_available);
+    // MTTR = mean restore time of the 3 restored failures (4, 6, 2 h); none restored before.
+    let mttr = cell(&p, k::MTTR);
+    assert!(near(mttr.value, 4.0), "{}", mttr.value);
+    assert!(!mttr.baseline_available, "no restore time in the 12 months before");
     let av = cell(&p, k::AVAILABILITY);
-    assert!(close(av.value, 1500.0 / 1525.0 * 100.0), "{}", av.value);
+    let year_mtbf = 2.0 * year_h / 4.0;
+    assert!(near(av.value, year_mtbf / (year_mtbf + 4.0) * 100.0), "{}", av.value);
     assert_eq!(av.value_kind, "percent");
-    assert!(close(cell(&p, k::DATA_QUALITY).value, 95.0));
+    // Coding completeness: no record is coded.
+    let dq = cell(&p, k::DATA_QUALITY);
+    assert_eq!((dq.value, dq.available), (0.0, true));
+    assert!(
+        cell(&p, k::DI_OPEN).fleet.is_none(),
+        "only the fleet cells carry a basis"
+    );
 
     assert_eq!(cell(&p, k::CRITICAL_DOWN).value, 0.0);
     for key in [k::CRITICAL_DOWN, k::STOCK_OUT, k::REORDER_ALERT] {
@@ -722,8 +805,40 @@ async fn overview_kpis_without_permissions_are_unavailable_and_empty() {
     }
 }
 
+/// The Overview fleet cells equal the live calculation of the same 12-month window.
 #[tokio::test]
-async fn overview_reliability_cells_unavailable_without_snapshots() {
+async fn overview_fleet_cells_equal_fleet_kpis() {
+    let db = setup().await;
+    seed_dataset(&db).await;
+    let p = build_overview_kpis(&db, false, false, false, false, true, false)
+        .await
+        .expect("overview");
+    let now = chrono::Utc::now();
+    let start = crate::reliability::study::fleet_kpis::months_before(now, 12);
+    let live = live_kpis(&db, &start.to_rfc3339(), &now.to_rfc3339(), None).await;
+    use kpi_definitions::overview as k;
+    assert!(near(cell(&p, k::MTBF).value, live.mtbf_hours.expect("mtbf")));
+    assert!(near(cell(&p, k::MTTR).value, live.mttr_hours.expect("mttr")));
+    assert!(near(
+        cell(&p, k::AVAILABILITY).value,
+        live.availability_operational.expect("ao") * 100.0
+    ));
+    assert!(near(
+        cell(&p, k::DATA_QUALITY).value,
+        live.data_quality.expect("dq") * 100.0
+    ));
+    // The dashboard summary report gives the same 12-month fleet MTBF.
+    let report = crate::reports::queries::fetch_dashboard_summary(&db)
+        .await
+        .expect("summary");
+    assert!(near(
+        report.mtbf_hours.expect("report mtbf"),
+        live.mtbf_hours.expect("mtbf")
+    ));
+}
+
+#[tokio::test]
+async fn overview_reliability_cells_unavailable_without_failures() {
     let db = setup().await;
     let p = build_overview_kpis(&db, false, false, false, false, true, false)
         .await
@@ -735,7 +850,7 @@ async fn overview_reliability_cells_unavailable_without_snapshots() {
         kpi_definitions::overview::DATA_QUALITY,
     ] {
         let c = cell(&p, key);
-        assert!(!c.available, "{key} has no snapshot to compute from");
+        assert!(!c.available, "{key} has no failure record to compute from");
         assert_eq!(c.value, 0.0);
     }
 }
@@ -774,13 +889,21 @@ async fn executive_dashboard_fleet_wide_values() {
         Some(kpi_definitions::catalog::PM_ADHERENCE)
     );
 
-    assert!(close(x.avg_mtbf_hours.value, 300.0));
-    assert!(close(x.avg_mttr_hours.value, 2.0));
-    assert!(close(x.avg_availability.value, 1500.0 / 1525.0));
-    assert!(close(x.avg_data_quality.value, 0.95));
-    assert!(x.avg_mtbf_hours.available);
+    // Reliability (L2-10): the live calculation over the last 30 days. Under 90 days: counts
+    // only, no MTBF / MTTR / A_o (they were 300 h / 2 h / 98 % from the stored snapshots).
+    let rel = x.reliability.as_ref().expect("live figures");
+    assert!(rel.window_too_short);
+    assert!(!x.avg_mtbf_hours.available && !x.avg_mttr_hours.available && !x.avg_availability.available);
+    assert_eq!(
+        x.reliability_total_events, 1,
+        "E1 −20 d; the planned −30 d record is not a failure"
+    );
+    assert_eq!((rel.operating_basis_count, rel.calendar_basis_count), (0, 2));
+    // Data quality = coding completeness of the window's records (none coded).
+    assert_eq!((x.avg_data_quality.value, x.avg_data_quality.available), (0.0, true));
+    // "Taille d'échantillon": mean sample-size score of the latest snapshot per asset (1.0, 0.9).
+    assert!(close(x.sample_size_score.value, 0.95));
     assert_eq!(x.reliability_snapshot_count, 2, "one (latest) snapshot per asset");
-    assert_eq!(x.reliability_total_events, 5);
 
     assert_eq!(
         (x.maintenance_cost.value, x.maintenance_cost.previous_value),
@@ -911,7 +1034,8 @@ async fn executive_dashboard_scoped_to_one_site() {
     assert_eq!(x.maintenance_cost_pending, Some(1));
     assert_eq!(x.di_status_segments.iter().map(|s| s.count).sum::<i64>(), 4);
 
-    let site2 = build_executive_dashboard(&db, &filter(30, Some(2)), true, true, true, true, true, true)
+    // 90 days: long enough for an MTBF.
+    let site2 = build_executive_dashboard(&db, &filter(90, Some(2)), true, true, true, true, true, true)
         .await
         .expect("site 2");
     assert_eq!(site2.open_dis.value, 1.0);
@@ -920,9 +1044,81 @@ async fn executive_dashboard_scoped_to_one_site() {
     assert_eq!(site2.maintenance_cost.value, 0.0);
     assert_eq!(site2.maintenance_cost_pending, Some(0));
     assert_eq!(site2.reliability_snapshot_count, 1);
-    assert!(close(site2.avg_mtbf_hours.value, 500.0));
+    // Live: E2 alone, 90 days of calendar hours / its one failure (−50 d).
+    assert!(
+        near(site2.avg_mtbf_hours.value, 90.0 * 24.0),
+        "{}",
+        site2.avg_mtbf_hours.value
+    );
+    assert_eq!(site2.reliability_total_events, 1);
+    // No record in the 90 days before: no trend at all on data quality (never "stable" vs 0).
+    assert_eq!(
+        site2.avg_data_quality.quality_badge.as_deref(),
+        Some(kpi_definitions::quality_badge::INSUFFICIENT_BASELINE)
+    );
     assert_eq!(site2.bad_actor_assets.len(), 1);
     assert_eq!(site2.bad_actor_assets[0].equipment_id, d.e2);
+}
+
+/// L2-10: the Analytique reliability cards are the live calculation of the same window and site —
+/// equal to `fleet_kpis` (no second calculation), for each horizon at or above 90 days.
+#[tokio::test]
+async fn executive_dashboard_reliability_equals_fleet_kpis() {
+    let db = setup().await;
+    seed_dataset(&db).await;
+    for (horizon, org) in [(90, None), (365, None), (365, Some(1)), (365, Some(2))] {
+        let x = build_executive_dashboard(&db, &filter(horizon, org), false, false, false, false, true, false)
+            .await
+            .expect("dashboard");
+        let rel = x.reliability.as_ref().expect("live figures");
+        let live = live_kpis(&db, &rel.period_start, &rel.period_end, org).await;
+        assert_eq!(rel, &live, "{horizon} d / {org:?}");
+        assert!(!rel.window_too_short);
+        assert_eq!(Some(x.avg_mtbf_hours.value), live.mtbf_hours, "{horizon} d / {org:?}");
+        assert_eq!(Some(x.avg_mttr_hours.value), live.mttr_hours);
+        assert_eq!(Some(x.avg_availability.value), live.availability_operational);
+        assert_eq!(Some(x.avg_data_quality.value), live.data_quality);
+        assert_eq!(x.reliability_total_events, live.failure_count);
+        // The previous value is the same calculation over the window before.
+        let start = chrono::DateTime::parse_from_rfc3339(&rel.period_start)
+            .expect("start")
+            .with_timezone(&chrono::Utc);
+        let prev_start = crate::reliability::study::fleet_kpis::horizon_start(start, horizon).to_rfc3339();
+        let prev = live_kpis(&db, &prev_start, &rel.period_start, org).await;
+        assert_eq!(x.avg_mtbf_hours.previous_value, prev.mtbf_hours.unwrap_or(0.0));
+    }
+    // 12 months, whole plant: E1 −20/−100/−200 d and E2 −50 d.
+    let year = build_executive_dashboard(&db, &filter(365, None), false, false, false, false, true, false)
+        .await
+        .expect("dashboard");
+    assert_eq!(year.reliability_total_events, 4);
+    let (year_h, _) = twelve_month_hours(chrono::Utc::now());
+    assert!(near(year.avg_mtbf_hours.value, 2.0 * year_h / 4.0));
+    // "12 mois" is 12 calendar months, as on the RAMS home, not 365 days.
+    let rel = year.reliability.as_ref().expect("live figures");
+    let end = chrono::DateTime::parse_from_rfc3339(&rel.period_end)
+        .expect("end")
+        .with_timezone(&chrono::Utc);
+    assert_eq!(
+        rel.period_start,
+        crate::reliability::study::fleet_kpis::months_before(end, 12).to_rfc3339()
+    );
+}
+
+/// "12 mois" = now minus 12 calendar months: 366 days across a 29 February.
+#[test]
+fn twelve_months_follow_the_calendar() {
+    use crate::reliability::study::fleet_kpis::{horizon_start, months_before};
+    let end = chrono::DateTime::parse_from_rfc3339("2028-11-06T10:00:00Z")
+        .expect("end")
+        .with_timezone(&chrono::Utc);
+    assert_eq!(months_before(end, 12).to_rfc3339(), "2027-11-06T10:00:00+00:00");
+    assert_eq!(
+        (end - horizon_start(end, 365)).num_days(),
+        366,
+        "2028 has a 29 February"
+    );
+    assert_eq!((end - horizon_start(end, 90)).num_days(), 90);
 }
 
 #[tokio::test]
@@ -981,6 +1177,7 @@ async fn executive_dashboard_without_permissions_is_all_denied() {
         &x.avg_mttr_hours,
         &x.avg_availability,
         &x.avg_data_quality,
+        &x.sample_size_score,
         &x.maintenance_cost,
     ] {
         assert!(!k.available, "{}", k.key);
@@ -993,15 +1190,16 @@ async fn executive_dashboard_without_permissions_is_all_denied() {
     assert!(x.workload_days.is_empty());
     assert_eq!(x.workload_quality_badge, None);
     assert_eq!((x.reliability_snapshot_count, x.reliability_total_events), (0, 0));
+    assert!(x.reliability.is_none());
     assert!(x.smrp.is_none(), "SMRP needs OT or PM view");
 }
 
 #[tokio::test]
 async fn executive_dashboard_refuses_other_horizons_and_flags_sparse_workload() {
     let db = setup().await;
-    let err = build_executive_dashboard(&db, &filter(45, None), true, true, false, true, false, false)
+    let err = build_executive_dashboard(&db, &filter(400, None), true, true, false, true, false, false)
         .await
-        .expect_err("45 days is not a horizon choice");
+        .expect_err("400 days is not a horizon choice");
     assert!(
         matches!(err, crate::errors::AppError::ValidationFailed(_)),
         "never silently replaced by 30: {err:?}"
@@ -1025,4 +1223,8 @@ async fn executive_dashboard_refuses_other_horizons_and_flags_sparse_workload() 
         .await
         .expect("dashboard");
     assert_eq!(q.workload_days.len(), 90);
+    let year = build_executive_dashboard(&db, &filter(365, None), true, false, false, false, false, false)
+        .await
+        .expect("12 months is a horizon choice");
+    assert_eq!(year.workload_days.len(), 365);
 }

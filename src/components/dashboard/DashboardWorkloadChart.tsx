@@ -87,7 +87,7 @@ function WorkloadBody({ chart }: { chart: Chart }) {
         d3
           .axisBottom(xScale)
           .tickValues(days.filter((_, i) => i % tickEvery === 0).map((d) => d.date))
-          .tickFormat((v) => formatDate(`${String(v)}T12:00:00`)) as never,
+          .tickFormat((v) => formatDate(String(v))) as never,
       )
       .selectAll("text")
       .attr("class", "fill-current text-[10px]");
@@ -135,7 +135,7 @@ function WorkloadBody({ chart }: { chart: Chart }) {
                           rx={2}
                         >
                           <title>
-                            {formatDate(`${d.date}T12:00:00`)} — {t(s.labelKey)} : {val}
+                            {formatDate(d.date)} — {t(s.labelKey)} : {val}
                           </title>
                         </rect>
                       );

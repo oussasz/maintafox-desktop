@@ -51,7 +51,8 @@ function moveWidget(
   return reorderOrders(copy);
 }
 
-const LABEL_KEYS: Record<string, string> = {
+/** The name of each block — the same in this dialog and as the block's heading on the page. */
+export const ANALYTICS_WIDGET_LABEL_KEYS: Record<string, string> = {
   [ANALYTICS_DASHBOARD_WIDGET_IDS.OPS_KPIS]: "hub.dashboards.widgets.opsKpis",
   [ANALYTICS_DASHBOARD_WIDGET_IDS.PM_DUE]: "hub.dashboards.widgets.pmDue",
   [ANALYTICS_DASHBOARD_WIDGET_IDS.RELIABILITY_RAMS]: "hub.dashboards.widgets.reliability",
@@ -114,6 +115,7 @@ export function AnalyticsCustomizeDialog(props: {
         />
       }
     >
+      <p className="text-sm text-text-muted">{t("hub.dashboards.customizeScope")}</p>
       <EntityFormSection title={t("hub.dashboards.widgetsSection")}>
         {sorted.map((w) => (
           <div
@@ -133,7 +135,7 @@ export function AnalyticsCustomizeDialog(props: {
                 }}
               />
               <span className="truncate">
-                {t(LABEL_KEYS[w.id] ?? w.id, { defaultValue: w.id })}
+                {t(ANALYTICS_WIDGET_LABEL_KEYS[w.id] ?? w.id, { defaultValue: w.id })}
               </span>
             </label>
             <div className="flex shrink-0 gap-1">
@@ -142,7 +144,7 @@ export function AnalyticsCustomizeDialog(props: {
                 variant="ghost"
                 className="h-11 w-11 p-0"
                 aria-label={t("hub.customize.moveUp", {
-                  widget: t(LABEL_KEYS[w.id] ?? w.id, { defaultValue: w.id }),
+                  widget: t(ANALYTICS_WIDGET_LABEL_KEYS[w.id] ?? w.id, { defaultValue: w.id }),
                 })}
                 onClick={() =>
                   setDraft((prev) => ({
@@ -158,7 +160,7 @@ export function AnalyticsCustomizeDialog(props: {
                 variant="ghost"
                 className="h-11 w-11 p-0"
                 aria-label={t("hub.customize.moveDown", {
-                  widget: t(LABEL_KEYS[w.id] ?? w.id, { defaultValue: w.id }),
+                  widget: t(ANALYTICS_WIDGET_LABEL_KEYS[w.id] ?? w.id, { defaultValue: w.id }),
                 })}
                 onClick={() =>
                   setDraft((prev) => ({

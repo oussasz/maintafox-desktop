@@ -252,6 +252,7 @@ fn allows_cross_domain_parent(child_domain_code: &str, parent_domain_code: &str)
         (child_domain_code, parent_domain_code),
         ("EQUIPMENT.FAMILY", "EQUIPMENT.CLASS")
             | ("EQUIPMENT.SUBFAMILY", "EQUIPMENT.FAMILY")
+            | ("EQUIPMENT.CHARACTERISTICS", "EQUIPMENT.FAMILY")
             | ("WORK.ORDER_SUBTYPES", "WORK.MAINTENANCE_NATURES")
     )
 }
@@ -363,6 +364,8 @@ pub(crate) async fn checked_semantic_tag(
 pub(crate) fn required_parent_domain(child_domain_code: &str) -> Option<&'static str> {
     match child_domain_code.trim().to_ascii_uppercase().as_str() {
         "WORK.ORDER_SUBTYPES" => Some("WORK.MAINTENANCE_NATURES"),
+        // A technical characteristic belongs to one equipment family (`assets::characteristics`).
+        "EQUIPMENT.CHARACTERISTICS" => Some("EQUIPMENT.FAMILY"),
         _ => None,
     }
 }
@@ -579,6 +582,12 @@ pub async fn create_value(
             crate::permit::requirement_rules::checked_rule_metadata(db, &code, payload.metadata_json.as_deref())
                 .await?,
         )
+    } else if crate::assets::characteristics::is_characteristics_domain(&domain.code) {
+        // A technical characteristic says what it holds (`assets::characteristics`).
+        Some(crate::assets::characteristics::checked_definition_metadata(
+            &code,
+            payload.metadata_json.as_deref(),
+        )?)
     } else {
         payload.metadata_json.clone()
     };
@@ -856,6 +865,10 @@ pub async fn update_value(
         } else if crate::permit::requirement_rules::is_rules_domain(&domain.code) {
             let checked =
                 crate::permit::requirement_rules::checked_rule_metadata(db, &existing.code, mj.as_deref()).await?;
+            sets_clause.push("metadata_json = ?".into());
+            values.push(checked.into());
+        } else if crate::assets::characteristics::is_characteristics_domain(&domain.code) {
+            let checked = crate::assets::characteristics::checked_definition_metadata(&existing.code, mj.as_deref())?;
             sets_clause.push("metadata_json = ?".into());
             values.push(checked.into());
         } else if !crate::reference::units::is_units_domain(&domain.code) {

@@ -18,7 +18,7 @@ use crate::sync::transport::worker::{
 };
 
 pub async fn start_planning_scheduler(db: DatabaseConnection, sync: SyncWorkerHandle) {
-    let started_at = Utc::now();
+    let started_at = crate::clock::now();
     let mut waiting_logged = false;
     let mut ticker = interval(TokioDuration::from_secs(60));
     loop {
@@ -30,7 +30,7 @@ pub async fn start_planning_scheduler(db: DatabaseConnection, sync: SyncWorkerHa
             }
             continue;
         }
-        if let Err(err) = run_planning_tick(&db, Utc::now()).await {
+        if let Err(err) = run_planning_tick(&db, crate::clock::now()).await {
             tracing::error!(error = %err, "planning::scheduler tick failed");
         }
     }

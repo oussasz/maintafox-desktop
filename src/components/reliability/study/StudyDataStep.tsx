@@ -125,7 +125,13 @@ export function StudyDataStep({
                             checked={r.included}
                             disabled={!canToggle}
                             aria-label={label}
-                            title={!hasAge(r) ? t("rams.data.reason.no_known_start") : undefined}
+                            title={
+                              !editable
+                                ? t("rams.data.readOnlyReason")
+                                : !hasAge(r)
+                                  ? t("rams.data.reason.no_known_start")
+                                  : undefined
+                            }
                             onChange={() => {
                               if (r.included) {
                                 setReason("");
@@ -170,6 +176,14 @@ export function StudyDataStep({
                               <StatusChip tone="warning" label={t("rams.data.toCheck")} />
                             ) : null}
                           </div>
+                          {r.flags.some((f) => f !== "no_known_start") ? (
+                            <span className="mt-0.5 block text-[11px] text-tone-attention-fg">
+                              {r.flags
+                                .filter((f) => f !== "no_known_start")
+                                .map((f) => t(`rams.data.flag.${f}`, { defaultValue: f }))
+                                .join(" Â· ")}
+                            </span>
+                          ) : null}
                           {r.state_reason ? (
                             <span className="mt-0.5 block text-[11px] text-text-muted">
                               {t(`rams.data.reason.${r.state_reason}`)}
@@ -236,6 +250,7 @@ export function StudyDataStep({
               aria-expanded={showHistory}
               onClick={() => setShowHistory((v) => !v)}
               disabled={dataset.history.length === 0}
+              title={dataset.history.length === 0 ? t("rams.data.historyEmpty") : undefined}
             >
               {t("rams.data.history", { count: dataset.history.length })}
             </Button>

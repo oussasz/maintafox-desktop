@@ -105,7 +105,7 @@ pub async fn get_wo_stats_in_scope(
                      JOIN work_order_statuses s ON s.id = wo.status_id WHERE {} AND ({pred})",
                     crate::wo::backlog::WO_OVERDUE_SQL
                 ),
-                with_scope(vec![crate::analytics::as_of::instant(chrono::Utc::now()).into()]),
+                with_scope(vec![crate::analytics::as_of::instant(crate::clock::now()).into()]),
             ))
             .await?
             .ok_or_else(|| crate::errors::AppError::Internal(anyhow::anyhow!("stats: overdue query failed")))?;

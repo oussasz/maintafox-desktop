@@ -545,7 +545,7 @@ async fn an_over_receipt_from_two_pcs_is_listed_on_both_and_a_count_closes_it() 
             item.movements
                 .iter()
                 .all(|m| m.movement_type == "GR_ACCEPT"
-                    && m.document_ref.as_deref().is_some_and(|r| r.starts_with("GR-")))
+                    && m.document_ref.as_deref().is_some_and(|r| r.starts_with("BR-")))
         );
         assert_eq!(
             negative_stock::summary(db).await.expect("summary").over_quantity_count,

@@ -20,9 +20,10 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { PermissionGate } from "@/components/PermissionGate";
+import { CriticalityBadge } from "@/components/assets/CriticalityBadge";
 import { LinkedEntityBadge } from "@/components/common/LinkedEntityBadge";
 import { UrgencyBadge } from "@/components/common/urgency/UrgencyBadge";
 import { useUrgencyScale } from "@/components/common/urgency/use-urgency-scale";
@@ -54,6 +55,8 @@ import {
   ViewToggle,
 } from "@/components/layout/ModuleHeaderControls";
 import { ModulePageShell } from "@/components/layout/ModulePageShell";
+import { ExportCsvButton } from "@/components/ui/ExportCsvButton";
+import { hasScreenToReturnTo } from "@/components/ui/back-to-origin-button";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ErrorState, TruncationNotice } from "@/components/ui/data-state";
@@ -63,6 +66,7 @@ import { WoRetiredEquipmentReviewPanel } from "@/components/wo/WoRetiredEquipmen
 import { usePlantWideAccess } from "@/components/wo/WoSiteScope";
 import { mfLayout } from "@/design-system/tokens";
 import { DI_STATUS_TONE, toneOf } from "@/design-system/tone";
+import { requestExportRows } from "@/export/list-exports";
 import { useAccessAtNodes } from "@/hooks/use-access-at";
 import { usePermissions } from "@/hooks/use-permissions";
 import { describeAppError } from "@/lib/app-error";
@@ -138,6 +142,8 @@ export function RequestsPage() {
   const loadQueueCounts = useDiStore((s) => s.loadQueueCounts);
   const openDi = useDiStore((s) => s.openDi);
   const closeDi = useDiStore((s) => s.closeDi);
+  const navigate = useNavigate();
+  const [openedFromLink, setOpenedFromLink] = useState(false);
   const openCreateForm = useDiStore((s) => s.openCreateForm);
   const setFilter = useDiStore((s) => s.setFilter);
   const openApproval = useDiReviewStore((s) => s.openApproval);
@@ -195,7 +201,10 @@ export function RequestsPage() {
     const raw = searchParams.get("openDi");
     if (!raw) return;
     const id = Number.parseInt(raw, 10);
-    if (!Number.isNaN(id)) void openDi(id);
+    if (!Number.isNaN(id)) {
+      setOpenedFromLink(hasScreenToReturnTo());
+      void openDi(id);
+    }
     setSearchParams(
       (prev) => {
         const p = new URLSearchParams(prev);
@@ -641,6 +650,18 @@ export function RequestsPage() {
         ),
       },
       {
+        // L1-29: the equipment's criticality, the queues' second sort key after the urgency.
+        id: "criticality",
+        accessorFn: (di) => di.asset_criticality_code ?? "",
+        header: t("list.columns.criticality"),
+        cell: ({ row }) =>
+          row.original.asset_criticality_code ? (
+            <CriticalityBadge criticality={row.original.asset_criticality_code} compact />
+          ) : (
+            <span className="text-xs text-text-muted">—</span>
+          ),
+      },
+      {
         accessorKey: "status",
         header: t("list.columns.status"),
         cell: ({ row }) => (
@@ -743,6 +764,34 @@ export function RequestsPage() {
     printOne,
   ]);
 
+  // Export: the rows the list holds now, with the labels the screen shows.
+  const exportHeader = useMemo(
+    () => [
+      t("list.columns.number"),
+      t("list.columns.subject"),
+      t("list.columns.equipment"),
+      t("list.columns.status"),
+      t("list.columns.priority"),
+      t("list.columns.sla"),
+      t("list.columns.reportedBy"),
+      t("list.columns.reportedAt"),
+      t("print.convertedToWo"),
+    ],
+    [t],
+  );
+  const getExportRows = useCallback(
+    () =>
+      requestExportRows(items, {
+        statusLabel: (status) => t(`status.${diStatusToI18nKey(status)}` as const),
+        urgencyLabel: urgencyLabel,
+        slaLabel: (state) => t(`sla.status.${state}` as never),
+        personLabel: (name) => formatPersonLabel(name),
+        formatDate: (iso) =>
+          formatDiDate(iso, dateLocale, { day: "2-digit", month: "2-digit", year: "numeric" }),
+      }),
+    [items, t, urgencyLabel, dateLocale],
+  );
+
   const viewOptions: ViewOption<ViewMode>[] = [
     { value: "list", label: t("page.viewList"), icon: List },
     { value: "kanban", label: t("page.viewKanban"), icon: Columns3 },
@@ -771,6 +820,15 @@ export function RequestsPage() {
               {t("action.create")}
             </Button>
           </PermissionGate>
+          {recordView ? (
+            <ExportCsvButton
+              permission={P.DI_VIEW}
+              fileName="demandes-intervention.csv"
+              header={exportHeader}
+              getRows={getExportRows}
+              total={total}
+            />
+          ) : null}
           <ViewToggle value={view} options={viewOptions} onChange={switchView} />
           {recordView ? (
             <FilterToggleButton
@@ -925,7 +983,19 @@ export function RequestsPage() {
         transitions={activeDi?.transitions ?? []}
         similar={activeDi?.similar ?? []}
         open={activeDi !== null}
-        onClose={closeDi}
+        onClose={() => {
+          setOpenedFromLink(false);
+          closeDi();
+        }}
+        {...(openedFromLink
+          ? {
+              onBackToOrigin: () => {
+                setOpenedFromLink(false);
+                closeDi();
+                void navigate(-1);
+              },
+            }
+          : {})}
       />
 
       <DiFormDialog />

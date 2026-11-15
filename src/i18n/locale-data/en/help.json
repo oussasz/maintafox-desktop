@@ -1,0 +1,152 @@
+{
+  "page": {
+    "title": "Help",
+    "subtitle": "Short guides to get started, module by module.",
+    "searchLabel": "Search help",
+    "searchPlaceholder": "Search for a module or a step…",
+    "noResults": "No guide matches your search.",
+    "purposeLabel": "What it is for:",
+    "stepsLabel": "First steps",
+    "open": "Open module",
+    "modulesTitle": "Guides by module",
+    "modulesHint": "Only the modules your role gives access to are listed."
+  },
+  "intro": {
+    "title": "Getting started",
+    "body": "Maintafox follows the maintenance cycle: a need is reported, turned into a job, carried out, and the results are analysed. The left menu groups modules by theme; each guide below explains what a module is for and where to start.",
+    "step1": "Look at the left menu to see the modules available for your role.",
+    "step2": "An intervention request reports a problem; a work order organises and tracks the work to do.",
+    "step3": "The lists offered in forms (types, statuses, causes…) come from Reference data.",
+    "step4": "Need a personal setting (language, password, notifications)? Open Settings."
+  },
+  "good": {
+    "title": "Good to know",
+    "rolesTitle": "Roles and rights",
+    "roles": "What you see depends on your role. A module missing from the menu is not available with your role: ask an administrator to add it if you need it.",
+    "syncTitle": "Synchronisation",
+    "sync": "Maintafox also works offline: your entries are saved on the device, then sent as soon as the connection is back. The sync indicator in the top bar is visible to everyone; the details are in Settings › System & Sync, reserved for administrators.",
+    "docsTitle": "Where documents live",
+    "docs": "The plant's drawings, procedures and manuals are in the Document library, sorted by category. A document can also be linked to an asset and appear on its record."
+  },
+  "modules": {
+    "dashboard": {
+      "title": "Overview",
+      "purpose": "The starting point: a quick look at your plant's maintenance activity.",
+      "step1": "Read the indicators shown when the application opens.",
+      "step2": "Spot the items that are late or need action.",
+      "step3": "Open the relevant module from the menu to act."
+    },
+    "requests": {
+      "title": "Intervention requests",
+      "purpose": "Report a problem or maintenance need and follow how it is handled.",
+      "step1": "Click \"New Request\".",
+      "step2": "Pick the asset concerned and describe the problem.",
+      "step3": "Set the urgency, then save the request.",
+      "step4": "Follow its progress; once approved, it can lead to a work order."
+    },
+    "workOrders": {
+      "title": "Work orders",
+      "purpose": "Plan, carry out and close maintenance jobs.",
+      "step1": "Click \"New WO\" or start from an approved request.",
+      "step2": "Fill in the asset, the type of work and the urgency.",
+      "step3": "Assign the work and start it when the job begins.",
+      "step4": "Record what was done, then close the order."
+    },
+    "planning": {
+      "title": "Planning",
+      "purpose": "Schedule jobs over time and balance crew workload.",
+      "step1": "Open the module to see the schedule for the period.",
+      "step2": "Spot the jobs that still need a slot or a new date.",
+      "step3": "Adjust dates to balance the workload."
+    },
+    "pm": {
+      "title": "Preventive maintenance",
+      "purpose": "Define recurring maintenance plans to prevent breakdowns.",
+      "step1": "Open the list of preventive maintenance plans.",
+      "step2": "Create a plan by choosing the asset and the frequency.",
+      "step3": "Check the upcoming due dates.",
+      "step4": "Scheduled jobs then appear in work orders."
+    },
+    "equipment": {
+      "title": "Equipment",
+      "purpose": "The register of the plant's equipment and its history.",
+      "step1": "Find an asset in the list or in the tree.",
+      "step2": "Open its record to see its details, documents and history.",
+      "step3": "Use \"Create asset\" to add a new one.",
+      "step4": "From the record, create an intervention request or a work order."
+    },
+    "inventory": {
+      "title": "Stores & purchasing",
+      "purpose": "Manage spare parts, stock and the related purchases.",
+      "step1": "Find a part in the item list.",
+      "step2": "Check the stock level available.",
+      "step3": "Record stock receipts and issues.",
+      "step4": "Follow purchases to replenish stock."
+    },
+    "permits": {
+      "title": "Work permits",
+      "purpose": "Control hazardous work with a permit approved before the job.",
+      "step1": "Open the list of current permits.",
+      "step2": "Create a permit stating the work and the location.",
+      "step3": "Follow its approval steps through to closure."
+    },
+    "inspections": {
+      "title": "Rounds & checklists",
+      "purpose": "Carry out inspection rounds with defined check points.",
+      "step1": "Open the list of rounds.",
+      "step2": "Start a round and go through the check points.",
+      "step3": "Note any anomalies found.",
+      "step4": "Finish the round to record its results."
+    },
+    "personnel": {
+      "title": "Personnel",
+      "purpose": "The register of maintenance people, crews and skills.",
+      "step1": "Find a person in the list.",
+      "step2": "Open their record to see their details and skills.",
+      "step3": "Add or update people if your role allows it."
+    },
+    "reliability": {
+      "title": "Reliability (RAMS)",
+      "purpose": "Analyse asset reliability: lifetime, failures, causes.",
+      "step1": "Open the module home page.",
+      "step2": "Choose an analysis method (Weibull, FMECA, RCM, Ishikawa).",
+      "step3": "Check data quality first before interpreting results."
+    },
+    "analytics": {
+      "title": "Analytics",
+      "purpose": "Build dashboards and reports from maintenance data.",
+      "step1": "Open the dashboards available.",
+      "step2": "Start from a report template to generate one.",
+      "step3": "Browse the history of reports already produced."
+    },
+    "admin": {
+      "title": "Administration",
+      "purpose": "Manage users, their roles and their access rights.",
+      "step1": "Open the list of users.",
+      "step2": "Create a user and give them a role.",
+      "step3": "Adjust roles and their rights if needed."
+    },
+    "lookups": {
+      "title": "Reference data",
+      "purpose": "The lists used across the application (types, statuses, categories…), defined once.",
+      "step1": "Open the list you want to look at.",
+      "step2": "Add or edit a value if your role allows it.",
+      "step3": "Modules then use these values in their forms."
+    },
+    "sync": {
+      "title": "Synchronisation",
+      "purpose": "Keep this device's data up to date with your company's server.",
+      "step1": "Open Settings › System & Sync.",
+      "step2": "Check the status of the last synchronisation.",
+      "step3": "If something is wrong, use the diagnostics shown on that screen."
+    },
+    "documentation": {
+      "title": "Document library",
+      "purpose": "Find and add the plant's documents: drawings, procedures, manuals.",
+      "step1": "Pick a category in the list on the left.",
+      "step2": "Open an existing document.",
+      "step3": "Use \"Add a document\" to upload a new one.",
+      "step4": "Link it to an asset to also find it on the asset's record."
+    }
+  }
+}

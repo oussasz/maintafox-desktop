@@ -96,6 +96,7 @@ describe("ProcurementRulesPanel", () => {
         is_active: 1,
         row_version: 1,
         updated_at: "2026-10-01T08:00:00Z",
+        is_seeded_default: false,
       },
     ]);
     svc.upsertProcurementApprovalLimit.mockResolvedValue({});
@@ -135,9 +136,9 @@ describe("ProcurementRulesPanel", () => {
   it("shows role limits and sets an unlimited purchase-order limit", async () => {
     render(<ProcurementRulesPanel />);
     expect(await screen.findByText("Store manager")).toBeInTheDocument();
-    // Requisition limits exist, so a role without one may not approve requisitions.
-    expect(screen.getByText("Not allowed")).toBeInTheDocument();
-    expect(screen.getAllByText("No limit set").length).toBeGreaterThan(0);
+    // Limits fail closed: every role without an active limit cannot approve (3 of 4 cells).
+    expect(screen.getAllByText("Cannot approve")).toHaveLength(3);
+    expect(screen.queryByText(/No limit is set: only the administrator/)).not.toBeInTheDocument();
 
     fireEvent.click(
       screen.getByRole("button", { name: "Edit the Purchase orders limit of Store manager" }),
@@ -152,6 +153,27 @@ describe("ProcurementRulesPanel", () => {
         is_active: true,
       }),
     );
+  });
+
+  it("on first use, with only the seeded administrator rows, says only the administrator approves", async () => {
+    svc.listProcurementApprovalLimits.mockResolvedValue(
+      (["REQUISITION", "PURCHASE_ORDER"] as const).map((doc, i) => ({
+        id: i + 1,
+        role_id: 1,
+        role_name: "Administrator",
+        document_type: doc,
+        max_amount: null,
+        is_active: 1,
+        row_version: 1,
+        updated_at: "2026-10-01T08:00:00Z",
+        is_seeded_default: true,
+      })),
+    );
+    render(<ProcurementRulesPanel />);
+    const banner = await screen.findByText(/No limit is set: only the administrator can approve/);
+    // The tenant currency comes from the formatter settings, never a fixed code.
+    expect(banner.textContent).toMatch(/Set the limits per role, in [A-Z]{3}\./);
+    expect(screen.getAllByText("Unlimited")).toHaveLength(2);
   });
 
   it("without adm.roles lists the roles that have a limit and never asks for all roles (AU-52)", async () => {

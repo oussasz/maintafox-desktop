@@ -81,6 +81,10 @@ pub struct WoListFilter {
     pub equipment_id: Option<i64>,
     pub entity_id: Option<i64>,
     pub planner_id: Option<i64>,
+    /// Only the work orders without a planner ("planificateur à désigner", CMMS Advisor
+    /// 2026-11-06 option b).
+    #[serde(default)]
+    pub planner_unassigned: Option<bool>,
     pub primary_responsible_id: Option<i64>,
     /// Level of the shared urgency scale (`emergency` … `low`).
     #[serde(default)]
@@ -106,8 +110,24 @@ pub struct WoListFilter {
     pub completed_from: Option<String>,
     #[serde(default)]
     pub completed_to: Option<String>,
+    /// Only the work orders behind the failures a RAMS figure counts (L2-21): the failure records
+    /// of this scope (`reliability::study::fleet_kpis::scope_from_sql`, same period, class and
+    /// site), linked to their work order. Combined with `equipment_id` for one ranking row.
+    #[serde(default)]
+    pub rams_failures: Option<WoRamsFailureScope>,
     pub limit: i64,
     pub offset: i64,
+}
+
+/// Scope of a RAMS failure figure, as the RAMS screen computed it.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct WoRamsFailureScope {
+    pub period_start: String,
+    pub period_end: String,
+    #[serde(default)]
+    pub equipment_class_id: Option<i64>,
+    #[serde(default)]
+    pub org_node_id: Option<i64>,
 }
 
 /// Paginated list result.
@@ -165,6 +185,8 @@ const WO_COLS: &str = "\
     wo.requires_permit, \
     wo.permit_rule_code, wo.permit_rule_permit_type, wo.permit_rule_cleared_by_id, \
     wo.permit_rule_cleared_at, wo.permit_rule_clear_reason, wo.permit_from_safety_di, \
+    wo.is_depannage, wo.breakdown_at, wo.machine_stopped, \
+    wo.validated_by_id, wo.validated_at, wo.validation_auto_approved, \
     wo.entity_sync_id, wo.closeout_validation_profile_id, wo.closeout_validation_passed, \
     wo.no_downtime_attestation, wo.no_downtime_attestation_reason, \
     wo.row_version, wo.created_at, wo.updated_at";
@@ -311,6 +333,9 @@ pub async fn list_work_orders_in_scope(
         where_clauses.push("wo.planner_id = ?".to_string());
         binds.push(planner_id.into());
     }
+    if filter.planner_unassigned == Some(true) {
+        where_clauses.push("(wo.planner_id IS NULL OR wo.planner_id <= 0)".to_string());
+    }
     if let Some(primary_responsible_id) = filter.primary_responsible_id {
         where_clauses.push("wo.primary_responsible_id = ?".to_string());
         binds.push(primary_responsible_id.into());
@@ -356,7 +381,7 @@ pub async fn list_work_orders_in_scope(
             "wo.id IN (SELECT wo.id FROM work_orders wo              JOIN work_order_statuses s ON s.id = wo.status_id WHERE {})",
             crate::wo::backlog::WO_OVERDUE_SQL
         ));
-        binds.push(crate::analytics::as_of::instant(chrono::Utc::now()).into());
+        binds.push(crate::analytics::as_of::instant(crate::clock::now()).into());
     }
 
     // ── Completed in a window (the work-mix indicators' own predicate) ───────────────────
@@ -379,15 +404,35 @@ pub async fn list_work_orders_in_scope(
         binds.push(to.to_string().into());
     }
 
-    // ── Free-text search (code + title + equipment name) ─────────────────
+    // ── Behind a RAMS failure figure: the work orders of the failure records it counts ──────
+    if let Some(ref rams) = filter.rams_failures {
+        let scope = crate::reliability::study::fleet_kpis::FleetScope::new(
+            &rams.period_start,
+            &rams.period_end,
+            rams.equipment_class_id,
+            rams.org_node_id,
+        )?;
+        where_clauses.push(format!(
+            "wo.id IN (SELECT fe.source_id {} AND fe.source_type = 'work_order')",
+            crate::reliability::study::fleet_kpis::scope_from_sql()
+        ));
+        binds.extend(scope.binds());
+    }
+
+    // ── Free-text search: every word must match the code, title, description or equipment ──
     if let Some(ref search) = filter.search {
-        let trimmed = search.trim();
-        if !trimmed.is_empty() {
-            where_clauses.push("(wo.code LIKE ? OR wo.title LIKE ? OR ar.name LIKE ?)".to_string());
-            let pattern = format!("%{trimmed}%");
-            binds.push(pattern.clone().into());
-            binds.push(pattern.clone().into());
-            binds.push(pattern.into());
+        for word in search.split_whitespace() {
+            where_clauses.push(
+                "(wo.code LIKE ? ESCAPE '\\' OR wo.title LIKE ? ESCAPE '\\' \
+                  OR wo.description LIKE ? ESCAPE '\\' OR ar.name LIKE ? ESCAPE '\\' \
+                  OR ar.asset_id_code LIKE ? ESCAPE '\\')"
+                    .to_string(),
+            );
+            let escaped = word.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
+            let pattern = format!("%{escaped}%");
+            for _ in 0..5 {
+                binds.push(pattern.clone().into());
+            }
         }
     }
 
@@ -633,6 +678,7 @@ pub async fn create_work_order_in(txn: &impl ConnectionTrait, mut input: WoCreat
     )?;
     input.planned_end =
         super::time::stored_planned_time(input.planned_end.as_deref(), super::time::CODE_PLANNED_END_UNREADABLE)?;
+    super::time::ensure_planned_end_not_before_start(input.planned_start.as_deref(), input.planned_end.as_deref())?;
     ensure_work_order_statuses_if_needed(txn).await?;
     let default_closeout_policy_id = ensure_default_closeout_validation_policy_id(txn).await?;
 
@@ -781,8 +827,8 @@ pub async fn create_work_order_in(txn: &impl ConnectionTrait, mut input: WoCreat
             title, description, notes, \
             planned_start, planned_end, shift, expected_duration_hours, \
             requires_permit, permit_rule_code, permit_rule_permit_type, permit_from_safety_di, \
-            entity_sync_id, row_version, created_at, updated_at\
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
+            permit_required_types_json, entity_sync_id, row_version, created_at, updated_at\
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
         [
             code.clone().into(),
             type_id.into(),
@@ -859,6 +905,8 @@ pub async fn create_work_order_in(txn: &impl ConnectionTrait, mut input: WoCreat
             permit_flag.rule_code.clone().into(),
             permit_flag.permit_type_code.clone().into(),
             i64::from(from_safety_di).into(),
+            // Every permit type a matching rule gives (CMMS Advisor 2026-11-04): each is required.
+            permit_flag.required_set_json().into(),
             entity_sync_id.into(),
             now.clone().into(),
             now.clone().into(),
@@ -1093,6 +1141,12 @@ pub async fn update_wo_draft_fields(
         sets.push("description = ?".into());
         values.push(description.clone().into());
     }
+    // The dates as they will be stored: a side not sent stays as it is on the work order.
+    if input.planned_start.is_some() || input.planned_end.is_some() {
+        let start = input.planned_start.as_deref().or(current.planned_start.as_deref());
+        let end = input.planned_end.as_deref().or(current.planned_end.as_deref());
+        super::time::ensure_planned_end_not_before_start(start, end)?;
+    }
     if let Some(ref planned_start) = input.planned_start {
         sets.push("planned_start = ?".into());
         values.push(
@@ -1136,7 +1190,9 @@ pub async fn update_wo_draft_fields(
     }
 
     if sets.is_empty() {
-        // Nothing to update — return current row
+        // Nothing to update — return current row, still checked against the version the screen
+        // read (as a write is): the audit trail then knows nothing else changed it in between.
+        crate::wo::closeout::check_concurrency(u64::from(current.row_version == input.expected_row_version))?;
         txn.commit().await?;
         return Ok(current);
     }

@@ -7,7 +7,6 @@ import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { UrgencyBadge } from "@/components/common/urgency/UrgencyBadge";
-import { ReferenceCombobox } from "@/components/reference/ReferenceCombobox";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -18,6 +17,13 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { useSession } from "@/hooks/use-session";
@@ -27,7 +33,23 @@ import { useDiReviewStore } from "@/stores/di-review-store";
 import { useDiStore } from "@/stores/di-store";
 import type { InterventionRequest } from "@shared/ipc-types";
 
-const CONVERT_ONLY_DISPOSITIONS = ["converted_to_wo"] as const;
+/**
+ * What a request can be closed with, rejection first. The list is the one the backend accepts
+ * (`di::disposition::CLOSE_DISPOSITIONS`): each value is tied to a rule of the request workflow
+ * (duplicate needs the linked request, rejected and other need a reason), so the dialog never
+ * depends on a list that can come back empty.
+ */
+const CLOSE_DISPOSITIONS = [
+  "rejected_invalid",
+  "duplicate",
+  "no_work_required",
+  "solved_immediately",
+  "information_only",
+  "cancelled_by_planner",
+  "other",
+] as const;
+/** Dispositions that need a written reason. */
+const REASON_DISPOSITIONS = new Set<string>(["rejected_invalid", "other"]);
 
 function RelatedDiPicker({
   valueCode,
@@ -169,7 +191,7 @@ export function DiCloseDialog() {
 
   const open = di !== null;
   const needsRelated = disposition === "duplicate";
-  const needsNotes = disposition === "other";
+  const needsNotes = disposition != null && REASON_DISPOSITIONS.has(disposition);
 
   const resetForm = useCallback(() => {
     setDisposition(null);
@@ -249,13 +271,18 @@ export function DiCloseDialog() {
             <Label>
               {t("close.disposition")} <span className="text-tone-danger-fg">*</span>
             </Label>
-            <ReferenceCombobox
-              referenceType="di.disposition"
-              value={disposition}
-              onChange={setDisposition}
-              excludeCodes={CONVERT_ONLY_DISPOSITIONS}
-              allowCreate={false}
-            />
+            <Select value={disposition ?? ""} onValueChange={setDisposition}>
+              <SelectTrigger aria-label={t("close.disposition")}>
+                <SelectValue placeholder={t("close.dispositionPlaceholder")} />
+              </SelectTrigger>
+              <SelectContent>
+                {CLOSE_DISPOSITIONS.map((code) => (
+                  <SelectItem key={code} value={code}>
+                    {t(`disposition.${code}` as const)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           {needsRelated && (

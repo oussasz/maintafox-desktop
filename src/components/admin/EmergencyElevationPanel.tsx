@@ -34,6 +34,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useStepUp, isStepUpCancelled } from "@/hooks/use-step-up";
 import { appErrorReason } from "@/lib/app-error";
+import { roleLabel, withoutFormerRoles } from "@/lib/role-labels";
 import {
   grantEmergencyElevation,
   listEmergencyGrants,
@@ -277,6 +278,7 @@ export function EmergencyElevationPanel() {
       {
         accessorKey: "role_name",
         header: t("emergency.columns.role", "Role"),
+        cell: ({ row }) => roleLabel(t, row.original.role_name),
       },
       {
         id: "scope",
@@ -453,9 +455,9 @@ export function EmergencyElevationPanel() {
                   <SelectValue placeholder={t("emergency.fields.selectRole", "Choose a role")} />
                 </SelectTrigger>
                 <SelectContent>
-                  {roles.map((r) => (
+                  {withoutFormerRoles(roles).map((r) => (
                     <SelectItem key={r.id} value={String(r.id)}>
-                      {r.name}
+                      {roleLabel(t, r.name)}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -526,7 +528,7 @@ export function EmergencyElevationPanel() {
             <DialogDescription>{t("emergency.revokeConfirmDesc")}</DialogDescription>
           </DialogHeader>
           <p className="text-sm text-text-secondary">
-            {revokeTarget?.username} — {revokeTarget?.role_name}
+            {revokeTarget?.username} — {revokeTarget ? roleLabel(t, revokeTarget.role_name) : ""}
           </p>
           <div className="space-y-1.5">
             <Label htmlFor="emergency-revoke-reason">{t("console.reason.optional")}</Label>

@@ -3,7 +3,10 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 
-import { AnalyticsCustomizeDialog } from "@/components/analytics/AnalyticsCustomizeDialog";
+import {
+  ANALYTICS_WIDGET_LABEL_KEYS,
+  AnalyticsCustomizeDialog,
+} from "@/components/analytics/AnalyticsCustomizeDialog";
 import { AnalyticsDiStatusChart } from "@/components/analytics/AnalyticsDiStatusChart";
 import { AnalyticsWorkloadChart } from "@/components/analytics/AnalyticsWorkloadChart";
 import { SmrpIndicatorsSection } from "@/components/analytics/SmrpIndicatorsSection";
@@ -11,9 +14,11 @@ import { type KpiTrend, periodTrend } from "@/components/analytics/analytics-kpi
 import { SmartFilterBar } from "@/components/filters/SmartFilterBar";
 import { RefreshButton } from "@/components/layout/ModuleHeaderControls";
 import { VisualMetricCard } from "@/components/metrics/VisualMetricCard";
+import { useFleetKpiText } from "@/components/reliability/use-fleet-kpi-text";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
+import { DateField } from "@/components/ui/date-field";
 import {
   Dialog,
   DialogContent,
@@ -28,9 +33,9 @@ import { listLinks } from "@/lib/list-links";
 import { isSessionActiveForBackgroundWork } from "@/lib/session-ready";
 import { useWoOpenRuleText } from "@/lib/wo-open-rule";
 import {
+  type AnalyticsExecutiveDashboardWithSmrp,
   getAnalyticsDashboardLayout,
   getAnalyticsExecutiveDashboard,
-  type AnalyticsExecutiveDashboardWithSmrp,
 } from "@/services/analytics-dashboard-service";
 import { listOrgTree } from "@/services/org-node-service";
 import { useSessionStore } from "@/store/session-store";
@@ -50,14 +55,43 @@ import {
   RELIABILITY_RAM_EVIDENCE_HASH,
 } from "@shared/kpi-definitions";
 import {
-  ANALYTICS_HUB_KPI_KEYS as HUB,
   type AnalyticsHubKpiKey,
+  ANALYTICS_HUB_KPI_KEYS as HUB,
   hubStableBelow,
   hubTrendSense,
 } from "@shared/overview-kpi-registry";
 import { P } from "@shared/rbac/permissions.generated";
 
-type Horizon = 7 | 30 | 90;
+type Horizon = number;
+
+function localIsoDate(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+/** Number of days (1 to 366) covered by the chosen period, today included. */
+function periodToDays(period: string, fromDate: string): Horizon {
+  const today = new Date();
+  const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const dayMs = 86_400_000;
+  const since = (d: Date) => Math.round((startOfDay(today) - startOfDay(d)) / dayMs) + 1;
+  // 365 means "12 calendar months" for the backend: a calendar window of exactly 365 days uses 366.
+  const clamp = (n: number) => (n === 365 ? 366 : Math.max(1, Math.min(366, n)));
+  if (period === "month") return clamp(since(new Date(today.getFullYear(), today.getMonth(), 1)));
+  if (period === "year") return clamp(since(new Date(today.getFullYear(), 0, 1)));
+  if (period === "custom") {
+    const d = new Date(`${fromDate}T00:00:00`);
+    if (fromDate && !Number.isNaN(d.getTime())) return clamp(since(d));
+    return DEFAULT_HORIZON;
+  }
+  const n = Number(period);
+  return Number.isFinite(n) && n >= 1 ? n : DEFAULT_HORIZON;
+}
+/**
+ * 12 rolling months when no other period is chosen: the RAMS home default, and long enough for
+ * the MTBF (Advisor Q2; 7 and 30 days give counts only).
+ */
+const DEFAULT_HORIZON: Horizon = 365;
 
 const REFRESH_MS = 5 * 60 * 1000;
 /** Select value for "no organization filter" (Radix Select does not accept ""). */
@@ -77,9 +111,18 @@ interface KpiProps {
   onOpen?: () => void;
 }
 
+/** Blocks made of tiles only (the others are cards with their own title). */
+const TILE_WIDGETS = new Set<string>([
+  ANALYTICS_DASHBOARD_WIDGET_IDS.OPS_KPIS,
+  ANALYTICS_DASHBOARD_WIDGET_IDS.PM_DUE,
+  ANALYTICS_DASHBOARD_WIDGET_IDS.MAINTENANCE_COST,
+]);
+
 export function AnalyticsDashboardsPage() {
   const { t } = useTranslation("reports");
   const { t: td } = useTranslation("dashboard");
+  const { t: tr } = useTranslation("reliability");
+  const fleetText = useFleetKpiText();
   const { can, canAny } = usePermissions();
   const { formatCurrency, formatNumber, formatDecimal, formatPercent } = useFormatters();
   const navigate = useNavigate();
@@ -88,7 +131,11 @@ export function AnalyticsDashboardsPage() {
   const sessionLocked = useSessionStore((s) => s.info?.is_locked === true);
   const isAdmin = useSessionStore((s) => s.info?.is_admin === true);
 
-  const [horizon, setHorizon] = useState<Horizon>(30);
+  // Period choice: rolling presets (7/30/90 days, 12 months), the calendar month or year to date,
+  // or a free start date (until today). The backend takes the resulting number of days.
+  const [period, setPeriod] = useState<string>(String(DEFAULT_HORIZON));
+  const [fromDate, setFromDate] = useState("");
+  const horizon = useMemo(() => periodToDays(period, fromDate), [period, fromDate]);
   const [orgNodeId, setOrgNodeId] = useState<number | null>(null);
   const [orgRows, setOrgRows] = useState<OrgTreeRow[]>([]);
   // The organisation scope filter needs the organisation view right: without it the tree is not
@@ -197,27 +244,30 @@ export function AnalyticsDashboardsPage() {
     [effectiveLayout, canShowWidget],
   );
 
+  // The organisation as a tree (parents before their children, indented by depth), not a flat
+  // alphabetical list: a site and its workshops read together.
   const orgOptions = useMemo(() => {
-    return orgRows
+    return [...orgRows]
+      .sort((a, b) => a.node.ancestor_path.localeCompare(b.node.ancestor_path))
       .map((r) => ({
         id: r.node.id,
-        label: r.node.name || r.node.code,
-      }))
-      .sort((a, b) => a.label.localeCompare(b.label));
+        label: `${"  ".repeat(Math.max(0, r.node.depth))}${r.node.name || r.node.code}`,
+      }));
   }, [orgRows]);
 
   /**
    * The trend of a hub tile: its sense and its "stable" band both come from the KPI registry
-   * (D14), never from this screen. `percentage` is for a figure that is itself a percentage.
+   * (D14), never from this screen. `percentage` is for a figure that is itself a percentage,
+   * `count` for a number of items (a small count changes in units, not in percent).
    */
   const hubTrend = (
     key: AnalyticsHubKpiKey,
     kpi: AnalyticsKpiValue | null | undefined,
-    percentage = false,
+    kind: "percentage" | "count" | "measure" = "measure",
   ) =>
-    percentage
+    kind === "percentage"
       ? periodTrend(kpi, hubTrendSense(key), { stablePoints: hubStableBelow(key) })
-      : periodTrend(kpi, hubTrendSense(key), undefined, hubStableBelow(key));
+      : periodTrend(kpi, hubTrendSense(key), undefined, hubStableBelow(key), kind === "count");
 
   const trendLabel = (trend: KpiTrend) => {
     if (trend.points !== undefined) {
@@ -225,6 +275,11 @@ export function AnalyticsDashboardsPage() {
       const shown = Math.round(trend.points * 10) / 10;
       return t("hub.dashboards.trend.points", {
         change: `${shown > 0 ? "+" : ""}${formatDecimal(shown, 1)}`,
+      });
+    }
+    if (trend.delta !== undefined) {
+      return t("hub.dashboards.trend.vsPrevious", {
+        change: `${trend.delta > 0 ? "+" : ""}${formatDecimal(trend.delta, 0)}`,
       });
     }
     if (trend.percent === 0) return t("hub.dashboards.trend.stable");
@@ -258,14 +313,24 @@ export function AnalyticsDashboardsPage() {
   const now = t("hub.dashboards.context.now");
   // "Open OT" here counts one named rule: the tile says which, and its link applies the same.
   const openWosRule = woOpenRuleText(data?.open_wos_rule);
-  const horizonText = t("hub.dashboards.context.horizon", { days: horizon });
+  // "12 derniers mois" in the RAMS home's words (the backend takes 12 calendar months).
+  const horizonText =
+    period === "month"
+      ? t("hub.dashboards.context.thisMonth")
+      : period === "year"
+        ? t("hub.dashboards.context.thisYear")
+        : horizon === 365
+          ? fleetText.months(12)
+          : t("hub.dashboards.context.horizon", { days: horizon });
+  // Live fleet figures of the horizon (the RAMS home calculation): window, hours basis, exclusions.
+  const rel = data?.reliability ?? null;
+  const snapshotContext = t("hub.dashboards.context.snapshots", { period: horizonText });
   const openRamsDashboard = () => navigate(`${ANALYTICS_RAMS_BASE_PATH}/dashboard`);
   const openRamsEvidence = () =>
     navigate(`${ANALYTICS_RAMS_BASE_PATH}/foundation${RELIABILITY_RAM_EVIDENCE_HASH}`);
   // The reliability tiles open /reliability, which needs ram.view (the widget itself shows with
   // rep.view): without it the tile is a figure, not a link.
   const ramOpen = (open: () => void) => (can(P.RAM_VIEW) ? { onOpen: open } : {});
-  const reliabilityAvailable = data?.avg_mtbf_hours.available === true;
 
   const renderWidget = (id: string) => {
     switch (id) {
@@ -278,7 +343,7 @@ export function AnalyticsDashboardsPage() {
                 context: now,
                 value: count(data?.open_dis.value),
                 available: data?.open_dis.available ?? false,
-                trend: hubTrend(HUB.OPEN_DIS, data?.open_dis),
+                trend: hubTrend(HUB.OPEN_DIS, data?.open_dis, "count"),
                 onOpen: () => navigate(listLinks.requests({ scope: "open" })),
               })}
             {can(P.OT_VIEW) &&
@@ -287,7 +352,7 @@ export function AnalyticsDashboardsPage() {
                 context: openWosRule ? `${now} · ${openWosRule.label}` : now,
                 value: count(data?.open_wos.value),
                 available: data?.open_wos.available ?? false,
-                trend: hubTrend(HUB.OPEN_WOS, data?.open_wos),
+                trend: hubTrend(HUB.OPEN_WOS, data?.open_wos, "count"),
                 ...(openWosRule
                   ? { onOpen: () => navigate(listLinks.workOrders({ scope: openWosRule.scope })) }
                   : {}),
@@ -298,7 +363,7 @@ export function AnalyticsDashboardsPage() {
                 context: t("hub.dashboards.context.inService"),
                 value: count(data?.total_assets.value),
                 available: data?.total_assets.available ?? false,
-                trend: hubTrend(HUB.TOTAL_ASSETS, data?.total_assets),
+                trend: hubTrend(HUB.TOTAL_ASSETS, data?.total_assets, "count"),
                 onOpen: () => navigate(DASHBOARD_KPI_DRILL_PATH[DASHBOARD_KPI_KEYS.TOTAL_ASSETS]),
               })}
             {canAny(P.DI_VIEW, P.PM_VIEW, P.OT_VIEW) &&
@@ -307,7 +372,7 @@ export function AnalyticsDashboardsPage() {
                 context: t("hub.dashboards.context.overdue"),
                 value: count(data?.overdue_items.value),
                 available: data?.overdue_items.available ?? false,
-                trend: hubTrend(HUB.OVERDUE_ITEMS, data?.overdue_items),
+                trend: hubTrend(HUB.OVERDUE_ITEMS, data?.overdue_items, "count"),
                 // Three lists stand behind this figure: the user picks which one to open.
                 onOpen: () => setOverdueChooserOpen(true),
               })}
@@ -321,7 +386,7 @@ export function AnalyticsDashboardsPage() {
               context: now,
               value: count(data?.pm_overdue.value),
               available: data?.pm_overdue.available ?? false,
-              trend: hubTrend(HUB.PM_OVERDUE, data?.pm_overdue),
+              trend: hubTrend(HUB.PM_OVERDUE, data?.pm_overdue, "count"),
               onOpen: () => navigate(listLinks.pmDue("overdue")),
             })}
             {renderKpi({
@@ -329,7 +394,6 @@ export function AnalyticsDashboardsPage() {
               context: t("hub.dashboards.context.today"),
               value: count(data?.pm_due_today.value),
               available: data?.pm_due_today.available ?? false,
-              trend: hubTrend(HUB.PM_DUE_TODAY, data?.pm_due_today),
               onOpen: () => navigate(listLinks.pmDue("today")),
             })}
             {renderKpi({
@@ -337,7 +401,6 @@ export function AnalyticsDashboardsPage() {
               context: t("hub.dashboards.context.next7"),
               value: count(data?.pm_due_next_7d.value),
               available: data?.pm_due_next_7d.available ?? false,
-              trend: hubTrend(HUB.PM_DUE_NEXT_7D, data?.pm_due_next_7d),
               onOpen: () => navigate(listLinks.pmDue("next7")),
             })}
           </div>
@@ -362,53 +425,71 @@ export function AnalyticsDashboardsPage() {
             </CardHeader>
             <CardContent>
               <p className="mb-3 text-xs text-text-muted">
-                {t("hub.dashboards.reliabilityHint", { days: horizon })}
+                {t("hub.dashboards.reliabilityHint", { period: horizonText })}
               </p>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {/* Same labels and definitions as the RAMS home (`rams.kpi.*`). */}
                 {renderKpi({
-                  title: t("hub.dashboards.kpi.mtbf"),
-                  context: horizonText,
+                  title: tr("rams.kpi.mtbf"),
+                  context: fleetText.rateContext("mtbf", rel, horizonText),
                   value: hours(data?.avg_mtbf_hours.value),
+                  unit: "h",
                   available: data?.avg_mtbf_hours.available ?? false,
                   trend: hubTrend(HUB.AVG_MTBF_HOURS, data?.avg_mtbf_hours),
                   ...ramOpen(openRamsDashboard),
                 })}
                 {renderKpi({
-                  title: t("hub.dashboards.kpi.mttr"),
-                  context: horizonText,
+                  title: tr("rams.kpi.mttr"),
+                  context: fleetText.rateContext("mttr", rel, horizonText),
                   value: hours(data?.avg_mttr_hours.value),
+                  unit: "h",
                   available: data?.avg_mttr_hours.available ?? false,
                   trend: hubTrend(HUB.AVG_MTTR_HOURS, data?.avg_mttr_hours),
                   ...ramOpen(openRamsDashboard),
                 })}
                 {renderKpi({
-                  title: t("hub.dashboards.kpi.availability"),
-                  context: horizonText,
+                  title: tr("rams.kpi.availability"),
+                  context: fleetText.rateContext("availability", rel, horizonText),
                   value: ratio(data?.avg_availability.value),
                   available: data?.avg_availability.available ?? false,
-                  trend: hubTrend(HUB.AVG_AVAILABILITY, data?.avg_availability, true),
+                  trend: hubTrend(HUB.AVG_AVAILABILITY, data?.avg_availability, "percentage"),
                   ...ramOpen(openRamsDashboard),
                 })}
                 {renderKpi({
-                  title: t("hub.dashboards.kpi.dataQuality"),
-                  context: horizonText,
+                  title: tr("rams.kpi.failures"),
+                  context: tr("rams.kpi.failuresHint", {
+                    period: horizonText,
+                    hours: formatNumber(Math.round(rel?.downtime_hours ?? 0)),
+                  }),
+                  value: count(data?.reliability_total_events),
+                  available: rel != null,
+                  ...ramOpen(() => navigate(`${ANALYTICS_RAMS_BASE_PATH}/foundation`)),
+                })}
+                {renderKpi({
+                  title: tr("rams.kpi.dataQuality"),
+                  context: tr("rams.kpi.dataQualityHint", {
+                    period: horizonText,
+                    mode: rel?.records_missing_mode ?? 0,
+                    cause: rel?.records_missing_cause ?? 0,
+                    mechanism: rel?.records_missing_mechanism ?? 0,
+                  }),
                   value: ratio(data?.avg_data_quality.value),
                   available: data?.avg_data_quality.available ?? false,
-                  trend: hubTrend(HUB.AVG_DATA_QUALITY, data?.avg_data_quality, true),
+                  trend: hubTrend(HUB.AVG_DATA_QUALITY, data?.avg_data_quality, "percentage"),
                   ...ramOpen(openRamsEvidence),
+                })}
+                {/* From the stored snapshots (said on the card): a sample size, never quality. */}
+                {renderKpi({
+                  title: t("hub.dashboards.kpi.sampleSize"),
+                  context: snapshotContext,
+                  value: ratio(data?.sample_size_score.value),
+                  available: data?.sample_size_score.available ?? false,
                 })}
                 {renderKpi({
                   title: t("hub.dashboards.kpi.snapshots"),
-                  context: horizonText,
+                  context: snapshotContext,
                   value: count(data?.reliability_snapshot_count),
-                  available: reliabilityAvailable || Boolean(data?.reliability_snapshot_count),
-                })}
-                {renderKpi({
-                  title: t("hub.dashboards.kpi.failureEvents"),
-                  context: horizonText,
-                  value: count(data?.reliability_total_events),
-                  available: reliabilityAvailable || Boolean(data?.reliability_total_events),
-                  ...ramOpen(() => navigate(`${ANALYTICS_RAMS_BASE_PATH}/foundation`)),
+                  available: rel != null || Boolean(data?.reliability_snapshot_count),
                 })}
               </div>
             </CardContent>
@@ -486,11 +567,14 @@ export function AnalyticsDashboardsPage() {
               { value: "7", label: t("hub.dashboards.filters.days7") },
               { value: "30", label: t("hub.dashboards.filters.days30") },
               { value: "90", label: t("hub.dashboards.filters.days90") },
+              { value: "month", label: t("hub.dashboards.filters.thisMonth") },
+              { value: "year", label: t("hub.dashboards.filters.thisYear") },
+              { value: "custom", label: t("hub.dashboards.filters.custom") },
             ],
-            // 30 days is the dashboard's period when no other is chosen (shown as "all").
-            value: horizon === 30 ? null : String(horizon),
-            allLabel: t("hub.dashboards.filters.days30"),
-            onChange: (v) => setHorizon((v ? Number(v) : 30) as Horizon),
+            // 12 months is the dashboard's period when no other is chosen (shown as "all").
+            value: period === String(DEFAULT_HORIZON) ? null : period,
+            allLabel: t("hub.dashboards.filters.months12"),
+            onChange: (v) => setPeriod(v ?? String(DEFAULT_HORIZON)),
           },
           ...(canReadOrg
             ? [
@@ -507,10 +591,24 @@ export function AnalyticsDashboardsPage() {
             : []),
         ]}
         onReset={() => {
-          setHorizon(30);
+          setPeriod(String(DEFAULT_HORIZON));
+          setFromDate("");
           setOrgNodeId(null);
         }}
       />
+      {period === "custom" ? (
+        <div className="flex flex-wrap items-center gap-2 text-sm text-text-secondary">
+          <span>{t("hub.dashboards.filters.customFrom")}</span>
+          <DateField
+            aria-label={t("hub.dashboards.filters.customFrom")}
+            className="w-44"
+            value={fromDate}
+            max={localIsoDate(new Date())}
+            onChange={setFromDate}
+          />
+          <span className="text-xs text-text-muted">{t("hub.dashboards.filters.customHint")}</span>
+        </div>
+      ) : null}
 
       {error ? (
         <ErrorState
@@ -525,7 +623,15 @@ export function AnalyticsDashboardsPage() {
         <div className="space-y-4">
           <SmrpIndicatorsSection smrp={data?.smrp ?? null} can={can} />
           {visibleWidgets.map((w) => (
-            <Fragment key={w.id}>{renderWidget(w.id)}</Fragment>
+            <Fragment key={w.id}>
+              {/* Tile blocks carry no card title of their own: name them as in Personnaliser. */}
+              {TILE_WIDGETS.has(w.id) && ANALYTICS_WIDGET_LABEL_KEYS[w.id] ? (
+                <h3 className="-mb-2 text-sm font-medium text-text-secondary">
+                  {t(ANALYTICS_WIDGET_LABEL_KEYS[w.id] ?? "")}
+                </h3>
+              ) : null}
+              {renderWidget(w.id)}
+            </Fragment>
           ))}
         </div>
       )}

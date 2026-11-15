@@ -2,12 +2,45 @@
  * Shared pieces of the reliability (RAMS) module screens: section card, callout, field and the
  * period presets of the fleet view.
  */
-import type { ReactNode } from "react";
+import { type ReactNode, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 
 import { mfCard } from "@/design-system/tokens";
 import { type Tone, mfTone } from "@/design-system/tone";
+import { usePermissions } from "@/hooks/use-permissions";
+import { usePermissionText } from "@/lib/permission-labels";
 import { cn } from "@/lib/utils";
+import type { PermissionName } from "@shared/rbac/permissions.generated";
+
+/**
+ * Why a RAMS action is unavailable to the current user: `reasonFor(P.x, P.y)` returns the
+ * "Droit requis : <label>" text for the first right the user lacks, `undefined` when all are held.
+ * Use it as the `title` of a disabled control; the backend still enforces the right.
+ */
+export function useRamsRight() {
+  const { can } = usePermissions();
+  const { t } = useTranslation("reliability");
+  const text = usePermissionText();
+  const reasonFor = useCallback(
+    (...rights: PermissionName[]): string | undefined => {
+      const missing = rights.find((r) => !can(r));
+      return missing ? t("rams.rights.required", { right: text.label(missing) }) : undefined;
+    },
+    [can, t, text],
+  );
+  return { can, reasonFor };
+}
+
+/** One visible note for screens whose per-row actions are hidden when the right is missing. */
+export function RamsReadOnlyNote({ right }: { right: PermissionName }) {
+  const { t } = useTranslation("reliability");
+  const text = usePermissionText();
+  return (
+    <p role="note" className="text-xs text-text-muted">
+      {t("rams.rights.readOnly", { right: text.label(right) })}
+    </p>
+  );
+}
 
 export function RamsCard({
   title,
@@ -71,8 +104,61 @@ export const RAMS_TABLE_FRAME =
 export const RAMS_FILTER_LABEL = "text-[11px] font-medium uppercase tracking-wide text-text-muted";
 
 /** Period presets of the fleet view, in months back from today. */
+/** Round an interval for display and for the decision (hundreds of hours above 1 000 h). */
+export function roundInterval(h: number): number {
+  if (h >= 1000) return Math.round(h / 100) * 100;
+  if (h >= 100) return Math.round(h / 10) * 10;
+  return Math.max(1, Math.round(h));
+}
+
 export const RAMS_PERIOD_MONTHS = [6, 12, 24, 36] as const;
 export type RamsPeriodMonths = (typeof RAMS_PERIOD_MONTHS)[number];
+/** Default window of the RAMS screens: 12 rolling months (Advisor decision L2-10 / L2-11). */
+export const RAMS_DEFAULT_MONTHS: RamsPeriodMonths = 12;
+
+/** Data-quality worklist of the reliability module. */
+export const RAMS_DATA_QUALITY_PATH = "/reliability/data-quality";
+
+/** Query of the quality page carrying a period, site and class (read by `dataQualityParams`). */
+export function dataQualitySearch(
+  months: number,
+  orgNodeId: number | null,
+  classId: number | null,
+): URLSearchParams {
+  const q = new URLSearchParams({ months: String(months) });
+  if (orgNodeId != null) q.set("site", String(orgNodeId));
+  if (classId != null) q.set("class", String(classId));
+  return q;
+}
+
+/** Address of the quality page with the same period, site and class as the RAMS home page. */
+export function dataQualityHref(
+  months: number,
+  orgNodeId: number | null,
+  classId: number | null,
+): string {
+  return `${RAMS_DATA_QUALITY_PATH}?${dataQualitySearch(months, orgNodeId, classId).toString()}`;
+}
+
+/** Period, site and class handed to the quality page (see `dataQualityHref`). */
+export function dataQualityParams(params: URLSearchParams): {
+  months: RamsPeriodMonths;
+  orgNodeId: number | null;
+  classId: number | null;
+} {
+  const id = (raw: string | null) => {
+    const n = Number(raw ?? "");
+    return Number.isInteger(n) && n > 0 ? n : null;
+  };
+  const m = Number(params.get("months") ?? "");
+  return {
+    months: (RAMS_PERIOD_MONTHS as readonly number[]).includes(m)
+      ? (m as RamsPeriodMonths)
+      : RAMS_DEFAULT_MONTHS,
+    orgNodeId: id(params.get("site")),
+    classId: id(params.get("class")),
+  };
+}
 
 export function periodFromMonths(
   months: number,

@@ -135,3 +135,36 @@ pub async fn notify_deferred(db: &DatabaseConnection, di: &InterventionRequest) 
     )
     .await;
 }
+
+/// L1-31: the work order made from a request is closed — its requester is told the work is done.
+/// Sent in the request's own `di_closed` category (routed to the requester, `submitter`), with its
+/// own message; one per work order closure (a reopened then closed again work order tells again).
+pub async fn notify_work_done(db: &DatabaseConnection, di_id: i64, wo_id: i64, wo_code: &str) {
+    let di = match super::queries::get_intervention_request(db, di_id).await {
+        Ok(Some(di)) => di,
+        Ok(None) => return,
+        Err(err) => {
+            tracing::warn!(error = %err, di_id, "DI work-done notification: request not read");
+            return;
+        }
+    };
+    let closed_at = crate::clock::now().format("%Y%m%dT%H%M%S").to_string();
+    let input = NotificationEventInput {
+        source_module: "di".into(),
+        source_record_id: Some(di.id.to_string()),
+        event_code: "di_work_done".into(),
+        category_code: "di_closed".into(),
+        severity: "info".into(),
+        dedupe_key: Some(format!("di-di_work_done-{}-{wo_id}-{closed_at}", di.id)),
+        payload_json: None,
+        title: format!("Travaux terminés — {} ({wo_code})", di.code),
+        body: Some(format!("{} : l'OT {wo_code} est clôturé.", di.title)),
+        action_url: Some(di_action_url(di.id)),
+    };
+    let mut params = di_params(&di);
+    params["wo_code"] = serde_json::Value::from(wo_code);
+    let message = NotificationMessage::new("di_work_done", params).with_urgency(di_urgency(&di));
+    if let Err(err) = emit_event_with(db, input, Some(&message)).await {
+        tracing::warn!(error = %err, di_id = di.id, "DI work-done notification emit failed");
+    }
+}

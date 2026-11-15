@@ -168,6 +168,10 @@ pub(crate) struct CloseoutEntry {
     /// Judged (R3 / R4, and its children by R5-R7): not for a work order new here received by the
     /// snapshot of this PC's first join ([`first_join_snapshot_history`]).
     pub judged: bool,
+    /// The status changes of this work order held here before the change: the highest local id of
+    /// its transition rows (0: none). A transition written by this apply has a higher id and is the
+    /// one of the received change (`wo::execution_actor_sync`).
+    pub held_transition_max_id: i64,
 }
 
 fn sync_err(e: impl std::fmt::Display) -> AppError {
@@ -231,11 +235,13 @@ pub(crate) async fn closeout_entry(
         _ => CloseoutTarget::Other,
     };
     let judged = local.is_some() || !first_join_snapshot_history(conn, entity_sync_id).await?;
+    let held_transition_max_id = crate::wo::execution_actor_sync::held_transition_max_id(conn, entity_sync_id).await?;
     Ok(Ok(Some(CloseoutEntry {
         wo_sync_id: entity_sync_id.to_string(),
         target,
         previous_status,
         judged,
+        held_transition_max_id,
     })))
 }
 

@@ -17,11 +17,19 @@ function humanizeAge(days: number | null, t: Translator) {
 }
 
 /**
- * Life summary of an asset. Availability is the operational availability of the latest
+ * Life summary of an asset. Age runs from the commissioning date, never from the record creation;
+ * without a commissioning date it reads "—" and says what to fill in (L2-06). Availability is the operational availability of the latest
  * reliability analysis of the asset (RAMS), with the date it covers; without one it reads "—"
  * and says why. No figure is estimated here, and no count reads 0 before the summary is loaded.
  */
-export function AssetLifeSummaryStrip({ summary }: { summary: AssetHistorySummary | null }) {
+export function AssetLifeSummaryStrip({
+  summary,
+  failures,
+}: {
+  summary: AssetHistorySummary | null;
+  /** Failure count of the RAMS calculation (one source); null = the summary's own count. */
+  failures?: { count: number | null; months: number } | null;
+}) {
   const { t } = useTranslation("equipment");
   const { formatDate, formatNumber, formatPercent } = useFormatters();
 
@@ -29,9 +37,9 @@ export function AssetLifeSummaryStrip({ summary }: { summary: AssetHistorySummar
     const count = (n: number | undefined) => (summary && n != null ? formatNumber(n) : "—");
     return [
       {
-        label: t("history.summary.created"),
-        value: summary?.created_at ? formatDate(summary.created_at) : "—",
-        hint: null,
+        label: t("history.summary.commissioned"),
+        value: summary?.commissioned_at ? formatDate(summary.commissioned_at) : "—",
+        hint: summary && !summary.commissioned_at ? t("history.summary.commissionedMissing") : null,
       },
       {
         label: t("history.summary.age"),
@@ -40,7 +48,17 @@ export function AssetLifeSummaryStrip({ summary }: { summary: AssetHistorySummar
       },
       { label: t("history.summary.wo"), value: count(summary?.wo_count), hint: null },
       { label: t("history.summary.pm"), value: count(summary?.pm_count), hint: null },
-      { label: t("history.summary.failures"), value: count(summary?.failure_count), hint: null },
+      failures
+        ? {
+            label: t("history.summary.failures"),
+            value: failures.count == null ? "—" : formatNumber(failures.count),
+            hint: t("history.summary.failuresRams", { months: failures.months }),
+          }
+        : {
+            label: t("history.summary.failures"),
+            value: count(summary?.failure_count),
+            hint: null,
+          },
       {
         label: t("history.summary.availability"),
         value:
@@ -55,7 +73,7 @@ export function AssetLifeSummaryStrip({ summary }: { summary: AssetHistorySummar
               : null,
       },
     ];
-  }, [summary, t, formatDate, formatNumber, formatPercent]);
+  }, [summary, failures, t, formatDate, formatNumber, formatPercent]);
 
   return (
     <section aria-label={t("history.summary.title")} className="space-y-2">

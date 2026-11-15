@@ -10,6 +10,7 @@ import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 
 import { PermissionGate } from "@/components/PermissionGate";
+import { useAssetRamFigures } from "@/components/assets/detail/use-asset-ram-figures";
 import { useLoad } from "@/components/assets/detail/use-load";
 import { LinkedEntityBadge } from "@/components/common/LinkedEntityBadge";
 import { DetailSectionCard } from "@/components/detail";
@@ -29,6 +30,7 @@ import {
 } from "@/design-system/tone";
 import { useFormatters } from "@/hooks/use-formatters";
 import { useCanReadList } from "@/lib/list-access";
+import { listLinks } from "@/lib/list-links";
 import { useWoOpenRuleText } from "@/lib/wo-open-rule";
 import { getAssetMaintenanceProfile } from "@/services/asset-registry-service";
 import { listDis } from "@/services/di-service";
@@ -48,6 +50,7 @@ export function AssetMaintenanceTab({ asset }: { asset: Asset }) {
     useFormatters();
   const navigate = useNavigate();
   const [rollUp, setRollUp] = useState(false);
+  const ram = useAssetRamFigures(asset.id);
 
   const profileLoad = useMemo(
     () => () => getAssetMaintenanceProfile(asset.id, rollUp),
@@ -86,7 +89,7 @@ export function AssetMaintenanceTab({ asset }: { asset: Asset }) {
           <Button
             variant="outline"
             className="h-11 gap-1.5"
-            onClick={() => void navigate(`/reliability?equipment=${asset.id}`)}
+            onClick={() => void navigate(listLinks.ramsAsset(asset.id))}
           >
             <Activity className="h-4 w-4" aria-hidden />
             {t("maintenance.openRams")}
@@ -119,13 +122,23 @@ export function AssetMaintenanceTab({ asset }: { asset: Asset }) {
                   : t("maintenance.kpi.openHint", { count: p.open_work_order_count })
               }
             />
+            {/* With the RAMS right the count is the RAMS one (same calculation and period as the
+                reliability screen, this asset alone); without it, the record's own count. */}
             <KpiTile
               label={t("maintenance.kpi.failures")}
-              value={formatNumber(p.failure_work_order_count)}
+              value={
+                ram.allowed
+                  ? ram.data
+                    ? formatNumber(ram.data.failures)
+                    : "—"
+                  : formatNumber(p.failure_work_order_count)
+              }
               hint={
-                p.last_failure_at
-                  ? t("maintenance.kpi.lastFailure", { date: formatDate(p.last_failure_at) })
-                  : t("maintenance.kpi.noFailure")
+                ram.allowed
+                  ? t("maintenance.kpi.failuresRams", { months: ram.months })
+                  : p.last_failure_at
+                    ? t("maintenance.kpi.lastFailure", { date: formatDate(p.last_failure_at) })
+                    : t("maintenance.kpi.noFailure")
               }
             />
             <KpiTile
@@ -134,23 +147,37 @@ export function AssetMaintenanceTab({ asset }: { asset: Asset }) {
               unit={t("maintenance.kpi.hours")}
               hint={t("maintenance.kpi.downtimeHint")}
             />
+            {/* No work yet: "—", not a 0 that reads like a measured cost (L2-06). The lifetime
+                tile names the date it starts from instead of an unexplained "origin". */}
             <KpiTile
-              label={t("maintenance.kpi.costLifetime")}
-              value={formatCurrency(p.cost_lifetime.total)}
-              hint={t("maintenance.kpi.costSplit", {
-                labor: formatCurrency(p.cost_lifetime.labor),
-                parts: formatCurrency(p.cost_lifetime.parts),
-                services: formatCurrency(p.cost_lifetime.services),
-              })}
+              label={
+                p.cost_since
+                  ? t("maintenance.kpi.costLifetime", { date: formatDate(p.cost_since) })
+                  : t("maintenance.kpi.costLifetimeNone")
+              }
+              value={p.work_order_count > 0 ? formatCurrency(p.cost_lifetime.total) : "—"}
+              hint={
+                p.work_order_count > 0
+                  ? t("maintenance.kpi.costSplit", {
+                      labor: formatCurrency(p.cost_lifetime.labor),
+                      parts: formatCurrency(p.cost_lifetime.parts),
+                      services: formatCurrency(p.cost_lifetime.services),
+                    })
+                  : t("maintenance.kpi.noCostYet")
+              }
             />
             <KpiTile
               label={t("maintenance.kpi.costRecent", { months: p.recent_window_months })}
-              value={formatCurrency(p.cost_recent.total)}
-              hint={t("maintenance.kpi.costSplit", {
-                labor: formatCurrency(p.cost_recent.labor),
-                parts: formatCurrency(p.cost_recent.parts),
-                services: formatCurrency(p.cost_recent.services),
-              })}
+              value={p.work_order_count > 0 ? formatCurrency(p.cost_recent.total) : "—"}
+              hint={
+                p.work_order_count > 0
+                  ? t("maintenance.kpi.costSplit", {
+                      labor: formatCurrency(p.cost_recent.labor),
+                      parts: formatCurrency(p.cost_recent.parts),
+                      services: formatCurrency(p.cost_recent.services),
+                    })
+                  : t("maintenance.kpi.noCostYet")
+              }
             />
             <KpiTile
               label={t("maintenance.kpi.costVsReplacement")}

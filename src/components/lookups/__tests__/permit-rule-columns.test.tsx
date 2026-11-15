@@ -1,6 +1,6 @@
 /**
  * Permit requirement rules in Données de référence: a rule is written in the value's metadata with
- * its class / work type and permit type, other keys kept; the editor picks each from its list and
+ * its class / work type / criticality and permit type, other keys kept; the editor picks each from its list and
  * marks a rule that does not name what it needs.
  */
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -37,6 +37,7 @@ function value(metadata: string | null): ReferenceValue {
 const options: PermitRuleOptions = {
   classes: [{ code: "PUMP", label: "Pompes" }],
   workTypes: [{ code: "CORR", label: "Correctif" }],
+  criticalities: [{ code: "A", label: "Criticité A" }],
   permitTypes: [{ code: "HOT_WORK", label: "Travail à chaud" }],
   canReadPermitTypes: true,
   loaded: true,
@@ -51,23 +52,76 @@ describe("permit rule metadata", () => {
   it("reads and writes the rule, keeping other keys", () => {
     const v = value('{"equipment_class_code":"PUMP","permit_type_code":"HOT_WORK","origin":"x"}');
     const state = permitRuleStateFrom(v);
-    expect(state).toEqual({ classCode: "PUMP", workTypeCode: "", permitTypeCode: "HOT_WORK" });
+    expect(state).toEqual({
+      classCode: "PUMP",
+      workTypeCode: "",
+      criticalityCode: "",
+      permitTypeCode: "HOT_WORK",
+    });
     const written = JSON.parse(
       buildPermitRuleMetadata(v.metadata_json, { ...state, classCode: "", workTypeCode: "CORR" }),
     ) as Record<string, unknown>;
     expect(written).toEqual({ origin: "x", work_type_code: "CORR", permit_type_code: "HOT_WORK" });
   });
 
+  it("reads and writes a criticality rule (the shipped CRITICITE_A)", () => {
+    const v = value(
+      '{"origin":"shipped","equipment_class_code":null,"work_type_code":null,"criticality_code":"A","permit_type_code":"loto"}',
+    );
+    const state = permitRuleStateFrom(v);
+    expect(state).toEqual({
+      classCode: "",
+      workTypeCode: "",
+      criticalityCode: "A",
+      permitTypeCode: "loto",
+    });
+    expect(JSON.parse(buildPermitRuleMetadata(null, state))).toEqual({
+      criticality_code: "A",
+      permit_type_code: "loto",
+    });
+    // An empty choice is left out; the backend writes every key when it checks the rule.
+    const written = JSON.parse(
+      buildPermitRuleMetadata(v.metadata_json, { ...state, criticalityCode: "" }),
+    ) as Record<string, unknown>;
+    expect(written).toEqual({
+      origin: "shipped",
+      permit_type_code: "loto",
+    });
+  });
+
   it("needs a permit type and a class or a work type", () => {
     expect(permitRuleComplete(EMPTY_PERMIT_RULE_EDIT)).toBe(false);
-    expect(permitRuleComplete({ classCode: "PUMP", workTypeCode: "", permitTypeCode: "" })).toBe(
-      false,
-    );
     expect(
-      permitRuleComplete({ classCode: "", workTypeCode: "", permitTypeCode: "HOT_WORK" }),
+      permitRuleComplete({
+        classCode: "PUMP",
+        workTypeCode: "",
+        criticalityCode: "",
+        permitTypeCode: "",
+      }),
     ).toBe(false);
     expect(
-      permitRuleComplete({ classCode: "", workTypeCode: "CORR", permitTypeCode: "HOT_WORK" }),
+      permitRuleComplete({
+        classCode: "",
+        workTypeCode: "",
+        criticalityCode: "",
+        permitTypeCode: "HOT_WORK",
+      }),
+    ).toBe(false);
+    expect(
+      permitRuleComplete({
+        classCode: "",
+        workTypeCode: "CORR",
+        criticalityCode: "",
+        permitTypeCode: "HOT_WORK",
+      }),
+    ).toBe(true);
+    expect(
+      permitRuleComplete({
+        classCode: "",
+        workTypeCode: "",
+        criticalityCode: "A",
+        permitTypeCode: "loto",
+      }),
     ).toBe(true);
     expect(isPermitRulesDomain("permit.requirement_rules")).toBe(true);
     expect(isPermitRulesDomain("EQUIPMENT.CLASS")).toBe(false);
@@ -106,7 +160,12 @@ describe("PermitRuleEditCells", () => {
         <tbody>
           <tr>
             <PermitRuleEditCells
-              state={{ classCode: "OLD", workTypeCode: "", permitTypeCode: "HOT_WORK" }}
+              state={{
+                classCode: "OLD",
+                workTypeCode: "",
+                criticalityCode: "",
+                permitTypeCode: "HOT_WORK",
+              }}
               onChange={vi.fn()}
               options={options}
             />
@@ -142,7 +201,7 @@ describe("usePermitRuleOptions", () => {
     return (
       <p data-testid="probe">
         {o.classes.map((c) => c.code).join(",")}|{o.workTypes.map((c) => c.code).join(",")}|
-        {o.permitTypes.map((c) => c.code).join(",")}
+        {o.criticalities.map((c) => c.code).join(",")}|{o.permitTypes.map((c) => c.code).join(",")}
       </p>
     );
   }
@@ -151,32 +210,48 @@ describe("usePermitRuleOptions", () => {
     ref.listPublishedReferenceValuesByDomainCode.mockImplementation(async (code: string) =>
       code === "EQUIPMENT.CLASS"
         ? [{ code: "PUMP", label: "Pompes", is_active: true }]
-        : [
-            { code: "CORR", label: "Correctif", is_active: true },
-            { code: "OLD", label: "Ancien", is_active: false },
-          ],
+        : code === "EQUIPMENT.CRITICALITY"
+          ? [{ code: "A", label: "Criticité A", is_active: true }]
+          : [
+              { code: "CORR", label: "Correctif", is_active: true },
+              { code: "OLD", label: "Ancien", is_active: false },
+            ],
     );
     permits.listPermitTypes.mockResolvedValue([{ code: "HOT_WORK", name: "Travail à chaud" }]);
     const { rerender } = render(<Probe enabled={false} />);
     expect(ref.listPublishedReferenceValuesByDomainCode).not.toHaveBeenCalled();
     rerender(<Probe enabled />);
     await waitFor(() =>
-      expect(screen.getByTestId("probe")).toHaveTextContent("PUMP|CORR|HOT_WORK"),
+      expect(screen.getByTestId("probe")).toHaveTextContent("PUMP|CORR|A|HOT_WORK"),
     );
   });
 });
 
 describe("rules the conversion cannot use", () => {
   it("names the unknown class, work type or permit type, judged only once the lists are read", () => {
-    const rule = { classCode: "GONE", workTypeCode: "", permitTypeCode: "HOT_WORK" };
+    const rule = {
+      classCode: "GONE",
+      workTypeCode: "",
+      criticalityCode: "",
+      permitTypeCode: "HOT_WORK",
+    };
     expect(permitRuleProblem(rule, options)).toEqual({ kind: "unknownClass", code: "GONE" });
     expect(permitRuleProblem(rule, { ...options, loaded: false })).toBeNull();
     expect(
-      permitRuleProblem({ classCode: "PUMP", workTypeCode: "", permitTypeCode: "X" }, options),
+      permitRuleProblem(
+        { classCode: "PUMP", workTypeCode: "", criticalityCode: "", permitTypeCode: "X" },
+        options,
+      ),
     ).toEqual({ kind: "unknownPermitType", code: "X" });
     expect(
       permitRuleProblem(
-        { classCode: "PUMP", workTypeCode: "", permitTypeCode: "HOT_WORK" },
+        { classCode: "", workTypeCode: "", criticalityCode: "Z", permitTypeCode: "HOT_WORK" },
+        options,
+      ),
+    ).toEqual({ kind: "unknownCriticality", code: "Z" });
+    expect(
+      permitRuleProblem(
+        { classCode: "PUMP", workTypeCode: "", criticalityCode: "", permitTypeCode: "HOT_WORK" },
         options,
       ),
     ).toBeNull();

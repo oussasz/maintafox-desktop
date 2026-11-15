@@ -407,7 +407,7 @@ async fn labor_lines<C: ConnectionTrait>(db: &C, wo_id: i64) -> AppResult<(Vec<W
         .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, sql, [wo_id.into()]))
         .await?;
     let frozen = frozen_labor_rates(db, wo_id).await?;
-    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+    let today = crate::clock::now_local().format("%Y-%m-%d").to_string();
     let mut lines = Vec::with_capacity(rows.len());
     for r in rows {
         let entry_sync_id: String = decode(&r, "entry_sync_id")?;
@@ -583,7 +583,7 @@ async fn purchase_lines<C: ConnectionTrait>(db: &C, wo_id: i64) -> AppResult<Vec
         return Ok(Vec::new());
     }
     let tenant = crate::inventory::fx::tenant_currency(db).await?;
-    let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    let today = crate::clock::now().format("%Y-%m-%d").to_string();
     let mut lines = Vec::with_capacity(rows.len());
     for r in rows {
         let po_currency: Option<String> = decode(&r, "po_currency")?;
@@ -895,7 +895,7 @@ pub async fn upsert_wo_cost_estimate<C: ConnectionTrait>(
     }
     let currency = crate::inventory::fx::tenant_currency(db).await?;
     let notes = input.notes.map(|n| n.trim().to_string()).filter(|n| !n.is_empty());
-    let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     match get_wo_cost_estimate(db, input.work_order_id).await? {
         Some(existing) => {
             let expected = input.expected_row_version.unwrap_or(existing.row_version);

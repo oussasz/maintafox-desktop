@@ -251,7 +251,7 @@ async fn plan(
             wo_id: wo.id,
             actor_id: actor,
             expected_row_version: wo.row_version,
-            planner_id: actor,
+            planner_id: Some(actor),
             planned_start: Some(format!("{day}T08:00:00Z")),
             planned_end: Some(format!("{day}T12:00:00Z")),
             shift: None,

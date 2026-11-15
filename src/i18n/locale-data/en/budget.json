@@ -63,9 +63,10 @@
     "submitted": "Submit",
     "approved": "Approve",
     "frozen": "Freeze",
-    "closed": "Close"
+    "closed": "Close the version"
   },
   "scenario": {
+    "baseline": "Baseline",
     "original": "Original budget",
     "approved": "Approved budget",
     "reforecast": "Reforecast",
@@ -86,7 +87,7 @@
     "in_review": "Take ownership",
     "actioned": "Action taken",
     "accepted": "Accept variance",
-    "closed": "Close",
+    "closed": "Close the review",
     "open": "Reopen"
   },
   "settlement": {
@@ -117,6 +118,7 @@
     }
   },
   "woCost": {
+    "varianceNegligible": "Negligible gap (under 2% of the reference).",
     "title": "Work order costs",
     "loading": "Loading costs…",
     "loadError": "The work order costs could not be loaded.",
@@ -212,19 +214,20 @@
   },
   "kpi": {
     "budget": "Budget",
-    "budgetHint": "Fiscal year {{year}}",
+    "budgetHint": "Annual budget, fiscal year {{year}}",
     "committed": "Committed",
-    "committedHint": "Open orders",
+    "committedHint": "Open purchase orders and requisitions for work orders",
     "actual": "Actual",
     "actualHint": "Settled work orders and entries",
     "forecast": "Year-end forecast",
-    "forecastHint": "Actual + committed + remaining budget",
-    "variance": "Variance",
-    "overrun": "Forecast overrun",
-    "underrun": "Forecast margin",
+    "forecastHint": "Actual + committed + budget of the remaining months",
+    "forecastHintShare": "Actual + committed + budget of the remaining months: {{pct}} of the annual budget",
+    "variance": "Forecast variance (budget − forecast)",
+    "overrun": "Overrun: the forecast exceeds the budget",
+    "underrun": "Margin: the forecast stays under the budget",
     "consumed": "Consumption",
     "consumedHint": "Actual / budget",
-    "consumedHintMonth": "Actual / annual budget, end of {{month}}"
+    "consumedHintToDate": "Actual / budget from {{from}} to {{to}}; {{annual}} of the annual budget"
   },
   "cockpit": {
     "loading": "Loading the cockpit…",
@@ -269,11 +272,12 @@
     }
   },
   "burn": {
-    "title": "Budget and actual by month",
+    "title": "Budget and actual by month ({{currency}})",
     "budget": "Budget",
     "actual": "Actual",
     "monthAria": "{{month}}: budget {{budget}}, actual {{actual}}",
-    "cumulative": "To date: actual {{actual}} against a budget of {{budget}}."
+    "cumulativeToDate": "From {{from}} to {{to}}: actual {{actual}} against a budget of {{budget}} for these months (annual budget {{annual}}).",
+    "cumulativeYear": "Over the fiscal year: actual {{actual}} against a budget of {{budget}}."
   },
   "drill": {
     "actualsTotal_one": "Total of {{count}} entry: {{amount}}",
@@ -312,10 +316,17 @@
       "wo_settlement": "Work order settlement",
       "reversal": "Reversal",
       "manual": "Manual entry"
+    },
+    "reverse": {
+      "action": "Reverse",
+      "title": "Reverse this entry?",
+      "description": "An opposite entry of {{amount}} is added to the actuals; the original entry is kept and marked reversed. Entries coming from a work order are corrected by reopening the work order.",
+      "confirm": "Reverse entry",
+      "reason": "Reason for the reversal (required)"
     }
   },
   "settlements": {
-    "intro": "Each closed work order — or one cancelled after consuming labour, parts or services — is settled once to the cost centre and period of its close. If a settled work order's cost changes later (a receipt, issue, return or time entry arriving after the close, even one recorded offline before it), only the difference with what is already settled is added. A pending settlement says what to fix; reopening a work order reverses its settlement.",
+    "intro": "Each closed work order is settled once to the cost centre and month of its close.",
     "filter": "Show",
     "filters": {
       "pending": "Pending",
@@ -348,7 +359,27 @@
     "lateHint": "Settles the cost difference of already settled work orders (for instance after a sync).",
     "lateBooked_one": "Late costs settled on {{count}} work order.",
     "lateBooked_other": "Late costs settled on {{count}} work orders.",
-    "lateNone": "No late cost to settle."
+    "lateNone": "No late cost to settle.",
+    "howTitle": "How does settlement work?",
+    "how": {
+      "once": "A cancelled work order is also settled if it consumed labour, parts or services.",
+      "late": "If a settled work order's cost changes later (a receipt, issue, return or time entry after the close, even offline), only the difference is added.",
+      "pending": "A pending settlement says what to fix.",
+      "reopen": "Reopening a work order reverses its settlement."
+    }
+  },
+  "compare": {
+    "title": "Compare two versions",
+    "hint": "Pick two versions of the year: amounts are added up per cost centre and category.",
+    "versionA": "Version A",
+    "versionB": "Version B",
+    "choose": "Choose a version",
+    "gap": "Gap (B − A)",
+    "total": "Total",
+    "loading": "Loading the versions…",
+    "sameVersion": "Choose two different versions to compare them.",
+    "differentCurrencies": "The two versions use different currencies: amounts are shown in their own currency and the gaps are not calculated.",
+    "noLines": "No budget line in these two versions."
   },
   "planning": {
     "sameScenarioExists": "{{count}} \"{{scenario}}\" version is already open for {{year}}. A second one is rarely intended: check before creating.",
@@ -374,6 +405,7 @@
     "active": "Active",
     "inactive": "Inactive",
     "versions": "{{year}} budget versions",
+    "notReference": "\"{{title}}\" is not the version shown in Pilotage: opening or editing it here does not change the reference budget.",
     "versionsHint": "Draft → submitted → approved → frozen. Only an approved or frozen version receives work order costs.",
     "newVersion": "New version",
     "newVersionHint": "Fiscal year {{year}}, in {{currency}} (company currency).",
@@ -407,7 +439,9 @@
       "period": "Period",
       "amount": "Amount",
       "justification": "Justification"
-    }
+    },
+    "groupTotal_one": "{{count}} line · {{amount}}",
+    "groupTotal_other": "{{count}} lines · {{amount}}"
   },
   "reviews": {
     "intro": "A variance review records the cause of an overrun, the action decided and its acceptance.",
@@ -415,7 +449,8 @@
     "noVersionBody": "Variance reviews belong to a budget version.",
     "loadError": "The reviews could not be loaded.",
     "empty": "No variance review",
-    "emptyBody": "Open a review from the cockpit, on a line that overruns.",
+    "emptyBody": "A review is started from the Cockpit tab: the \"Analyse variance\" button appears on every line whose forecast exceeds the budget (budget management right required).",
+    "openCockpit": "Open the cockpit",
     "opened": "Opened on {{date}}",
     "reopenReason": "Reopened: {{reason}}",
     "moved": "Review moved to \"{{status}}\".",
@@ -467,14 +502,31 @@
       "costRavHint": "SMRP indicator",
       "withoutRav": "Without replacement value",
       "withoutRavHint": "Set it on the asset record"
+    },
+    "lineFilter": "Production line (cost centre)",
+    "allLines": "All lines",
+    "export": {
+      "name": "Name",
+      "line": "Line / cost centre",
+      "preventive": "Preventive",
+      "other": "Other types"
+    },
+    "breakdown": {
+      "title": "Cost per production line and work type",
+      "hint": "Grouped by the equipment's cost centre. Corrective, preventive and other types (improvement, inspection…) on closed work orders.",
+      "line": "Line / cost centre",
+      "noLine": "No cost centre",
+      "total": "Total"
     }
   },
   "periods": {
     "intro": "Closing a month freezes its actuals: no entry is accepted in it any more and work orders closed later are settled to the next open month. A month is closed once it has ended and all its work orders are settled.",
     "caption": "{{year}} budget periods",
     "loadError": "The periods could not be loaded.",
-    "close": "Close",
-    "reopen": "Reopen",
+    "close": "Close the month",
+    "reopen": "Reopen the month",
+    "endedOpen_one": "{{count}} month has ended and is still open: its actuals can still change. Close it once its work orders are settled.",
+    "endedOpen_other": "{{count}} months have ended and are still open: their actuals can still change. Close them once their work orders are settled.",
     "closeTitle": "Close {{month}}",
     "closeDescription": "The month's actuals will be frozen. Later entries go to the next open month.",
     "reopenTitle": "Reopen {{month}}",

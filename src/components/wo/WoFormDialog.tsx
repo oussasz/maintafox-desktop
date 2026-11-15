@@ -9,6 +9,7 @@ import { useTranslation } from "react-i18next";
 
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { WoCreateForm } from "@/components/wo/WoCreateForm";
+import { pushAppToast } from "@/store/app-toast-store";
 import { useWoStore } from "@/stores/wo-store";
 
 export function WoFormDialog() {
@@ -18,6 +19,7 @@ export function WoFormDialog() {
   const createPrefillAsset = useWoStore((s) => s.createPrefillAsset);
   const createPrefillEquipmentId = useWoStore((s) => s.createPrefillEquipmentId);
   const closeCreateForm = useWoStore((s) => s.closeCreateForm);
+  const openWo = useWoStore((s) => s.openWo);
 
   const isEdit = editingWo !== null;
   const formKey = showCreateForm
@@ -46,7 +48,19 @@ export function WoFormDialog() {
             initial={editingWo}
             prefillAsset={createPrefillAsset}
             prefillEquipmentId={createPrefillEquipmentId}
-            onSubmitted={() => closeCreateForm()}
+            onSubmitted={(wo) => {
+              closeCreateForm();
+              // A visible confirmation with the work order number (the list may be filtered).
+              pushAppToast({
+                title: t(isEdit ? "form.savedToast" : "form.createdToast", { code: wo.code }),
+                variant: "success",
+                ...(isEdit
+                  ? {}
+                  : {
+                      action: { label: t("form.openCreated"), onClick: () => void openWo(wo.id) },
+                    }),
+              });
+            }}
             onCancel={() => closeCreateForm()}
           />
         ) : null}

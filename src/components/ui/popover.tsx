@@ -117,7 +117,11 @@ const PopoverContent = React.forwardRef<HTMLDivElement, PopoverContentProps>(
   ) => {
     const { open, setOpen, triggerRef } = usePopoverContext("PopoverContent");
     const contentRef = React.useRef<HTMLDivElement | null>(null);
-    const [coords, setCoords] = React.useState<{ top: number; left: number } | null>(null);
+    const [coords, setCoords] = React.useState<{
+      top: number;
+      left: number;
+      maxHeight: number | null;
+    } | null>(null);
 
     const setRefs = React.useCallback(
       (node: HTMLDivElement | null) => {
@@ -141,10 +145,29 @@ const PopoverContent = React.forwardRef<HTMLDivElement, PopoverContentProps>(
 
         const rect = trigger.getBoundingClientRect();
         const contentRect = content.getBoundingClientRect();
-        let top = rect.bottom + sideOffset;
+        // The height the content wants when nothing limits it (it may be capped by a previous pass).
+        const wanted = Math.max(contentRect.height, content.scrollHeight + 2);
+        const spaceBelow = window.innerHeight - rect.bottom - sideOffset - 8;
+        const spaceAbove = rect.top - sideOffset - 8;
+        // Under or over the trigger, whichever has the room; never on top of the trigger's own
+        // field and the ones next to it. Too tall for either: scroll inside the window.
+        const placeAbove =
+          side === "top"
+            ? wanted <= spaceAbove || spaceAbove >= spaceBelow
+            : wanted > spaceBelow && spaceAbove > spaceBelow;
+        let maxHeight: number | null = null;
+        let height = wanted;
+        if (side === "top" || side === "bottom") {
+          const room = Math.max(120, placeAbove ? spaceAbove : spaceBelow);
+          if (wanted > room) {
+            maxHeight = room;
+            height = room;
+          }
+        }
+        let top = placeAbove ? rect.top - height - sideOffset : rect.bottom + sideOffset;
         let left = rect.left;
 
-        if (side === "top") top = rect.top - contentRect.height - sideOffset;
+        if (side === "left" || side === "right") top = rect.top;
         if (side === "left") {
           top = rect.top;
           left = rect.left - contentRect.width - sideOffset;
@@ -160,11 +183,15 @@ const PopoverContent = React.forwardRef<HTMLDivElement, PopoverContentProps>(
         }
 
         const maxLeft = window.innerWidth - contentRect.width - 8;
-        const maxTop = window.innerHeight - contentRect.height - 8;
+        const maxTop = window.innerHeight - height - 8;
         left = Math.max(8, Math.min(left, maxLeft));
         top = Math.max(8, Math.min(top, maxTop));
 
-        setCoords({ top, left });
+        setCoords((prev) =>
+          prev && prev.top === top && prev.left === left && prev.maxHeight === maxHeight
+            ? prev
+            : { top, left, maxHeight },
+        );
       };
 
       update();
@@ -221,6 +248,7 @@ const PopoverContent = React.forwardRef<HTMLDivElement, PopoverContentProps>(
           top: coords?.top ?? -9999,
           left: coords?.left ?? -9999,
           visibility: coords ? "visible" : "hidden",
+          ...(coords?.maxHeight != null ? { maxHeight: coords.maxHeight, overflowY: "auto" } : {}),
           pointerEvents: "auto",
           ...style,
         }}

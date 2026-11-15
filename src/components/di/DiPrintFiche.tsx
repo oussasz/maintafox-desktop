@@ -26,6 +26,10 @@ import {
   formatPersonLabel,
 } from "@/lib/display";
 import { intlLocaleForLanguage } from "@/utils/format-date";
+import {
+  formatDate as formatLocalDate,
+  formatDateTime as formatLocalDateTime,
+} from "@/utils/formatters";
 import type { InterventionRequest } from "@shared/ipc-types";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -54,24 +58,10 @@ function buildHtml(
   const letterhead = wrapDocumentHeaderBlock(letterheadHtml);
   const fmt = (iso: string | null | undefined) => {
     if (!iso) return "—";
-    try {
-      return new Date(iso).toLocaleString(locale, {
-        day: "2-digit",
-        month: "2-digit",
-        year: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-      });
-    } catch {
-      return String(iso);
-    }
+    return formatLocalDateTime(iso, locale);
   };
 
-  const now = new Date().toLocaleDateString(locale, {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-  });
+  const now = formatLocalDate(new Date(), locale);
 
   const sk = diStatusToI18nKey(di.status);
   const statusText = t(`status.${sk}` as "status.new");

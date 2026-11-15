@@ -16,7 +16,7 @@ import { DateField } from "@/components/ui/date-field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useFormatters } from "@/hooks/use-formatters";
-import { useToast } from "@/hooks/use-toast";
+import { useAppToast } from "@/hooks/use-toast";
 import { describeAppError } from "@/lib/app-error";
 import {
   createCapacityRule,
@@ -55,7 +55,7 @@ export function TeamOvertimeCeilingPanel({
 }) {
   const { t } = useTranslation("personnel");
   const { formatDate, formatNumber } = useFormatters();
-  const { toast } = useToast();
+  const { toast } = useAppToast();
   const [rules, setRules] = useState<CapacityRule[] | null>(null);
   const [loadError, setLoadError] = useState<unknown>(null);
   const [formError, setFormError] = useState<string | null>(null);

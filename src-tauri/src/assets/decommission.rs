@@ -11,7 +11,9 @@ use crate::errors::{AppError, AppResult};
 use super::identity::{self, Asset};
 use super::lifecycle::{self, RecordLifecycleEventPayload};
 
-const TERMINAL_STATUSES: &[&str] = &["DECOMMISSIONED", "SCRAPPED"];
+/// The end-of-life statuses this module writes; `identity::is_retired_status_code` treats them as
+/// retired even where the reference list has no published `retired` tag for them.
+pub(crate) const TERMINAL_STATUSES: &[&str] = &["DECOMMISSIONED", "SCRAPPED"];
 
 /// IPC payload for `decommission_asset` (aligned with `shared/ipc-types.ts`).
 #[derive(Debug, Clone, Deserialize)]

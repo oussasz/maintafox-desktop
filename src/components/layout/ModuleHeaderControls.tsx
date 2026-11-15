@@ -52,6 +52,10 @@ export function ViewToggle<V extends string>({ value, options, onChange }: ViewT
             )}
           >
             <Icon className="h-4 w-4" aria-hidden />
+            {/* The current view always says its name; the others from a wide window on. */}
+            <span aria-hidden className={active ? "inline" : "hidden xl:inline"}>
+              {label}
+            </span>
           </button>
         );
       })}

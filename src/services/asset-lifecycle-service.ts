@@ -8,7 +8,7 @@
 import { z } from "zod";
 
 import { invoke } from "@/lib/ipc-invoke";
-import { AssetSchema } from "@/services/asset-service";
+import { AssetHierarchyRowSchema, AssetSchema } from "@/services/asset-service";
 import type {
   Asset,
   AssetBindingSummary,
@@ -20,8 +20,12 @@ import type {
   CreateAssetMeterPayload,
   DecommissionAssetPayload,
   MeterReading,
+  MeterReadingWarning,
+  MoveAssetComponentPayload,
+  MoveAssetComponentResult,
   RecordLifecycleEventPayload,
   RecordMeterReadingPayload,
+  SetMeterThresholdsPayload,
   UploadAssetPhotoPayload,
   UpsertDocumentLinkPayload,
 } from "@shared/ipc-types";
@@ -65,6 +69,9 @@ export const AssetMeterSchema = z.object({
   is_active: z.boolean(),
   created_at: z.string(),
   updated_at: z.string(),
+  alert_threshold: z.number().nullable(),
+  critical_threshold: z.number().nullable(),
+  threshold_direction: z.enum(["above", "below"]).nullable(),
 });
 
 export const MeterReadingSchema = z.object({
@@ -76,7 +83,27 @@ export const MeterReadingSchema = z.object({
   source_reference: z.string().nullable(),
   quality_flag: z.string(),
   created_by_id: z.number().nullable(),
+  created_by_name: z.string().nullable(),
   created_at: z.string(),
+  entity_sync_id: z.string(),
+  is_cancelled: z.boolean(),
+  cancel_reason: z.string().nullable(),
+  cancelled_by_name: z.string().nullable(),
+  cancelled_at: z.string().nullable(),
+  raised_request_id: z.number().nullable(),
+  raised_request_code: z.string().nullable(),
+  threshold_level: z.enum(["alert", "critical"]).nullable(),
+  open_request_code: z.string().nullable(),
+  threshold_problem: z.string().nullable(),
+});
+
+export const MeterReadingWarningSchema = z.object({
+  delta: z.number(),
+  expected_delta: z.number(),
+  rate_per_day: z.number(),
+  days: z.number(),
+  previous_value: z.number(),
+  previous_at: z.string(),
 });
 
 export const AssetDocumentLinkSchema = z.object({
@@ -111,6 +138,23 @@ export async function recordLifecycleEvent(
   return AssetLifecycleEventSchema.parse(raw) as AssetLifecycleEvent;
 }
 
+const MoveAssetComponentResultSchema = z.object({
+  ended_relation: AssetHierarchyRowSchema.nullable(),
+  new_relation: AssetHierarchyRowSchema.nullable(),
+  event: AssetLifecycleEventSchema,
+});
+
+/**
+ * "Déplacer le composant" (L2-03): ends the component's parent relation and opens the new one at
+ * the effective date, recorded as a PARENT_CHANGED lifecycle event, in one server transaction.
+ */
+export async function moveAssetComponent(
+  payload: MoveAssetComponentPayload,
+): Promise<MoveAssetComponentResult> {
+  const raw = await invoke<unknown>("move_asset_component", { payload });
+  return MoveAssetComponentResultSchema.parse(raw) as MoveAssetComponentResult;
+}
+
 // â”€â”€ Meter commands â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function listAssetMeters(assetId: number): Promise<AssetMeter[]> {
@@ -125,8 +169,33 @@ export async function createAssetMeter(payload: CreateAssetMeterPayload): Promis
 
 export async function recordMeterReading(
   payload: RecordMeterReadingPayload,
+  confirmJump = false,
+  /** `replacement`: a new physical meter was fitted and this is its first value. */
+  readingKind: "replacement" | null = null,
 ): Promise<MeterReading> {
-  const raw = await invoke<unknown>("record_meter_reading", { payload });
+  const raw = await invoke<unknown>("record_meter_reading", { payload, confirmJump, readingKind });
+  return MeterReadingSchema.parse(raw) as MeterReading;
+}
+
+/** Set or clear the alarm thresholds of a meter (both null clears them). */
+export async function setMeterThresholds(payload: SetMeterThresholdsPayload): Promise<AssetMeter> {
+  const raw = await invoke<unknown>("set_meter_thresholds", { payload });
+  return AssetMeterSchema.parse(raw) as AssetMeter;
+}
+
+/** Warning a reading would raise (far above the usual use), or null. */
+export async function assessMeterReading(
+  meterId: number,
+  readingValue: number,
+  readingAt: string | null,
+): Promise<MeterReadingWarning | null> {
+  const raw = await invoke<unknown>("assess_meter_reading", { meterId, readingValue, readingAt });
+  return raw === null ? null : (MeterReadingWarningSchema.parse(raw) as MeterReadingWarning);
+}
+
+/** Cancel the latest reading of a meter, with a reason (kept in the history, marked cancelled). */
+export async function cancelMeterReading(readingId: number, reason: string): Promise<MeterReading> {
+  const raw = await invoke<unknown>("cancel_meter_reading", { readingId, reason });
   return MeterReadingSchema.parse(raw) as MeterReading;
 }
 

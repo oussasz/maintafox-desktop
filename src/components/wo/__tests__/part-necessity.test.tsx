@@ -28,6 +28,7 @@ vi.mock("@/services/inventory-service", () => ({
 // Without the inventory right the dialog opens on a non-stock line (simplest path here).
 vi.mock("@/lib/list-access", () => ({ useCanReadList: () => false }));
 vi.mock("@/components/ui/list-access-note", () => ({ ListAccessNote: () => null }));
+vi.mock("@/hooks/use-permissions", () => ({ usePermissions: () => ({ can: () => true }) }));
 
 import { WoAddExecutionPartDialog } from "../WoAddExecutionPartDialog";
 

@@ -77,6 +77,11 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }
 
+/** The theme when a ThemeProvider is above; null in isolated renders (quick menus, previews). */
+export function useOptionalTheme(): ThemeContextValue | null {
+  return useContext(ThemeContext);
+}
+
 export function useTheme(): ThemeContextValue {
   const ctx = useContext(ThemeContext);
   if (!ctx) throw new Error("useTheme must be used inside ThemeProvider");

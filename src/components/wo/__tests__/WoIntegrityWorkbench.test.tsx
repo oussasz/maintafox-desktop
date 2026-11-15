@@ -39,9 +39,6 @@ const svc = vi.hoisted(() => ({
   applyDataIntegrityRepair: vi.fn(),
 }));
 vi.mock("@/services/data-integrity-service", () => svc);
-vi.mock("@/services/analytics-contract-service", () => ({
-  listAnalyticsContractVersions: vi.fn().mockResolvedValue([]),
-}));
 // The work-order people list must no longer feed the picker.
 const people = vi.hoisted(() => ({ listWoLaborCandidates: vi.fn() }));
 vi.mock("@/services/wo-execution-service", () => people);

@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import enCommon from "@/i18n/en/common.json";
 import enPermits from "@/i18n/locale-data/en/permits.json";
@@ -56,10 +56,12 @@ const print = vi.hoisted(() => ({ printLotoCard: vi.fn() }));
 vi.mock("@/components/permits/loto-card-print", () => print);
 
 const svc = vi.hoisted(() => ({
+  checkWorkPermitApproval: vi.fn().mockResolvedValue(undefined),
   listPermitTypes: vi.fn(),
   listWorkPermits: vi.fn(),
   permitComplianceKpi30d: vi.fn(),
   listOpenPermitsReport: vi.fn(),
+  listOverduePermitsReport: vi.fn(),
   listPermitIsolations: vi.fn(),
   listPermitIsolationOptions: vi.fn(),
   getWorkPermit: vi.fn(),
@@ -194,6 +196,10 @@ function permit(overrides: Partial<WorkPermitRecord> = {}): WorkPermitRecord {
     approved_by_name: null,
     approved_at: null,
     self_approved: false,
+    cancel_reason: null,
+    cancelled_by_id: null,
+    cancelled_by_name: null,
+    cancelled_at: null,
     ...overrides,
   };
 }
@@ -223,6 +229,7 @@ function isolation(overrides: Partial<PermitIsolationRecord> = {}): PermitIsolat
     verified_by_id: null,
     applied_at: "2026-10-10T09:00:00Z",
     verified_at: null,
+    zero_energy_note: null,
     removal_verified_at: null,
     removal_verified_by_id: null,
     row_version: 2,
@@ -261,6 +268,7 @@ const VERIFIED = {
   verified_by_id: 8,
   verified_at: "2026-10-10T09:10:00Z",
   verified_by_name: "Sara Sup",
+  zero_energy_note: "Start attempt refused, 0 V between phases",
 };
 
 function renderPage(path = "/permits") {
@@ -290,6 +298,7 @@ describe("PermitsPage", () => {
       rate: null,
     });
     svc.listOpenPermitsReport.mockResolvedValue(page([]));
+    svc.listOverduePermitsReport.mockResolvedValue(page([]));
     svc.listPermitSuspensions.mockResolvedValue([]);
     svc.listPermitHandoverLogs.mockResolvedValue([]);
     svc.listPermitIsolations.mockResolvedValue([isolation()]);
@@ -310,11 +319,13 @@ describe("PermitsPage", () => {
     const panel = await openPermit();
     expect(await within(panel).findByRole("button", { name: "Verify" })).toBeDisabled();
     expect(within(panel).getAllByText(enPermits.isolation.selfBlocked).length).toBeGreaterThan(0);
-    expect(within(panel).getByRole("button", { name: "Activate" })).toBeDisabled();
+    expect(
+      within(panel).getByRole("button", { name: enPermits.transition.activate }),
+    ).toBeDisabled();
     expect(within(panel).getByText(enPermits.gate.unverified)).toBeInTheDocument();
   });
 
-  it("lets a second person verify, then activates the permit", async () => {
+  it("lets a second person verify with the zero-energy test, then activates the permit", async () => {
     session.userId = 8;
     svc.verifyPermitIsolation.mockImplementation(async () => {
       // The panel reloads isolations after the write.
@@ -325,18 +336,40 @@ describe("PermitsPage", () => {
 
     const panel = await openPermit();
     fireEvent.click(await within(panel).findByRole("button", { name: "Verify" }));
+    // "Verify" opens the zero-energy test: confirmed and commented before anything is written.
+    const dialog = await screen.findByRole("dialog");
+    const confirm = within(dialog).getByRole("button", { name: enPermits.isolation.verify });
+    expect(confirm).toBeDisabled();
+    fireEvent.click(within(dialog).getByRole("checkbox"));
+    expect(confirm).toBeDisabled();
+    fireEvent.change(
+      within(dialog).getByLabelText(enPermits.isolation.zeroEnergyNote, { exact: false }),
+      {
+        target: { value: "  Start attempt refused, 0 V between phases " },
+      },
+    );
+    expect(confirm).toBeEnabled();
+    expect(svc.verifyPermitIsolation).not.toHaveBeenCalled();
+    fireEvent.click(confirm);
     await waitFor(() =>
       expect(svc.verifyPermitIsolation).toHaveBeenCalledWith({
         isolation_id: 300,
         expected_row_version: 2,
         lock_number: null,
+        zero_energy_confirmed: true,
+        zero_energy_note: "Start attempt refused, 0 V between phases",
       }),
     );
+    expect(
+      await within(panel).findByText("Zero-energy test: Start attempt refused, 0 V between phases"),
+    ).toBeInTheDocument();
 
     await waitFor(() =>
-      expect(within(panel).getByRole("button", { name: "Activate" })).toBeEnabled(),
+      expect(
+        within(panel).getByRole("button", { name: enPermits.transition.activate }),
+      ).toBeEnabled(),
     );
-    fireEvent.click(within(panel).getByRole("button", { name: "Activate" }));
+    fireEvent.click(within(panel).getByRole("button", { name: enPermits.transition.activate }));
     await waitFor(() =>
       expect(svc.setWorkPermitStatus).toHaveBeenCalledWith({
         id: 41,
@@ -450,6 +483,52 @@ describe("PermitsPage", () => {
     expect(within(dialog).getByText(enPermits.detail.linkError)).toBeInTheDocument();
   });
 
+  describe("Retour to the previous screen (L6-03)", () => {
+    function Where() {
+      const loc = useLocation();
+      return <p data-testid="where">{`${loc.pathname}${loc.search}`}</p>;
+    }
+    function renderFromOtherScreen() {
+      return render(
+        <MemoryRouter
+          initialEntries={[
+            "/work-orders?status=in_progress&type=corrective",
+            "/permits?permit=977",
+          ]}
+          initialIndex={1}
+        >
+          <Routes>
+            <Route path="/permits" element={<PermitsPage />} />
+            <Route path="*" element={null} />
+          </Routes>
+          <Where />
+        </MemoryRouter>,
+      );
+    }
+    afterEach(() => window.history.replaceState(null, ""));
+
+    it("shows Retour on a permit opened from another screen and goes back to it, filters intact", async () => {
+      window.history.replaceState({ idx: 1 }, "");
+      svc.getWorkPermit.mockResolvedValue(permit({ id: 977, code: "PTW-2025-000977" }));
+      renderFromOtherScreen();
+      await screen.findByRole("region", { name: "Permit PTW-2025-000977" });
+      fireEvent.click(screen.getByRole("button", { name: enCommon.action.back }));
+      await waitFor(() =>
+        expect(screen.getByTestId("where").textContent).toBe(
+          "/work-orders?status=in_progress&type=corrective",
+        ),
+      );
+    });
+
+    it("shows no Retour when the permit page is the first screen", async () => {
+      window.history.replaceState(null, "");
+      svc.getWorkPermit.mockResolvedValue(permit({ id: 977, code: "PTW-2025-000977" }));
+      renderPage("/permits?permit=977");
+      await screen.findByRole("region", { name: "Permit PTW-2025-000977" });
+      expect(screen.queryByRole("button", { name: enCommon.action.back })).toBeNull();
+    });
+  });
+
   it("keeps the list when the KPIs fail, and shows the KPI failure instead of zeros", async () => {
     svc.permitComplianceKpi30d.mockRejectedValue({ code: "DATABASE_ERROR", message: "kpi" });
     renderPage();
@@ -471,6 +550,9 @@ describe("PermitsPage", () => {
     const tiles = await screen.findByTestId("permits-kpis");
     expect(within(tiles).getByText(enPermits.kpi.open)).toBeInTheDocument();
     expect(within(tiles).getByText(enPermits.kpi.onTimeRate)).toBeInTheDocument();
+    expect(within(tiles).getByText(enPermits.kpi.overdue)).toBeInTheDocument();
+    // L4-09: a share of 0.75 is 75 %, not 0.8 %.
+    expect(within(tiles).getByText(/^75\s?%$/)).toBeInTheDocument();
     expect(within(tiles).getAllByText(enPermits.kpi.period30d).length).toBeGreaterThan(0);
   });
 
@@ -479,7 +561,9 @@ describe("PermitsPage", () => {
     const panel = await openPermit();
     expect(await within(panel).findByText(enPermits.isolation.loadError)).toBeInTheDocument();
     expect(within(panel).queryByText(enPermits.isolation.empty)).toBeNull();
-    expect(within(panel).getByRole("button", { name: "Activate" })).toBeDisabled();
+    expect(
+      within(panel).getByRole("button", { name: enPermits.transition.activate }),
+    ).toBeDisabled();
     expect(within(panel).getByText(enPermits.gate.isolationsUnavailable)).toBeInTheDocument();
   });
 
@@ -530,6 +614,7 @@ describe("PermitsPage", () => {
       isolation_point: "MCC-1 breaker",
       lock_number: "L-12",
       verifier_signature: "Sara Sup",
+      zero_energy_note: "Start attempt refused, 0 V between phases",
       expires_at: "2099-01-01T00:00:00Z",
     };
     svc.getLotoCardView.mockResolvedValue(card);

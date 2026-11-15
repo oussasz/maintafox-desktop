@@ -32,6 +32,7 @@ export const KNOWN_SYNC_ENTITY_TYPES = new Set([
   "purchase_orders",
   "procurement_requisitions",
   "goods_receipts",
+  "repairable_orders",
   "inventory_suppliers",
   "personnel",
   "personnel_availability_blocks",
@@ -45,6 +46,10 @@ export const KNOWN_SYNC_ENTITY_TYPES = new Set([
   "permit_types",
   "permit_isolations",
   "permit_suspensions",
+  "permit_gas_tests",
+  "permit_workers",
+  "permit_personal_locks",
+  "equipment_isolation_points",
   "library_documents",
   "reference_values",
   "lookup_values",
@@ -97,6 +102,8 @@ export const KNOWN_CONFLICT_KINDS = new Set([
   "DECISION_APPLIER_UNAUTHORISED",
   // A work-order part line received as cancelled although it has recorded use.
   "WO_PART_LINE_HAS_USE",
+  // An RCM decision received that leaves a critical FMECA mode to run to failure (L2-15).
+  "RCM_RUN_TO_FAILURE_CRITICAL",
   "SITE_SETTING_UNAUDITED",
   "SITE_SETTING_INVALID",
   "SITE_SETTING_EVENT_INVALID",
@@ -152,6 +159,10 @@ export const KNOWN_CONFLICT_KINDS = new Set([
   "WO_CLOSE_GATE",
   // A cancellation received while a permit or a lock of the work order holds the plant here (AU-02).
   "WO_CANCEL_PERMIT_GATE",
+  // An execution change received from someone who does not carry out the work order, or without
+  // the right here now; or whose status history names nobody (L5-08c).
+  "WO_EXECUTION_UNAUTHORISED",
+  "WO_EXECUTION_AUTHOR_UNKNOWN",
   // A permit ended on another PC before or while its work ran here: applied, to review (AU-101, D9).
   "PERMIT_ENDED_BEFORE_START",
   "PERMIT_ENDED_DURING_WORK",
@@ -167,6 +178,10 @@ export const KNOWN_CONFLICT_KINDS = new Set([
   "WO_MANDATORY_TASK_REMOVED",
   "PERMIT_TYPE_REQUIRED_TO_START",
   "WO_PERMIT_RULE_CHANGED",
+  // A received dépannage without its breakdown time or "machine arrêtée", or turned back into an
+  // ordinary work order (`wo::depannage::inbound_depannage_check`).
+  "WO_DEPANNAGE_FACTS_INVALID",
+  "WO_DEPANNAGE_VALIDATION_INVALID",
   // A received inspection finding that breaks the decision rules (AU-72).
   "INSP_ANOMALY_PERMIT_REVIEW_CLEARED",
   "INSP_ANOMALY_LINK_CHANGED",
@@ -188,6 +203,33 @@ export const KNOWN_CONFLICT_KINDS = new Set([
   "PERMIT_WORKER_INFORMED_UNAUTHORISED",
   "PERMIT_WORKER_NOT_INFORMED",
   "PERMIT_LOCK_REMOVAL_RECORD_CHANGED",
+  // The zero-energy test of a verification (L4-13, migration 283).
+  "PERMIT_ZERO_ENERGY_PRE_UPGRADE",
+  "PERMIT_ZERO_ENERGY_NOTE_REQUIRED",
+  "PERMIT_ZERO_ENERGY_NOTE_CHANGED",
+  // A permit issued on another PC judged on the issue gate (L4-03 / L4-04, migration 290).
+  "PERMIT_ISSUE_CONTENT_MISSING",
+  "PERMIT_ISSUE_HSE_APPROVAL_MISSING",
+  "PERMIT_ISSUE_GAS_TEST_MISSING",
+  "PERMIT_ISSUE_GAS_TEST_OUT_OF_LIMITS",
+  // Review of L4-03/04 and L4-05/06 (migration 294): HSE four-eyes, gas test validity, workers.
+  "PERMIT_ISSUE_HSE_SELF_APPROVAL",
+  "PERMIT_ISSUE_GAS_TEST_EXPIRED",
+  "PERMIT_ACTIVE_GAS_TEST_INVALID",
+  "PERMIT_ISSUE_WORKER_INDUCTION_MISSING",
+  "PERMIT_ISSUE_WORKER_QUALIFICATION",
+  // Review of L4-05/06/18 (migration 294): the group lockout and the workers and padlocks received.
+  "PERMIT_PERSONAL_LOCK_RECORD_CHANGED",
+  "PERMIT_PERSONAL_LOCK_PLACEMENT_INVALID",
+  "PERMIT_PERSONAL_LOCK_NOT_OWNER",
+  "PERMIT_PERSONAL_LOCK_PERMIT_NOT_ISSUED",
+  "PERMIT_WORKER_RECORD_CHANGED",
+  "PERMIT_WORKER_WITHDRAWN_LOCK_ON",
+  "PERMIT_ISOLATION_PERSONAL_LOCKS_ON",
+  "PERMIT_CLOSED_PERSONAL_LOCKS_ON",
+  "PERMIT_WORKER_ADDED_INDUCTION_MISSING",
+  "PERMIT_WORKER_ADDED_QUALIFICATION",
+  "PERMIT_WO_START_GAS_TEST_INVALID",
   "PERMIT_HANDOVER_RECEIVER_IS_SIGNER",
   "PERMIT_TYPE_THREE_PERSON_UNAUTHORISED",
   "PERMIT_TYPE_THREE_PERSON_UNAUDITED",
@@ -240,7 +282,9 @@ const CODE_FIELDS = [
   "di_code",
   "employee_code",
   "po_number",
-  "requisition_number",
+  "req_number",
+  "gr_number",
+  "order_code",
   "article_code",
   "permit_code",
   "plan_code",
@@ -428,11 +472,27 @@ export function conflictActions(
   return [...primary, ...(withTriage ? (["retry_later", "escalate"] as const) : []), "dismiss"];
 }
 
-/** The number a received record carries (`code` or `employee_code`) — for CODE_CLASH. */
+/**
+ * Columns holding a device-generated number (`sync::code_clash::NUMBERED_TABLES`): work orders,
+ * requests, permits and PM plans (`code`), people, purchase requisitions, purchase orders, goods
+ * receipts and repair orders.
+ */
+const CLASH_NUMBER_FIELDS = [
+  "code",
+  "employee_code",
+  "req_number",
+  "po_number",
+  "gr_number",
+  "order_code",
+];
+
+/** The number a received record carries — for CODE_CLASH. */
 export function clashingNumber(c: SyncConflictRecord): string | null {
   const payload = parsePayload(c.inbound_payload_json);
   if (!payload) return null;
-  const value = payload["code"] ?? payload["employee_code"];
+  const value = CLASH_NUMBER_FIELDS.map((field) => payload[field]).find(
+    (v) => typeof v === "string",
+  );
   return typeof value === "string" ? value : null;
 }
 
@@ -440,4 +500,47 @@ export function clashingNumber(c: SyncConflictRecord): string | null {
 export function clashingUsername(c: SyncConflictRecord): string | null {
   const value = parsePayload(c.inbound_payload_json)?.["username"];
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+/** Columns that are bookkeeping, not something a person decides on (never shown side by side). */
+const TECHNICAL_FIELDS = new Set([
+  "id",
+  "entity_sync_id",
+  "row_version",
+  "created_at",
+  "updated_at",
+  "synced_at",
+  "origin_machine_id",
+  "deleted_at",
+]);
+
+export interface ConflictFieldDifference {
+  /** Column name as stored (humanised on screen). */
+  field: string;
+  local: unknown;
+  remote: unknown;
+}
+
+/**
+ * The columns whose value differs between this device's version and the server's, for the
+ * side-by-side view. Empty when one of the two versions is missing or unreadable.
+ */
+export function conflictFieldDifferences(c: SyncConflictRecord): ConflictFieldDifference[] {
+  const local = parsePayload(c.local_payload_json);
+  const remote = parsePayload(c.inbound_payload_json);
+  if (!local || !remote) return [];
+  const keys = new Set([...Object.keys(local), ...Object.keys(remote)]);
+  const out: ConflictFieldDifference[] = [];
+  for (const field of keys) {
+    if (TECHNICAL_FIELDS.has(field) || field.endsWith("_sync_id")) continue;
+    if (JSON.stringify(local[field] ?? null) === JSON.stringify(remote[field] ?? null)) continue;
+    out.push({ field, local: local[field] ?? null, remote: remote[field] ?? null });
+  }
+  return out;
+}
+
+/** "planned_start_date" → "Planned start date" (no stored label exists for raw column names). */
+export function humaniseFieldName(field: string): string {
+  const words = field.replace(/_id$/, "").replace(/_/g, " ").trim();
+  return words ? words.charAt(0).toUpperCase() + words.slice(1) : field;
 }

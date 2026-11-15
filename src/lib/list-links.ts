@@ -31,6 +31,17 @@ export interface WoListLinkFilter {
   /** Only work completed in this window (ISO instants), with `mix`: the SMRP indicator's own population. */
   completedFrom?: string;
   completedTo?: string;
+  /** The work orders behind the failures a RAMS figure counts (its period, class and site). */
+  ramsFailures?: RamsFailureLink;
+}
+
+/** Scope of a RAMS failure figure, as the RAMS screen computed it. */
+export interface RamsFailureLink {
+  /** ISO instants of the RAMS period. */
+  from: string;
+  to: string;
+  classId?: number | null;
+  orgNodeId?: number | null;
 }
 
 export interface DiListLinkFilter {
@@ -57,8 +68,14 @@ export const LIST_PARAM = {
   mix: "mix",
   completedFrom: "completedFrom",
   completedTo: "completedTo",
+  ramsFrom: "ramsFrom",
+  ramsTo: "ramsTo",
+  ramsClass: "ramsClass",
+  ramsSite: "ramsSite",
   waiting: "waiting",
   catalog: "catalog",
+  /** Opens one work order's sheet over the list. */
+  openWo: "openWo",
 } as const;
 
 function query(entries: Array<[string, string | number | undefined]>): string {
@@ -81,7 +98,17 @@ export const listLinks = {
       [LIST_PARAM.mix, f.mix],
       [LIST_PARAM.completedFrom, f.completedFrom],
       [LIST_PARAM.completedTo, f.completedTo],
+      [LIST_PARAM.ramsFrom, f.ramsFailures?.from],
+      [LIST_PARAM.ramsTo, f.ramsFailures?.to],
+      [LIST_PARAM.ramsClass, f.ramsFailures?.classId ?? undefined],
+      [LIST_PARAM.ramsSite, f.ramsFailures?.orgNodeId ?? undefined],
     ])}`,
+  /** One work order's sheet (the work-orders page opens it from the address). */
+  workOrder: (id: number) => `/work-orders${query([[LIST_PARAM.openWo, id]])}`,
+  /** One equipment's record (the equipment page opens it from the address). */
+  asset: (id: number) => `/equipment${query([["assetId", id]])}`,
+  /** The reliability (RAMS) fleet page with one equipment handed over (selected, named). */
+  ramsAsset: (equipmentId: number) => `/reliability${query([[LIST_PARAM.equipment, equipmentId]])}`,
   requests: (f: DiListLinkFilter = {}) =>
     `/requests${query([
       [LIST_PARAM.queue, f.queue],

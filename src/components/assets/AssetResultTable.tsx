@@ -2,7 +2,8 @@
  * AssetResultTable.tsx
  *
  * Equipment grid of the asset registry.
- * Columns: code (tree), name, class, family, status, org, criticality.
+ * Columns: code (tree), name (with the "pannes répétitives" flag), class, family, status, org,
+ * criticality.
  * The hierarchy is read from the database level by level within the registry filters
  * (`list_asset_tree_level`): matching assets and their ancestors (shown dimmed as context),
  * children loaded when a branch is expanded — every branch is reachable on a large plant.
@@ -16,8 +17,10 @@ import { CriticalityReviewMark } from "@/components/assets/CriticalityReviewMark
 import { EquipmentTreeCell } from "@/components/assets/tree/EquipmentTreeCell";
 import { EquipmentTreeToolbar } from "@/components/assets/tree/EquipmentTreeToolbar";
 import { useEquipmentTree } from "@/components/assets/tree/use-equipment-tree";
+import { useRepeatFailureAssets } from "@/components/assets/use-repeat-failures";
 import { Button } from "@/components/ui/button";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
+import { StatusChip } from "@/components/ui/status-chip";
 import {
   Table,
   TableBody,
@@ -41,6 +44,7 @@ export function AssetResultTable() {
   const selectedId = useAssetSearchStore((s) => s.selectedResultId);
   const selectAsset = useAssetSearchStore((s) => s.selectAsset);
   const tree = useEquipmentTree(filters);
+  const repeat = useRepeatFailureAssets(filters);
 
   // Opens the asset record (AssetDetailDialog); load errors are shown by the page.
   const handleRowClick = (asset: AssetSearchResult) => {
@@ -73,6 +77,13 @@ export function AssetResultTable() {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <EquipmentTreeToolbar onExpandAll={tree.expandLoaded} onCollapseAll={tree.collapseAll} />
+      {repeat.error != null ? (
+        <p role="alert" className="px-3 py-1 text-xs text-tone-danger-fg">
+          {t("repeatFailures.listUnavailable", {
+            reason: describeAppError(repeat.error).title,
+          })}
+        </p>
+      ) : null}
       <div className="flex-1 overflow-auto">
         <Table>
           <TableHeader>
@@ -164,7 +175,24 @@ export function AssetResultTable() {
                       onToggle={tree.toggle}
                     />
                   </TableCell>
-                  <TableCell className="text-sm">{asset.asset_name}</TableCell>
+                  <TableCell className="text-sm">
+                    <span className="inline-flex flex-wrap items-center gap-1.5">
+                      {asset.asset_name}
+                      {repeat.byAsset.has(asset.id) && repeat.overview ? (
+                        <StatusChip
+                          tone="danger"
+                          label={t("repeatFailures.badgeCount", {
+                            count: repeat.byAsset.get(asset.id)?.failure_count ?? 0,
+                          })}
+                          title={t("repeatFailures.badgeTitle", {
+                            count: repeat.byAsset.get(asset.id)?.failure_count ?? 0,
+                            days: repeat.overview.rule.window_days,
+                            min: repeat.overview.rule.min_failures,
+                          })}
+                        />
+                      ) : null}
+                    </span>
+                  </TableCell>
                   <TableCell className="text-xs text-text-muted">
                     {asset.class_name ?? "—"}
                   </TableCell>

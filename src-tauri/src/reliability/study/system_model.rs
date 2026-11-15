@@ -15,7 +15,6 @@
 
 use std::collections::{HashMap, HashSet};
 
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use serde::{Deserialize, Serialize};
 
@@ -1092,7 +1091,7 @@ pub async fn save_system_model(
                 .map(sea_orm::Value::from)
                 .unwrap_or_else(|| sea_orm::Value::from(None::<i64>)),
             input.mission_hours.into(),
-            Utc::now().to_rfc3339().into(),
+            crate::clock::now().to_rfc3339().into(),
             study.id.into(),
         ],
     ))

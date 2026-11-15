@@ -1,15 +1,24 @@
-import { z, ZodError } from "zod";
+import { ZodError, z } from "zod";
 
 import { invoke } from "@/lib/ipc-invoke";
 import { ipcErrorDetails } from "@/utils/errors";
 import type {
   ApproveInventoryCountLineInput,
-  CreateInventoryCountSessionInput,
+  NonStockArticle,
+  ReviewNonStockArticleInput,
+  // Article / procurement analytics
+  ArticleAssetUsage,
+  ArticleConsumptionMonth,
+  ArticleEquivalent,
+  ArticleEquivalentInput,
   ArticleFamily,
+  ArticlePurchaseHistoryRow,
+  ArticleRepairableHistory,
+  CreateArticleFamilyInput,
+  CreateInventoryCountSessionInput,
   CreateProcurementRequisitionInput,
   CreatePurchaseOrderFromRequisitionInput,
   CreateRepairableOrderInput,
-  CreateArticleFamilyInput,
   CreateStockLocationInput,
   CreateWarehouseInput,
   GoodsReceipt,
@@ -17,26 +26,34 @@ import type {
   InventoryArticle,
   InventoryArticleFilter,
   InventoryArticleInput,
-  InventoryIssueInput,
   InventoryCountLine,
   InventoryCountSession,
   InventoryCountTolerance,
+  InventoryDocumentLink,
+  InventoryDocumentLinkInput,
+  InventoryIssueInput,
   InventoryReconciliationFinding,
   InventoryReconciliationRun,
-  InventoryStateEvent,
   InventoryReleaseReservationInput,
   InventoryReorderRecommendation,
   InventoryReplenishmentRecommendation,
   InventoryReserveInput,
   InventoryReturnInput,
+  InventoryStateEvent,
   InventoryStockAdjustInput,
   InventoryStockBalance,
   InventoryStockFilter,
+  // Supplier types
+  InventorySupplier,
+  InventorySupplierInput,
   InventoryTaxCategory,
   InventoryTaxCategoryInput,
   InventoryTransaction,
   InventoryTransactionFilter,
   InventoryTransferInput,
+  PostInventoryCountSessionInput,
+  ProcurementAlert,
+  ProcurementDashboardSummary,
   ProcurementRequisition,
   ProcurementRequisitionLine,
   ProcurementSupplier,
@@ -44,31 +61,16 @@ import type {
   PurchaseOrderDetail,
   PurchaseOrderLine,
   ReceiveGoodsInput,
+  RepairVsReplaceResult,
   RepairableOrder,
   RepairableOrderDetail,
-  RepairVsReplaceResult,
   ReverseInventoryCountSessionInput,
-  SecondApproveInventoryCountLineInput,
   RunInventoryReconciliationInput,
+  SecondApproveInventoryCountLineInput,
   StockImpactProjection,
   StockLocation,
   StockReservation,
   StockReservationFilter,
-  TransitionProcurementRequisitionInput,
-  TransitionPurchaseOrderInput,
-  TransitionRepairableOrderInput,
-  TransitionInventoryCountSessionInput,
-  UpsertInventoryCountLineInput,
-  UpdatePostingStateInput,
-  PostInventoryCountSessionInput,
-  UpdateArticleFamilyInput,
-  UpdateStockLocationInput,
-  UpdateWarehouseInput,
-  ValuationCostResult,
-  Warehouse,
-  // Supplier types
-  InventorySupplier,
-  InventorySupplierInput,
   SupplierArticleSource,
   SupplierArticleSourceInput,
   SupplierContact,
@@ -77,16 +79,17 @@ import type {
   SupplierPriceInput,
   SupplierPurchaseHistoryRow,
   SupplierScorecard,
-  // Article / procurement analytics
-  ArticleEquivalent,
-  ArticleEquivalentInput,
-  ArticlePurchaseHistoryRow,
-  ProcurementDashboardSummary,
-  ProcurementAlert,
-  ArticleConsumptionMonth,
-  ArticleRepairableHistory,
-  InventoryDocumentLink,
-  InventoryDocumentLinkInput,
+  TransitionInventoryCountSessionInput,
+  TransitionProcurementRequisitionInput,
+  TransitionPurchaseOrderInput,
+  TransitionRepairableOrderInput,
+  UpdateArticleFamilyInput,
+  UpdatePostingStateInput,
+  UpdateStockLocationInput,
+  UpdateWarehouseInput,
+  UpsertInventoryCountLineInput,
+  ValuationCostResult,
+  Warehouse,
   WoMaterialReadiness,
 } from "@shared/ipc-types";
 
@@ -442,6 +445,7 @@ const InventoryReorderRecommendationSchema = z.object({
   article_name: z.string(),
   warehouse_id: z.number(),
   warehouse_code: z.string(),
+  warehouse_name: z.string(),
   min_stock: z.number(),
   reorder_point: z.number(),
   max_stock: z.number().nullable(),
@@ -595,6 +599,7 @@ const InventoryReplenishmentRecommendationSchema = z.object({
   article_name: z.string(),
   warehouse_id: z.number(),
   warehouse_code: z.string(),
+  warehouse_name: z.string(),
   min_stock: z.number(),
   reorder_point: z.number(),
   max_stock: z.number().nullable(),
@@ -860,6 +865,9 @@ const GoodsReceiptLineSchema = z.object({
   unit_cost_tenant: z.number().nullable(),
   status: z.string(),
   created_at: z.string(),
+  returned_qty: z.number(),
+  return_reason: z.string().nullable(),
+  returned_at: z.string().nullable(),
 });
 
 /** Goods receipt with the currency and the rate captured when it was posted. */
@@ -1749,6 +1757,39 @@ export function listInventoryArticleEquivalents(articleId: number): Promise<Arti
   );
 }
 
+const DormantStockRowSchema = z.object({
+  article_id: z.number(),
+  article_code: z.string(),
+  article_name: z.string(),
+  on_hand_qty: z.number(),
+  stock_value: z.number().nullable(),
+  last_issue_at: z.string().nullable(),
+  last_movement_at: z.string().nullable(),
+  article_created_at: z.string(),
+});
+export type DormantStockRow = z.infer<typeof DormantStockRowSchema>;
+
+/** Articles on hand with no issue for `months` months, most valuable first (UX L3-15). */
+export function listInventoryDormantStock(months: number): Promise<DormantStockRow[]> {
+  return invokeParsed("list_inventory_dormant_stock", { months }, z.array(DormantStockRowSchema));
+}
+
+export function listInventoryArticleUsage(articleId: number): Promise<ArticleAssetUsage[]> {
+  return invokeParsed(
+    "list_inventory_article_usage",
+    { articleId },
+    z.array(
+      z.object({
+        asset_id: z.number(),
+        asset_code: z.string(),
+        asset_name: z.string(),
+        quantity: z.number(),
+        is_critical_spare: z.boolean(),
+      }),
+    ),
+  );
+}
+
 export function upsertInventoryArticleEquivalent(
   input: ArticleEquivalentInput,
 ): Promise<ArticleEquivalent> {
@@ -1873,6 +1914,43 @@ export function createProcurementRequisitionFromWoPart(
     },
     ProcurementRequisitionSchema,
   );
+}
+
+/** Hors-stock articles (L3-04), those "à revoir" first. */
+export async function listNonStockArticles(toReviewOnly: boolean): Promise<NonStockArticle[]> {
+  return invoke<NonStockArticle[]>("list_non_stock_articles", { toReviewOnly });
+}
+
+/** Catalogue review of a hors-stock article: keep, promote to stocked, or mark a duplicate. */
+export async function reviewNonStockArticle(
+  input: ReviewNonStockArticleInput,
+): Promise<NonStockArticle> {
+  return invoke<NonStockArticle>("review_non_stock_article", { input });
+}
+
+/** Requests in these states no longer count as "in progress" for a part shortage. */
+const REQUISITION_ENDED_STATUSES = new Set(["REJECTED", "CANCELLED", "CLOSED"]);
+
+/**
+ * Requests still in progress for a work order's parts, by article: article id -> request number.
+ * Read from the stored requests (source = this work order), so it survives a reopen.
+ */
+export async function listWorkOrderRequisitionNumbers(
+  workOrderId: number,
+): Promise<Record<number, string>> {
+  const all = await listInventoryProcurementRequisitions();
+  const mine = all.filter(
+    (r) =>
+      r.demand_source_type === "WORK_ORDER_PART" &&
+      r.demand_source_id === workOrderId &&
+      !REQUISITION_ENDED_STATUSES.has(r.status),
+  );
+  const byArticle: Record<number, string> = {};
+  for (const req of mine) {
+    const lines = await listInventoryProcurementRequisitionLines(req.id);
+    for (const line of lines) byArticle[line.article_id] ??= req.req_number;
+  }
+  return byArticle;
 }
 
 export function suggestInventoryInternalTransfer(
@@ -2125,9 +2203,32 @@ const ProcurementApprovalLimitSchema = z.object({
   is_active: z.number(),
   row_version: z.number(),
   updated_at: z.string(),
+  /** The "Administrator: unlimited" row the app seeds so that someone can always approve. */
+  is_seeded_default: z.boolean(),
 });
 export type ProcurementApprovalLimit = z.infer<typeof ProcurementApprovalLimitSchema>;
 export type ApprovalDocumentType = "REQUISITION" | "PURCHASE_ORDER";
+
+const ProcurementApproverRolesSchema = z.object({
+  document_type: z.string(),
+  document_id: z.number(),
+  amount: z.number().nullable(),
+  amount_unknown_reason: z.string().nullable(),
+  role_names: z.array(z.string()),
+});
+export type ProcurementApproverRoles = z.infer<typeof ProcurementApproverRolesSchema>;
+
+/** Roles that may approve this document: approval right and a limit covering its amount. */
+export function listProcurementApproverRoles(
+  documentType: ApprovalDocumentType,
+  documentId: number,
+): Promise<ProcurementApproverRoles> {
+  return invokeParsed(
+    "list_inventory_procurement_approver_roles",
+    { documentType, documentId },
+    ProcurementApproverRolesSchema,
+  );
+}
 
 export function listProcurementApprovalLimits(): Promise<ProcurementApprovalLimit[]> {
   return invokeParsed(
@@ -2196,5 +2297,25 @@ export function setInventoryPurchaseOrderLinePrice(
     "set_inventory_purchase_order_line_price",
     { poLineId, unitPrice },
     PurchaseOrderLineSchema,
+  );
+}
+
+export interface ReturnGoodsToSupplierInput {
+  goods_receipt_line_id: number;
+  /** In the stock unit. */
+  quantity: number;
+  reason: string;
+  /** Lot or serial sent back (lot- or serial-tracked articles). */
+  lot_id: number | null;
+}
+
+/** A part found non-conforming after reception goes back to its supplier (L3-05). */
+export function returnInventoryGoodsToSupplier(
+  input: ReturnGoodsToSupplierInput,
+): Promise<GoodsReceiptLineRow> {
+  return invokeParsed(
+    "return_inventory_goods_to_supplier",
+    { input: { ...input, actor_id: null } },
+    GoodsReceiptLineSchema,
   );
 }

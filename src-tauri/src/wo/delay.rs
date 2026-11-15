@@ -178,35 +178,37 @@ pub async fn open_downtime_segment(db: &DatabaseConnection, input: OpenDowntimeI
 
     let now = now_utc_z();
 
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO work_order_downtime_segments \
+    let inserted = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO work_order_downtime_segments \
          (work_order_id, started_at, downtime_type, comment, classification_code) \
          VALUES (?, ?, ?, ?, ?)",
-        [
-            input.wo_id.into(),
-            now.into(),
-            input.downtime_type.into(),
-            input
-                .comment
-                .map(sea_orm::Value::from)
-                .unwrap_or(sea_orm::Value::from(None::<String>)),
-            input
-                .classification_code
-                .map(sea_orm::Value::from)
-                .unwrap_or(sea_orm::Value::from(None::<String>)),
-        ],
-    ))
-    .await?;
+            [
+                input.wo_id.into(),
+                now.into(),
+                input.downtime_type.into(),
+                input
+                    .comment
+                    .map(sea_orm::Value::from)
+                    .unwrap_or(sea_orm::Value::from(None::<String>)),
+                input
+                    .classification_code
+                    .map(sea_orm::Value::from)
+                    .unwrap_or(sea_orm::Value::from(None::<String>)),
+            ],
+        ))
+        .await?;
 
+    let segment_rowid = crate::db::inserted_id(&inserted)?;
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             format!(
                 "SELECT {DOWNTIME_COLS} FROM work_order_downtime_segments \
-                 WHERE rowid = last_insert_rowid()"
+                 WHERE rowid = ?"
             ),
-            [],
+            [segment_rowid.into()],
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Failed to re-read downtime segment after insert")))?;

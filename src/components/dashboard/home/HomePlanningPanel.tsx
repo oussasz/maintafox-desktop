@@ -101,8 +101,8 @@ function PlanningBody({ data }: { data: HomePlanning }) {
           { label: t("home.planning.week.load"), text: t("home.def.weekLoad") },
           { label: t("home.planning.week.overtime"), text: t("home.def.weekOvertime") },
         ]}
-        openLabel={t("home.open.planning")}
-        openTo={homeLinks.planning}
+        openLabel={t("home.open.planningWeek")}
+        openTo={homeLinks.planningWeek}
       >
         {week == null ? (
           <HomeNote tone="warning">
@@ -133,7 +133,10 @@ function PlanningBody({ data }: { data: HomePlanning }) {
               <HomeNote tone="warning">{t("home.planning.week.reliesOnOvertime")}</HomeNote>
             ) : null}
             {week.weeks_awaiting_approval > 0 ? (
-              <HomeNote tone="warning">
+              <HomeNote
+                tone="warning"
+                link={{ to: homeLinks.planningWeek, label: t("home.planning.week.toApprove") }}
+              >
                 {t("home.planning.week.awaitingApproval", { count: week.weeks_awaiting_approval })}
               </HomeNote>
             ) : null}
@@ -151,13 +154,19 @@ function PlanningBody({ data }: { data: HomePlanning }) {
         definitions={[
           { label: t("home.planning.compliance.title"), text: t("home.def.scheduleCompliance") },
         ]}
+        openLabel={t("home.open.planningWeek")}
+        openTo={homeLinks.planningWeek}
       >
         {sc.value_pct == null ? (
-          <HomeNote>
-            {t(`home.planning.compliance.unavailable.${sc.unavailable ?? "NO_FROZEN_BASELINE"}`, {
-              count: sc.period_days,
-            })}
-          </HomeNote>
+          // No frozen week ended yet: a dash and one line, never "0,0 h sur 0,0 h".
+          <HomeFigure
+            label={t("home.planning.compliance.value")}
+            value="—"
+            hint={t(
+              `home.planning.compliance.unavailable.${sc.unavailable ?? "NO_FROZEN_BASELINE"}`,
+              { count: sc.period_days },
+            )}
+          />
         ) : (
           <>
             <HomeFigure

@@ -90,10 +90,10 @@ pub async fn get_failure_mode_pareto(
             DbBackend::Sqlite,
             "SELECT fe.failure_mode_id, fc.code, fc.label, COUNT(*) AS n, \
              COALESCE(SUM(fe.downtime_duration_hours), 0.0) AS dt, \
-             COALESCE(SUM(CASE WHEN fe.source_type = 'work_order' THEN wo.total_cost END), 0.0) AS cost \
+             COALESCE(SUM(CASE WHEN fe.source_type = 'work_order' THEN wo.total_cost                                WHEN fe.source_type = 'history_record'                                THEN COALESCE(h.labor_cost, 0) + COALESCE(h.parts_cost, 0) + COALESCE(h.service_cost, 0)                           END), 0.0) AS cost \
              FROM failure_events fe \
              LEFT JOIN failure_codes fc ON fc.id = fe.failure_mode_id \
-             LEFT JOIN work_orders wo ON fe.source_type = 'work_order' AND wo.id = fe.source_id \
+             LEFT JOIN work_orders wo ON fe.source_type = 'work_order' AND wo.id = fe.source_id              LEFT JOIN wo_history_records h ON fe.source_type = 'history_record' AND h.id = fe.source_id \
              WHERE fe.is_planned = 0 \
                AND (? IS NULL OR COALESCE(fe.failed_at, fe.detected_at, fe.created_at) >= ?) \
                AND (? IS NULL OR COALESCE(fe.failed_at, fe.detected_at, fe.created_at) <= ?) \

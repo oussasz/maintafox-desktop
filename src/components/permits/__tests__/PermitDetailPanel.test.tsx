@@ -52,6 +52,7 @@ vi.mock("@/lib/app-error", async (importOriginal) => ({
 vi.mock("@/components/permits/loto-card-print", () => ({ printLotoCard: vi.fn() }));
 
 const svc = vi.hoisted(() => ({
+  checkWorkPermitApproval: vi.fn().mockResolvedValue(undefined),
   listPermitIsolations: vi.fn(),
   listPermitIsolationOptions: vi.fn(),
   listPermitSuspensions: vi.fn(),
@@ -76,6 +77,68 @@ const svc = vi.hoisted(() => ({
   listPermitLockRemovers: vi.fn(),
 }));
 vi.mock("@/services/permit-service", () => svc);
+
+/** L4-03 / L4-04 / L4-12: the safety content as the server returns it (nothing blocks by default). */
+const SAFETY = {
+  permit_id: 41,
+  permit_status: "active",
+  permit_row_version: 5,
+  work_description: "Replace the pump seal",
+  risk_assessment: "Pressure",
+  preventive_measures: "Drain, lock out",
+  ppe_required: "Gloves",
+  requires_hse_approval: false,
+  requires_gas_test: false,
+  hse_approved_by_id: null,
+  hse_approved_by_name: null,
+  hse_approved_at: null,
+  hse_approval_note: null,
+  hse_self_approved: null,
+  gas_validity_hours: 4,
+  gas_limits: {
+    o2_min_percent: 19.5,
+    o2_max_percent: 23.5,
+    lel_max_percent: 10,
+    h2s_max_ppm: 10,
+    co_max_ppm: 25,
+  },
+  gas_tests: [],
+  issue_blockers: [] as { code: string; params: Record<string, string> }[],
+};
+const safetySvc = vi.hoisted(() => ({
+  getPermitSafetyContent: vi.fn(),
+  listPermitProposedIsolationPoints: vi.fn(),
+  savePermitSafetyContent: vi.fn(),
+  recordPermitHseApproval: vi.fn(),
+  recordPermitGasTest: vi.fn(),
+}));
+vi.mock("@/services/permit-safety-service", () => safetySvc);
+/** L4-05 / L4-18: the workers of the permit (none by default). */
+const workersSvc = vi.hoisted(() => ({
+  listPermitWorkers: vi.fn(),
+  addPermitWorker: vi.fn(),
+  recordPermitWorkerInduction: vi.fn(),
+  withdrawPermitWorker: vi.fn(),
+  placeMyPermitLock: vi.fn(),
+  removeMyPermitLock: vi.fn(),
+  forceRemovePermitLock: vi.fn(),
+}));
+vi.mock("@/services/permit-workers-service", () => workersSvc);
+vi.mock("@/services/personnel-service", () => ({
+  listPersonnel: vi.fn().mockResolvedValue({ items: [], total: 0 }),
+  listExternalCompanies: vi.fn().mockResolvedValue([]),
+}));
+beforeEach(() => {
+  safetySvc.getPermitSafetyContent.mockResolvedValue(SAFETY);
+  safetySvc.listPermitProposedIsolationPoints.mockResolvedValue([]);
+  workersSvc.listPermitWorkers.mockResolvedValue({
+    permit_id: 41,
+    permit_status: "active",
+    workers: [],
+    locks: [],
+    open_lock_count: 0,
+  });
+});
 
 const session = vi.hoisted(() => ({ userId: 10 }));
 vi.mock("@/hooks/use-session", () => ({
@@ -127,6 +190,10 @@ function permit(overrides: Partial<WorkPermitRecord> = {}): WorkPermitRecord {
     approved_by_name: "Alex Approver",
     approved_at: "2026-10-10T08:00:00Z",
     self_approved: false,
+    cancel_reason: null,
+    cancelled_by_id: null,
+    cancelled_by_name: null,
+    cancelled_at: null,
     ...overrides,
   };
 }
@@ -153,6 +220,8 @@ const VERIFIED_ISOLATION: PermitIsolationRecord = {
   verified_by_id: 8,
   applied_at: "2026-10-10T09:00:00Z",
   verified_at: "2026-10-10T09:10:00Z",
+  // Verified before the zero-energy test was recorded (L4-13): shown "not recorded".
+  zero_energy_note: null,
   removal_verified_at: null,
   removal_verified_by_id: null,
   row_version: 3,
@@ -209,6 +278,8 @@ describe("PermitDetailPanel — lock removal with a third person", () => {
     svc.listPermitHandoverLogs.mockResolvedValue([]);
     svc.listPermitHandoverRoles.mockResolvedValue([]);
     svc.listPermitHandoverReceivers.mockResolvedValue({ items: [], total: 0 });
+    safetySvc.getPermitSafetyContent.mockResolvedValue(SAFETY);
+    safetySvc.listPermitProposedIsolationPoints.mockResolvedValue([]);
   });
 
   it("names the isolation's verifier as someone who may not confirm the removal", async () => {
@@ -503,6 +574,8 @@ describe("PermitDetailPanel — cancelling a planned isolation line", () => {
     svc.listPermitHandoverLogs.mockResolvedValue([]);
     svc.listPermitHandoverRoles.mockResolvedValue([]);
     svc.listPermitHandoverReceivers.mockResolvedValue({ items: [], total: 0 });
+    safetySvc.getPermitSafetyContent.mockResolvedValue(SAFETY);
+    safetySvc.listPermitProposedIsolationPoints.mockResolvedValue([]);
   });
 
   it("offers it on a line never applied while the permit is a draft or waiting for review", async () => {
@@ -604,6 +677,8 @@ describe("PermitDetailPanel — four-eyes approval", () => {
     svc.listPermitHandoverLogs.mockResolvedValue([]);
     svc.listPermitHandoverRoles.mockResolvedValue([]);
     svc.listPermitHandoverReceivers.mockResolvedValue({ items: [], total: 0 });
+    safetySvc.getPermitSafetyContent.mockResolvedValue(SAFETY);
+    safetySvc.listPermitProposedIsolationPoints.mockResolvedValue([]);
   });
 
   const show = async (p: WorkPermitRecord) => {
@@ -671,6 +746,38 @@ describe("PermitDetailPanel — four-eyes approval", () => {
     expect(screen.queryByTestId("permit-approver")).toBeNull();
   });
 
+  it("shows the red expired-permit alert while an open permit is past its expiry (L4-08)", async () => {
+    await show(permit({ status: "active", expires_at: "2020-01-01T00:00:00Z" }));
+    const alert = await screen.findByTestId("permit-overdue");
+    expect(alert).toHaveTextContent(enPermits.overdue.title);
+  });
+
+  it("shows no expired-permit alert once the permit is handed back", async () => {
+    await show(permit({ status: "handed_back", expires_at: "2020-01-01T00:00:00Z" }));
+    expect(await screen.findByTestId("permit-status")).toBeInTheDocument();
+    expect(screen.queryByTestId("permit-overdue")).toBeNull();
+  });
+
+  it("greys the approve step with the server's four-eyes reason before any click (L4-14)", async () => {
+    svc.checkWorkPermitApproval.mockRejectedValueOnce({ code: "PERMIT_APPROVER_IS_SUBMITTER" });
+    const p = permit({
+      status: "pending_review",
+      approved_by_id: null,
+      approved_by_name: null,
+      approved_at: null,
+    });
+    await show(p);
+    expect(svc.checkWorkPermitApproval).toHaveBeenCalledWith(41);
+    const refusal = await screen.findByTestId("permit-approval-refusal");
+    const reason = String(lookup(enTraining, "errors.PERMIT_APPROVER_IS_SUBMITTER")).replace(
+      /\{\{\w+\}\}/g,
+      "",
+    );
+    expect(refusal).toHaveTextContent(reason.replace(/\s+/g, " ").trim());
+    expect(screen.getByRole("button", { name: enPermits.transition.approve })).toBeDisabled();
+    expect(svc.setWorkPermitStatus).not.toHaveBeenCalled();
+  });
+
   it("surfaces the four-eyes refusal when the submitter tries to approve", async () => {
     svc.setWorkPermitStatus.mockRejectedValue({ code: "PERMIT_APPROVER_IS_SUBMITTER" });
     const p = permit({
@@ -695,5 +802,255 @@ describe("PermitDetailPanel — four-eyes approval", () => {
       "",
     );
     expect(await screen.findByRole("alert")).toHaveTextContent(reason.replace(/\s+/g, " ").trim());
+  });
+});
+
+// L4-15: a permit, possibly with padlocks still on, is never cancelled without a reason.
+describe("PermitDetailPanel — cancelling a permit needs a reason", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    session.userId = 10;
+    svc.listPermitIsolations.mockResolvedValue([VERIFIED_ISOLATION]);
+    svc.listPermitIsolationOptions.mockResolvedValue({ energy_types: [], isolation_methods: [] });
+    svc.listPermitSuspensions.mockResolvedValue([]);
+    svc.listPermitHandoverLogs.mockResolvedValue([]);
+    svc.listPermitHandoverRoles.mockResolvedValue([]);
+    svc.listPermitHandoverReceivers.mockResolvedValue({ items: [], total: 0 });
+    safetySvc.getPermitSafetyContent.mockResolvedValue(SAFETY);
+    safetySvc.listPermitProposedIsolationPoints.mockResolvedValue([]);
+  });
+
+  it("asks for the reason, keeps the permit on the other button and sends the reason", async () => {
+    svc.setWorkPermitStatus.mockResolvedValue(permit({ status: "cancelled" }));
+    await renderPanel();
+    fireEvent.click(screen.getByRole("button", { name: enPermits.transition.cancel }));
+    const dialog = await screen.findByRole("dialog");
+    // The two buttons say different things: keep the permit, or cancel it.
+    expect(within(dialog).getByRole("button", { name: enPermits.transition.keep })).toBeEnabled();
+    const submit = within(dialog).getByRole("button", { name: enPermits.transition.cancel });
+    expect(submit).toBeDisabled();
+    const reason = within(dialog).getByLabelText(enPermits.transition.cancelReason, {
+      exact: false,
+    });
+    fireEvent.change(reason, { target: { value: "   " } });
+    expect(submit).toBeDisabled();
+    fireEvent.change(reason, { target: { value: "  Work postponed: part not delivered " } });
+    expect(submit).toBeEnabled();
+    fireEvent.click(submit);
+    await waitFor(() => expect(svc.setWorkPermitStatus).toHaveBeenCalledTimes(1));
+    expect(svc.setWorkPermitStatus).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "cancelled",
+        reason: "Work postponed: part not delivered",
+      }),
+    );
+  });
+
+  it("records nothing when the person keeps the permit", async () => {
+    await renderPanel();
+    fireEvent.click(screen.getByRole("button", { name: enPermits.transition.cancel }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: enPermits.transition.keep }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(svc.setWorkPermitStatus).not.toHaveBeenCalled();
+  });
+
+  it("shows who cancelled the permit, when and why", async () => {
+    await renderPanel(
+      permit({
+        status: "cancelled",
+        cancel_reason: "Work postponed",
+        cancelled_by_id: 8,
+        cancelled_by_name: "Sara Sup",
+        cancelled_at: "2026-11-04T10:00:00Z",
+      }),
+    );
+    const row = screen.getByTestId("permit-cancelled");
+    expect(row).toHaveTextContent("Sara Sup");
+    expect(row).toHaveTextContent(
+      fill(enPermits.detail.cancelReason, { reason: "Work postponed" }),
+    );
+  });
+
+  it("says the reason was not recorded on a permit cancelled before it was asked", async () => {
+    await renderPanel(permit({ status: "cancelled" }));
+    const row = screen.getByTestId("permit-cancelled");
+    expect(row).toHaveTextContent(enPermits.detail.cancelNotRecorded);
+    expect(row).toHaveTextContent(enPermits.detail.cancelReasonNotRecorded);
+  });
+});
+
+describe("PermitDetailPanel — verifying an isolation with the zero-energy test", () => {
+  const applied: PermitIsolationRecord = {
+    ...LOCK_ON,
+    verified_by_id: null,
+    verified_at: null,
+    verified_by_name: null,
+    row_version: 2,
+  };
+  const issued = permit({ status: "issued", activated_at: null, row_version: 4 });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    siteRights.withheld = new Set();
+    session.userId = 8;
+    svc.listPermitIsolations.mockResolvedValue([applied]);
+    svc.listPermitIsolationOptions.mockResolvedValue({ energy_types: [], isolation_methods: [] });
+    svc.listPermitSuspensions.mockResolvedValue([]);
+    svc.listPermitHandoverLogs.mockResolvedValue([]);
+    svc.listPermitHandoverRoles.mockResolvedValue([]);
+    svc.listPermitHandoverReceivers.mockResolvedValue({ items: [], total: 0 });
+    safetySvc.getPermitSafetyContent.mockResolvedValue(SAFETY);
+    safetySvc.listPermitProposedIsolationPoints.mockResolvedValue([]);
+  });
+
+  async function openVerify() {
+    const row = await renderPanel(issued);
+    fireEvent.click(within(row).getByRole("button", { name: enPermits.isolation.verify }));
+    const dialog = await screen.findByRole("dialog");
+    return {
+      dialog,
+      confirm: within(dialog).getByRole("button", { name: enPermits.isolation.verify }),
+      box: within(dialog).getByRole("checkbox"),
+      note: within(dialog).getByRole("textbox"),
+    };
+  }
+
+  it("keeps the confirmation disabled until the test is ticked and commented", async () => {
+    const { dialog, confirm, box, note } = await openVerify();
+    expect(dialog).toHaveTextContent(enPermits.isolation.zeroEnergyConfirm);
+    expect(confirm).toBeDisabled();
+    // A comment alone is not enough…
+    fireEvent.change(note, { target: { value: "VAT 0 V" } });
+    expect(confirm).toBeDisabled();
+    // …nor the box with a blank comment.
+    fireEvent.click(box);
+    fireEvent.change(note, { target: { value: "   " } });
+    expect(confirm).toBeDisabled();
+    fireEvent.change(note, { target: { value: "VAT 0 V" } });
+    expect(confirm).toBeEnabled();
+    expect(svc.verifyPermitIsolation).not.toHaveBeenCalled();
+  });
+
+  it("sends the confirmation and the trimmed comment", async () => {
+    svc.verifyPermitIsolation.mockResolvedValue({
+      ...applied,
+      verified_at: "2026-10-10T09:10:00Z",
+    });
+    const { confirm, box, note } = await openVerify();
+    fireEvent.click(box);
+    fireEvent.change(note, { target: { value: "  Essai de démarrage refusé, VAT 0 V " } });
+    fireEvent.click(confirm);
+    await waitFor(() =>
+      expect(svc.verifyPermitIsolation).toHaveBeenCalledWith({
+        isolation_id: 300,
+        expected_row_version: 2,
+        lock_number: null,
+        zero_energy_confirmed: true,
+        zero_energy_note: "Essai de démarrage refusé, VAT 0 V",
+      }),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("shows the recorded test under the verifier", async () => {
+    svc.listPermitIsolations.mockResolvedValue([
+      { ...LOCK_ON, zero_energy_note: "Essai de démarrage refusé, VAT 0 V" },
+    ]);
+    const row = await renderPanel();
+    expect(within(row).getByTestId("isolation-zero-energy")).toHaveTextContent(
+      fill(enPermits.isolation.zeroEnergyShown, { note: "Essai de démarrage refusé, VAT 0 V" }),
+    );
+  });
+
+  it("says the test was not recorded on a line verified before it existed", async () => {
+    svc.listPermitIsolations.mockResolvedValue([LOCK_ON]);
+    const row = await renderPanel();
+    expect(within(row).getByTestId("isolation-zero-energy")).toHaveTextContent(
+      enPermits.isolation.zeroEnergyNotRecorded,
+    );
+  });
+});
+
+function renderApproved() {
+  render(
+    <MemoryRouter>
+      <PermitDetailPanel
+        permit={permit({ status: "approved", issued_at: null, activated_at: null })}
+        onChanged={vi.fn()}
+      />
+    </MemoryRouter>,
+  );
+}
+
+describe("PermitDetailPanel issue gate and proposed isolation points (L4-03 / L4-04 / L4-12)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    session.userId = 10;
+    siteRights.withheld = new Set();
+    svc.listPermitIsolations.mockResolvedValue([]);
+    svc.listPermitIsolationOptions.mockResolvedValue({ energy_types: [], isolation_methods: [] });
+    svc.listPermitSuspensions.mockResolvedValue([]);
+    svc.listPermitHandoverLogs.mockResolvedValue([]);
+  });
+
+  it("greys the issue while the server reports blockers, and lists them", async () => {
+    safetySvc.getPermitSafetyContent.mockResolvedValue({
+      ...SAFETY,
+      permit_status: "approved",
+      ppe_required: null,
+      requires_gas_test: true,
+      issue_blockers: [
+        { code: "GATE_PERMIT_PPE_MISSING", params: { permit: "PTW-2026-000041" } },
+        { code: "GATE_PERMIT_GAS_TEST_MISSING", params: { permit: "PTW-2026-000041" } },
+      ],
+    });
+    renderApproved();
+    const issue = await screen.findByRole("button", { name: enPermits.transition.issue });
+    await waitFor(() => expect(issue).toBeDisabled());
+    expect(issue).toHaveAttribute("title", enPermits.safety.issueBlocked);
+    const blockers = await screen.findByTestId("permit-issue-blockers");
+    expect(blockers).toHaveTextContent("gateError.GATE_PERMIT_PPE_MISSING");
+    expect(blockers).toHaveTextContent("gateError.GATE_PERMIT_GAS_TEST_MISSING");
+    expect(screen.getByTestId("permit-gas-limits")).toHaveTextContent(/19[.,]5 .*LEL < 10 %/);
+  });
+
+  it("offers the issue when nothing blocks it", async () => {
+    safetySvc.getPermitSafetyContent.mockResolvedValue({ ...SAFETY, permit_status: "approved" });
+    renderApproved();
+    const issue = await screen.findByRole("button", { name: enPermits.transition.issue });
+    await waitFor(() => expect(issue).toBeEnabled());
+    expect(screen.queryByTestId("permit-issue-blockers")).toBeNull();
+  });
+
+  it("pre-fills the isolation form from a point of the equipment, still editable", async () => {
+    safetySvc.listPermitProposedIsolationPoints.mockResolvedValue([
+      {
+        point: {
+          id: 5,
+          entity_sync_id: "ip5",
+          equipment_id: 900,
+          point_code: "IP-01",
+          label: "Main breaker MCC-3",
+          energy_type_id: 11,
+          energy_type_code: "ELECTRICAL",
+          energy_type_label: "Électrique",
+          isolation_method_id: 12,
+          isolation_method_label: "Disjoncteur cadenassé",
+          normal_state: "Closed",
+          is_active: true,
+          row_version: 1,
+        },
+        isolation_point_text: "IP-01 — Main breaker MCC-3",
+        already_on_permit: false,
+      },
+    ]);
+    renderApproved();
+    const box = await screen.findByTestId("permit-proposed-points");
+    fireEvent.click(within(box).getByRole("button", { name: enPermits.safety.proposed.use }));
+    const point = document.getElementById("iso-point") as HTMLInputElement;
+    expect(point.value).toBe("IP-01 — Main breaker MCC-3");
+    fireEvent.change(point, { target: { value: "IP-01 — Main breaker MCC-3 (side B)" } });
+    expect(point.value).toBe("IP-01 — Main breaker MCC-3 (side B)");
   });
 });

@@ -86,9 +86,7 @@ describe("hidden work orders notice", () => {
     const notice = screen.getByRole("status");
     expect(notice).toHaveTextContent("3 work orders are not shown: outside your sites.");
     expect(notice).toHaveTextContent("1 work order is not shown: it has no site.");
-    expect(notice).toHaveTextContent(
-      "These counts cover all work orders, whatever the filters or search.",
-    );
+    expect(notice).toHaveTextContent("Total over all work orders, ignoring the filters.");
     expect(notice).toHaveTextContent("Ask a user with a plant-wide role to see them.");
   });
 
@@ -99,7 +97,7 @@ describe("hidden work orders notice", () => {
     expect(notice).toHaveTextContent("3 OT ne sont pas affichés : hors de vos sites.");
     expect(notice).toHaveTextContent("2 OT ne sont pas affichés : ils n’ont pas de site.");
     expect(notice).toHaveTextContent(
-      "Ces nombres portent sur tous les OT, quels que soient les filtres ou la recherche.",
+      "Total calculé sur tous les OT, sans tenir compte des filtres.",
     );
   });
 

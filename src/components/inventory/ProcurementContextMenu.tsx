@@ -22,6 +22,8 @@ export type ProcurementContextMenuAction = {
   onClick: () => void;
   icon?: ReactNode;
   disabled?: boolean;
+  /** Why the action is disabled, shown under its label and as its tooltip. */
+  disabledReason?: string | null;
   destructive?: boolean;
   /** When set, action is hidden unless the user has this permission. */
   permission?: PermissionName;
@@ -60,8 +62,11 @@ export function ProcurementContextMenu({
             {action.separatorBefore ? <DropdownMenuSeparator /> : null}
             <DropdownMenuItem
               disabled={action.disabled ?? false}
+              title={action.disabled && action.disabledReason ? action.disabledReason : undefined}
               onClick={(event) => {
                 event.stopPropagation();
+                // A greyed action never runs: its click is blocked only by CSS otherwise.
+                if (action.disabled) return;
                 action.onClick();
               }}
               className={cn(
@@ -70,7 +75,14 @@ export function ProcurementContextMenu({
               )}
             >
               {action.icon}
-              {action.label}
+              {action.disabled && action.disabledReason ? (
+                <span className="flex flex-col">
+                  <span>{action.label}</span>
+                  <span className="text-xs text-text-muted">{action.disabledReason}</span>
+                </span>
+              ) : (
+                action.label
+              )}
             </DropdownMenuItem>
           </Fragment>
         ))}

@@ -308,7 +308,7 @@ pub async fn upsert_personnel_skill(
             "Only a user linked to a personnel record can validate a skill.",
         ));
     }
-    let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let validated_by = if input.validate { validator_personnel_id } else { None };
     let validated_at = validated_by.map(|_| now.clone());
     if input.is_primary {
@@ -363,6 +363,77 @@ pub async fn upsert_personnel_skill(
     ))
     .await?;
     list_personnel_skills(db, input.personnel_id).await
+}
+
+/// Records a skill read from an import file. A new skill comes in unvalidated, with source
+/// "import" and no start date (the file gives none). On an existing skill (`existing_id`, found by
+/// its code) only the level changes; a changed level is a new claim, so an earlier validation no
+/// longer applies. The primary flag and the end of validity are left as they are.
+pub async fn record_imported_skill(
+    db: &impl ConnectionTrait,
+    personnel_id: i64,
+    reference_value_id: i64,
+    proficiency_level: i64,
+    existing_id: Option<i64>,
+) -> AppResult<()> {
+    if !(1..=5).contains(&proficiency_level) {
+        return Err(skill_issue(
+            "SKILL_LEVEL_RANGE",
+            "Choose a level from 1 (notions) to 5 (expert).",
+        ));
+    }
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let written = match existing_id {
+        Some(id) => {
+            db.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "UPDATE personnel_skills SET \
+                    is_validated = CASE WHEN proficiency_level = ? THEN is_validated ELSE 0 END, \
+                    verified_by_id = CASE WHEN proficiency_level = ? THEN verified_by_id ELSE NULL END, \
+                    verified_at = CASE WHEN proficiency_level = ? THEN verified_at ELSE NULL END, \
+                    source_type = CASE WHEN proficiency_level = ? THEN source_type ELSE 'import' END, \
+                    proficiency_level = ?, updated_at = ? \
+                 WHERE id = ? AND personnel_id = ?",
+                [
+                    proficiency_level.into(),
+                    proficiency_level.into(),
+                    proficiency_level.into(),
+                    proficiency_level.into(),
+                    proficiency_level.into(),
+                    now.into(),
+                    id.into(),
+                    personnel_id.into(),
+                ],
+            ))
+            .await?
+        }
+        None => {
+            db.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "INSERT INTO personnel_skills \
+                    (entity_sync_id, personnel_id, reference_value_id, proficiency_level, valid_from, valid_to, \
+                     source_type, is_primary, is_validated, created_at, updated_at) \
+                 VALUES (?, ?, ?, ?, NULL, NULL, 'import', 0, 0, ?, ?)                  ON CONFLICT(personnel_id, reference_value_id) DO NOTHING",
+                [
+                    crate::sync::identity::new_entity_sync_id().into(),
+                    personnel_id.into(),
+                    reference_value_id.into(),
+                    proficiency_level.into(),
+                    now.clone().into(),
+                    now.into(),
+                ],
+            ))
+            .await?
+        }
+    };
+    // Recorded or removed on the screen since the file was checked: nothing is written over it.
+    if written.rows_affected() != 1 {
+        return Err(skill_issue(
+            "SKILL_CHANGED_ELSEWHERE",
+            "This skill was changed elsewhere since the file was checked: check the file again.",
+        ));
+    }
+    Ok(())
 }
 
 /// Removes a skill from a person's sheet (replicates as a delete).

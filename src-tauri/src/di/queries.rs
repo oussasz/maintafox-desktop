@@ -6,7 +6,6 @@
 //! to stay consistent with the codebase's established query pattern.
 
 use crate::errors::{AppError, AppResult};
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
@@ -392,7 +391,7 @@ pub async fn list_intervention_requests_in_scope(
     }
     if let Some(days) = filter.waiting_days {
         where_clauses.push(super::stats::WAITING_SQL.to_string());
-        binds.push(super::stats::waiting_since(chrono::Utc::now(), days).into());
+        binds.push(super::stats::waiting_since(crate::clock::now(), days).into());
     }
 
     // ── Free-text search (title + description + code) ─────────────────────
@@ -471,10 +470,14 @@ pub async fn list_intervention_requests_in_scope(
     let row_limit = filter.limit.clamp(1, 200);
     let offset = filter.offset.max(0);
 
-    // A work queue is worked most urgent first, then oldest first (first in, first out); the
-    // other lists show the latest requests first.
+    // A work queue is worked safety reports first (CMMS Advisor decision on L4-11), then most urgent
+    // first, then the most critical equipment first (L1-29: A before B before C, none last), then
+    // oldest first (first in, first out); the other lists show the latest requests first.
     let order_sql = match queue {
-        Some(q) if q != "mine" => format!("{} ASC, ir.submitted_at ASC, ir.id ASC", urgency_rank_sql()),
+        Some(q) if q != "mine" => format!(
+            "ir.safety_flag DESC, {} ASC, CASE UPPER(TRIM(COALESCE(asset_criticality_code, ''))) WHEN 'A' THEN 1 WHEN 'CRITIQUE' THEN 1              WHEN 'B' THEN 2 WHEN 'IMPORTANT' THEN 2 WHEN 'C' THEN 3 WHEN 'STANDARD' THEN 3              WHEN 'D' THEN 4 WHEN 'NON_CRITIQUE' THEN 4 WHEN 'NON-CRITIQUE' THEN 4 ELSE 9 END ASC,              ir.submitted_at ASC, ir.id ASC",
+            urgency_rank_sql()
+        ),
         _ => "ir.submitted_at DESC, ir.id DESC".to_string(),
     };
     let data_sql = format!(
@@ -650,9 +653,21 @@ pub async fn create_intervention_request_in(
     // Catalog membership (Category B) — same philosophy as equipment taxonomy.
     let origin_type = crate::di::reference_catalog::validate_di_origin_code(db, &input.origin_type).await?;
     let request_type = crate::di::reference_catalog::validate_di_request_type(db, &input.request_type).await?;
-    let symptom_code_id = crate::di::reference_catalog::require_di_symptom_id(db, input.symptom_code_id).await?;
+    // The symptom is optional on a new request (an operator may not know it; the planner sets it at
+    // screening, and the work order cannot be completed without it): when given, it must be a value
+    // of the shared list.
+    let symptom_code_id = match input.symptom_code_id {
+        Some(id) => {
+            crate::di::reference_catalog::validate_di_symptom_id(db, id).await?;
+            Some(id)
+        }
+        None => None,
+    };
     // Shared DI / OT urgency scale (`WORK.URGENCY`).
     let reported_urgency = crate::reference::urgency_scale::validate_urgency_code(&input.reported_urgency)?;
+    // A request flagged "sécurité" is urgent at least (CMMS Advisor decision on L4-11): raised,
+    // never refused, so a safety report is never lost on its urgency.
+    let reported_urgency = super::domain::safety_urgency_floor(input.safety_flag, reported_urgency);
 
     // Decision O7: every new request names its org node (its anchor for site-scoped roles).
     super::access::require_org_node(input.org_node_id)?;
@@ -662,7 +677,7 @@ pub async fn create_intervention_request_in(
     refuse_retired_equipment(db, input.equipment_id).await?;
 
     let code = generate_di_code(db).await?;
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let entity_sync_id = crate::sync::identity::new_entity_sync_id();
 
     db.execute(Statement::from_sql_and_values(
@@ -772,6 +787,12 @@ pub async fn create_intervention_request_in(
     ))
     .await?;
 
+    // Flagged "sécurité": its reviewers and the permit issuers of its site are told at once, in
+    // this transaction (`settings::received_notice::announce_di_safety_alert`).
+    if di.safety_flag {
+        crate::settings::received_notice::announce_di_safety_alert(db, di.id).await;
+    }
+
     Ok(di)
 }
 
@@ -807,6 +828,17 @@ pub async fn update_di_draft_fields(
         )]));
     }
 
+    // 2b. Guard: a request flagged "sécurité" stays flagged. Its urgency can only be lowered below
+    // Urgent by the reviewer's decision, which needs a reason and is audited (`di::review`); an
+    // untick here would drop the flag and its urgency floor without either (L4-11 security review).
+    if current.safety_flag && input.safety_flag == Some(false) {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_DI_SAFETY_FLAG_KEPT: Le signalement sécurité d'une demande enregistrée ne peut pas être retiré. \
+             Seul le valideur peut abaisser son urgence, avec un motif."
+                .into(),
+        ]));
+    }
+
     // 3. Build dynamic SET clause
     let mut sets: Vec<String> = Vec::new();
     let mut values: Vec<sea_orm::Value> = Vec::new();
@@ -827,9 +859,7 @@ pub async fn update_di_draft_fields(
     if let Some(ref symptom_code_id) = input.symptom_code_id {
         match symptom_code_id {
             None => {
-                return Err(AppError::ValidationFailed(vec![
-                    "GATE_DI_SYMPTOM_REQUIRED: Le symptôme est obligatoire.".into(),
-                ]));
+                sets.push("symptom_code_id = NULL".into());
             }
             Some(id) => {
                 // Validate only when writing a new value (legacy rows keep existing id until changed).
@@ -859,10 +889,24 @@ pub async fn update_di_draft_fields(
         sets.push("quality_flag = ?".into());
         values.push(i64::from(quality_flag).into());
     }
+    // A request flagged "sécurité" (now, or ticked by this change) is urgent at least: the urgency
+    // sent is raised, and a lower urgency held is raised when the flag is ticked (CMMS Advisor
+    // decision on L4-11).
+    // (An untick of a flagged request was refused above: `flagged` is never lowered here.)
+    let flagged = current.safety_flag || input.safety_flag == Some(true);
     if let Some(ref reported_urgency) = input.reported_urgency {
         let level = crate::reference::urgency_scale::validate_urgency_code(reported_urgency)?;
+        let level = super::domain::safety_urgency_floor(flagged, level);
         sets.push("reported_urgency = ?".into());
         values.push(level.as_str().into());
+    } else if flagged {
+        let held = crate::reference::urgency_scale::legacy_urgency_code(&current.reported_urgency)
+            .unwrap_or(crate::reference::urgency_scale::UrgencyCode::Normal);
+        let raised = super::domain::safety_urgency_floor(true, held);
+        if raised != held {
+            sets.push("reported_urgency = ?".into());
+            values.push(raised.as_str().into());
+        }
     }
     if let Some(ref observed_at) = input.observed_at {
         sets.push("observed_at = ?".into());
@@ -881,7 +925,7 @@ pub async fn update_di_draft_fields(
     }
 
     // Always bump version + updated_at
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     sets.push("row_version = row_version + 1".into());
     sets.push("updated_at = ?".into());
     values.push(now.into());
@@ -912,6 +956,8 @@ pub async fn update_di_draft_fields(
     if input.safety_flag == Some(true) && !current.safety_flag {
         crate::wo::workflow::actions::permit_requirement::raise_work_orders_of_safety_request(&txn, input.id, actor_id)
             .await?;
+        // Its safety alert, once per request on this PC (CMMS Advisor decision on L4-11).
+        crate::settings::received_notice::announce_di_safety_alert(&txn, input.id).await;
     }
 
     // 5. Re-fetch and return updated row
@@ -957,7 +1003,7 @@ pub async fn triage_submitted_di(
 
     guard_transition(&status, &DiStatus::InReview).map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
     let result = txn
         .execute(Statement::from_sql_and_values(

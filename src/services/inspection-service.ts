@@ -519,3 +519,31 @@ export async function generateInspectionRounds(
     })
     .parse(raw);
 }
+
+const InspectionPointReadingSchema = z.object({
+  round_id: z.number(),
+  recorded_at: z.string(),
+  numeric_value: z.number(),
+  result_status: z.string(),
+  normal_min: z.number().nullable(),
+  normal_max: z.number().nullable(),
+  warning_min: z.number().nullable(),
+  warning_max: z.number().nullable(),
+  measurement_unit: z.string().nullable(),
+});
+
+export type InspectionPointReading = z.infer<typeof InspectionPointReadingSchema>;
+
+/** The readings of one measurement point of a checklist over the last `days` days (oldest first). */
+export async function listInspectionPointTrend(
+  templateId: number,
+  checkpointCode: string,
+  days = 365,
+): Promise<InspectionPointReading[]> {
+  const raw = await invoke<unknown>("list_inspection_point_trend", {
+    templateId,
+    checkpointCode,
+    days,
+  });
+  return z.array(InspectionPointReadingSchema).parse(raw);
+}

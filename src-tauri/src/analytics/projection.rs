@@ -10,10 +10,12 @@ use crate::finance::settlement;
 use crate::kpi_definitions;
 use crate::reliability::fleet::{pooled_fleet_kpis, pooled_fleet_series, FleetWindow};
 use crate::reliability::readiness::DQ_GREEN_THRESHOLD;
+use crate::reliability::study::domain::FleetKpis;
+use crate::reliability::study::fleet_kpis::{fleet_kpis, horizon_start, FleetScope};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct AnalyticsExecutiveFilter {
-    /// Inclusive horizon length in days (7, 30, or 90).
+    /// Inclusive period length in days (1 to 366; 365 = 12 calendar months).
     pub horizon_days: i64,
     /// Optional org node scope (`org_nodes.id`). Applied as DI.org_node_id / WO.entity_id / equipment.installed_at_node_id.
     pub org_node_id: Option<i64>,
@@ -79,34 +81,49 @@ pub struct AnalyticsExecutiveDashboard {
     pub pm_overdue: AnalyticsKpiValue,
     pub pm_due_today: AnalyticsKpiValue,
     pub pm_due_next_7d: AnalyticsKpiValue,
+    /// Fleet reliability figures over `[now − horizon, now]` vs the horizon before it, from the one
+    /// live calculation `study::fleet_kpis` (the RAMS home figures; definitions there): MTBF,
+    /// MTTR (restore), A_o, and the coding completeness (`avg_data_quality`: complete records /
+    /// records). Under 90 days they are not given (`reliability.window_too_short`). The `avg_`
+    /// prefix is historical: they are pooled ratios, never means of ratios.
     pub avg_mtbf_hours: AnalyticsKpiValue,
     pub avg_mttr_hours: AnalyticsKpiValue,
     pub avg_availability: AnalyticsKpiValue,
     pub avg_data_quality: AnalyticsKpiValue,
+    /// "Taille d'échantillon": mean sample-size score of the latest stored KPI snapshot of each
+    /// equipment refreshed in the horizon (1 when its failure count reaches the minimum sample,
+    /// less below; `compute::compute_reliability_kpis`). A sample-size measure, never data quality.
+    pub sample_size_score: AnalyticsKpiValue,
+    /// All live fleet figures of the current horizon (window, hours basis, exclusions, counts).
+    pub reliability: Option<FleetKpis>,
     /// OT costs settled into the budget over the horizon (`finance::settlement`); needs the
     /// finance view.
     pub maintenance_cost: AnalyticsKpiValue,
     /// Work orders closed in the horizon whose settlement is still pending (their cost is not
     /// booked yet); `None` without the finance view.
     pub maintenance_cost_pending: Option<i64>,
+    /// Equipment with a stored KPI snapshot refreshed in the horizon.
     pub reliability_snapshot_count: i64,
+    /// Unplanned failures of the horizon (`reliability.failure_count`).
     pub reliability_total_events: i64,
     pub workload_days: Vec<AnalyticsWorkloadDay>,
     pub workload_quality_badge: Option<String>,
     pub di_status_segments: Vec<AnalyticsDiStatusSegment>,
+    /// Trend series from the stored KPI snapshots (pooled per snapshot date), not the live
+    /// calculation; any screen showing it says so.
     pub reliability_series: Vec<AnalyticsReliabilitySeriesPoint>,
     pub bad_actor_assets: Vec<AnalyticsBadActorAsset>,
     /// SMRP indicators over the horizon (and the horizon before it); `None` without OT / PM view.
     pub smrp: Option<SmrpKpis>,
 }
 
-/// The horizon selector's choices (7, 30 or 90 days); anything else is refused, never silently
-/// replaced by a default.
+/// The period selector's choices: 1 to 366 days (365 = 12 calendar months); anything else is
+/// refused, never silently replaced by a default.
 fn checked_horizon(days: i64) -> AppResult<i64> {
     match days {
-        7 | 30 | 90 => Ok(days),
+        1..=366 => Ok(days),
         other => Err(AppError::ValidationFailed(vec![format!(
-            "GATE_ANA_HORIZON_INVALID:value={other}: analytics horizon must be 7, 30 or 90 days (got {other})"
+            "GATE_ANA_HORIZON_INVALID:value={other}: analytics horizon must be 1 to 366 days (got {other})"
         )])),
     }
 }
@@ -151,7 +168,13 @@ fn float_kpi(key: &str, value: Option<f64>, previous: Option<f64>, catalog_id: O
         value: v,
         previous_value: p,
         available: value.is_some(),
-        quality_badge: if value.is_some() { kpi_badge(p, v) } else { None },
+        // No figure for the window before (e.g. no failure record then): no trend at all, never
+        // "stable" against a 0 that was never measured.
+        quality_badge: match (value, previous) {
+            (None, _) => None,
+            (Some(_), None) => Some(kpi_definitions::quality_badge::INSUFFICIENT_BASELINE.to_string()),
+            (Some(_), Some(_)) => kpi_badge(p, v),
+        },
         catalog_id: catalog_id.map(str::to_string),
     }
 }
@@ -174,7 +197,7 @@ pub async fn build_executive_dashboard(
 
     // ── Ops KPIs: point-in-time counts now vs at the start of the horizon ──
     // Same measure at both instants (`analytics::as_of`), so the trend is a real change.
-    let now = chrono::Utc::now();
+    let now = crate::clock::now();
     let start = as_of::days_before(now, horizon);
 
     let open_dis = if can_di {
@@ -245,17 +268,36 @@ pub async fn build_executive_dashboard(
         )
     };
 
-    // ── Reliability aggregates over horizon ────────────────────────────────
+    // ── Reliability figures over the horizon: the one live calculation (RAMS home) ──
+    // `study::fleet_kpis` over [now − horizon, now] vs the horizon before it; the same figures as
+    // the RAMS home for the same window and site. Only the sample-size score and the snapshot
+    // count come from the stored snapshots.
     let (
         avg_mtbf_hours,
         avg_mttr_hours,
         avg_availability,
         avg_data_quality,
+        sample_size_score,
+        reliability,
         reliability_snapshot_count,
         reliability_total_events,
     ) = if can_rep {
-        // Pooled ratios over the latest snapshot per equipment (never mean of ratios).
-        let cur = pooled_fleet_kpis(
+        // "12 mois" = 12 calendar months, the RAMS home's window (`fleet_kpis::horizon_start`).
+        let rel_start = horizon_start(now, horizon);
+        let cur_scope = FleetScope {
+            start: rel_start,
+            end: now,
+            equipment_class_id: None,
+            org_node_id: org,
+        };
+        let prev_scope = FleetScope {
+            start: horizon_start(rel_start, horizon),
+            end: rel_start,
+            ..cur_scope
+        };
+        let cur = fleet_kpis(db, &cur_scope).await?;
+        let prev = fleet_kpis(db, &prev_scope).await?;
+        let snaps = pooled_fleet_kpis(
             db,
             FleetWindow {
                 since_days: horizon,
@@ -265,7 +307,7 @@ pub async fn build_executive_dashboard(
             DQ_GREEN_THRESHOLD,
         )
         .await?;
-        let prev = pooled_fleet_kpis(
+        let snaps_prev = pooled_fleet_kpis(
             db,
             FleetWindow {
                 since_days: horizon * 2,
@@ -275,39 +317,49 @@ pub async fn build_executive_dashboard(
             DQ_GREEN_THRESHOLD,
         )
         .await?;
-        let (snap_n, mtbf, mttr, avail, dq, ev) = (
-            cur.equipment_count,
-            cur.mtbf_hours,
-            cur.mttr_hours,
-            cur.availability_operational,
-            cur.mean_data_quality_score,
-            cur.total_failure_events,
-        );
-        let (p_mtbf, p_mttr, p_avail, p_dq) = (
-            prev.mtbf_hours,
-            prev.mttr_hours,
-            prev.availability_operational,
-            prev.mean_data_quality_score,
-        );
         (
-            float_kpi("avg_mtbf_hours", mtbf, p_mtbf, Some(kpi_definitions::catalog::MTBF)),
-            float_kpi("avg_mttr_hours", mttr, p_mttr, Some(kpi_definitions::catalog::MTTR)),
+            float_kpi(
+                "avg_mtbf_hours",
+                cur.mtbf_hours,
+                prev.mtbf_hours,
+                Some(kpi_definitions::catalog::MTBF),
+            ),
+            float_kpi(
+                "avg_mttr_hours",
+                cur.mttr_hours,
+                prev.mttr_hours,
+                Some(kpi_definitions::catalog::MTTR),
+            ),
             float_kpi(
                 "avg_availability",
-                avail,
-                p_avail,
+                cur.availability_operational,
+                prev.availability_operational,
                 Some(kpi_definitions::catalog::AVAILABILITY),
             ),
-            float_kpi("avg_data_quality", dq, p_dq, None),
-            snap_n,
-            ev,
+            float_kpi(
+                "avg_data_quality",
+                cur.data_quality,
+                prev.data_quality,
+                Some(kpi_definitions::catalog::DATA_QUALITY),
+            ),
+            float_kpi(
+                "sample_size_score",
+                snaps.mean_data_quality_score,
+                snaps_prev.mean_data_quality_score,
+                None,
+            ),
+            Some(cur.clone()),
+            snaps.equipment_count,
+            cur.failure_count,
         )
     } else {
         (
             denied_kpi("avg_mtbf_hours", Some(kpi_definitions::catalog::MTBF)),
             denied_kpi("avg_mttr_hours", Some(kpi_definitions::catalog::MTTR)),
             denied_kpi("avg_availability", Some(kpi_definitions::catalog::AVAILABILITY)),
-            denied_kpi("avg_data_quality", None),
+            denied_kpi("avg_data_quality", Some(kpi_definitions::catalog::DATA_QUALITY)),
+            denied_kpi("sample_size_score", None),
+            None,
             0,
             0,
         )
@@ -351,8 +403,8 @@ pub async fn build_executive_dashboard(
 
         // Seed continuous axis in Rust (avoid N round-trips for calendar labels).
         {
-            use chrono::{Duration, Utc};
-            let today = Utc::now().date_naive();
+            use chrono::Duration;
+            let today = crate::clock::now().date_naive();
             for offset in (0..horizon).rev() {
                 let d = today - Duration::days(offset);
                 let date = d.format("%Y-%m-%d").to_string();
@@ -573,6 +625,8 @@ pub async fn build_executive_dashboard(
         avg_mttr_hours,
         avg_availability,
         avg_data_quality,
+        sample_size_score,
+        reliability,
         maintenance_cost,
         maintenance_cost_pending,
         reliability_snapshot_count,
@@ -601,7 +655,7 @@ pub async fn load_bad_actors(
         "(SELECT COALESCE(SUM(wo.total_cost), 0) FROM work_orders wo \
            JOIN work_order_statuses st ON st.id = wo.status_id \
           WHERE wo.equipment_id = e.id AND st.code = 'closed' AND wo.closed_at IS NOT NULL \
-            AND datetime(wo.closed_at) >= datetime(?1) AND datetime(wo.closed_at) <= datetime(?2))"
+            AND datetime(wo.closed_at) >= datetime(?1) AND datetime(wo.closed_at) <= datetime(?2))          + (SELECT COALESCE(SUM(COALESCE(h.labor_cost, 0) + COALESCE(h.parts_cost, 0) + COALESCE(h.service_cost, 0)), 0)               FROM wo_history_records h              WHERE h.equipment_id = e.id                AND datetime(h.ended_at) >= datetime(?1) AND datetime(h.ended_at) <= datetime(?2))"
     } else {
         "0"
     };

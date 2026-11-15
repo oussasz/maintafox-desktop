@@ -1,5 +1,6 @@
 import type { HTMLAttributes, ReactNode } from "react";
 
+import { ActionReason } from "@/components/ui/action-reason";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -15,6 +16,8 @@ export interface EntityFormFooterProps extends HTMLAttributes<HTMLDivElement> {
   primaryLoading?: boolean;
   primaryType?: "button" | "submit";
   leading?: ReactNode;
+  /** Why the primary button is disabled, in plain words; shown beside the buttons. */
+  primaryDisabledReason?: ReactNode;
 }
 
 export function EntityFormFooter({
@@ -28,6 +31,7 @@ export function EntityFormFooter({
   primaryLoading,
   primaryType = "submit",
   leading,
+  primaryDisabledReason,
   className,
   ...props
 }: EntityFormFooterProps) {
@@ -45,6 +49,9 @@ export function EntityFormFooter({
       >
         {primaryLabel}
       </Button>
+      <ActionReason className="sm:order-first sm:mr-auto sm:self-center">
+        {primaryDisabledReason}
+      </ActionReason>
     </div>
   );
 }

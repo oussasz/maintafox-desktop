@@ -16,6 +16,11 @@ export function archiveClassLabel(t: T, code: string): string {
   return t(`class.${code}`, { defaultValue: t("class.other") });
 }
 
+/** One plain sentence saying what an archive type holds; empty for an unknown type. */
+export function archiveClassHint(t: T, code: string): string {
+  return t(`classHint.${code}`, { defaultValue: "" });
+}
+
 export function restorePolicyLabel(t: T, code: string): string {
   return t(`restorePolicy.${code}`, { defaultValue: t("restorePolicy.other") });
 }

@@ -2,7 +2,6 @@
 
 use crate::activity::emitter::{emit_activity_event, ActivityEventInput};
 use crate::errors::{AppError, AppResult};
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 
 use super::domain::{
@@ -627,7 +626,7 @@ pub async fn create_personnel(
     }
 
     let blocked_override = input.blocked_override.unwrap_or(false);
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let started_at = input.hire_date.as_deref().unwrap_or(now.as_str()).to_string();
     let entity_sync_id = crate::sync::identity::new_entity_sync_id();
 
@@ -935,7 +934,7 @@ pub async fn update_personnel(
         return Ok(current);
     }
 
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let txn = db.begin().await?;
 
     // Handle assignment history if tracked fields changed
@@ -1042,8 +1041,8 @@ pub async fn deactivate_personnel(
         ));
     }
 
-    let today = Utc::now().format("%Y-%m-%d").to_string();
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let today = crate::clock::now().format("%Y-%m-%d").to_string();
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
     let txn = db.begin().await?;
     let result = txn
@@ -1214,7 +1213,7 @@ pub async fn upsert_position(
         ]));
     }
 
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let txn = db.begin().await?;
 
     let (pos_id, old_code, old_name): (i64, String, String) = if let Some(id) = input.id {
@@ -1334,7 +1333,7 @@ pub async fn upsert_position(
 }
 
 pub async fn archive_position(db: &DatabaseConnection, id: i64, actor_id: Option<i64>) -> AppResult<Position> {
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let txn = db.begin().await?;
 
     let result = txn
@@ -1443,7 +1442,7 @@ async fn sync_position_requirement_profile(
         pid
     } else {
         let entity_sync_id = crate::sync::identity::new_entity_sync_id();
-        db.execute(Statement::from_sql_and_values(
+        let insert_result = db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO qualification_requirement_profiles (entity_sync_id, profile_name, required_certification_type_ids_json, \
               applies_to_permit_type_codes_json, row_version) \
@@ -1457,14 +1456,7 @@ async fn sync_position_requirement_profile(
             ],
         ))
         .await?;
-        let id_row = db
-            .query_one(Statement::from_string(
-                DbBackend::Sqlite,
-                "SELECT last_insert_rowid() AS id".to_string(),
-            ))
-            .await?
-            .ok_or_else(|| AppError::Internal(anyhow::anyhow!("profile insert rowid")))?;
-        let new_id: i64 = id_row.try_get("", "id").unwrap();
+        let new_id = crate::db::inserted_id(&insert_result)?;
         // Link profile to position
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -1815,32 +1807,34 @@ pub async fn create_rate_card(
     source_type: String,
     actor_id: i64,
 ) -> AppResult<PersonnelRateCard> {
-    let effective_from = Utc::now().format("%Y-%m-%d").to_string();
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let effective_from = crate::clock::now().format("%Y-%m-%d").to_string();
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO personnel_rate_cards \
+    let insert_result = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO personnel_rate_cards \
             (personnel_id, effective_from, labor_rate, overtime_rate, cost_center_id, source_type, created_at) \
          VALUES (?, ?, ?, ?, ?, ?, ?)",
-        [
-            personnel_id.into(),
-            effective_from.into(),
-            labor_rate.into(),
-            overtime_rate.into(),
-            cost_center_id.into(),
-            source_type.into(),
-            now.into(),
-        ],
-    ))
-    .await?;
+            [
+                personnel_id.into(),
+                effective_from.into(),
+                labor_rate.into(),
+                overtime_rate.into(),
+                cost_center_id.into(),
+                source_type.into(),
+                now.into(),
+            ],
+        ))
+        .await?;
 
+    let rate_card_id = crate::db::inserted_id(&insert_result)?;
     let row = db
-        .query_one(Statement::from_string(
+        .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id, personnel_id, effective_from, labor_rate, overtime_rate, cost_center_id, source_type, created_at \
-             FROM personnel_rate_cards WHERE id = last_insert_rowid()"
-                .to_string(),
+             FROM personnel_rate_cards WHERE id = ?",
+            [rate_card_id.into()],
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("rate card insert")))?;
@@ -1901,8 +1895,9 @@ pub async fn create_authorization(
 ) -> AppResult<PersonnelAuthorization> {
     AuthorizationType::try_from(authorization_type.as_str()).map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    db.execute(Statement::from_sql_and_values(
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let insert_result = db
+        .execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO personnel_authorizations \
             (personnel_id, authorization_type, valid_from, valid_to, source_certification_type_id, is_active, created_at) \
@@ -1918,13 +1913,14 @@ pub async fn create_authorization(
     ))
     .await?;
 
+    let authorization_id = crate::db::inserted_id(&insert_result)?;
     let row = db
-        .query_one(Statement::from_string(
+        .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id, personnel_id, authorization_type, valid_from, valid_to, \
                     source_certification_type_id, is_active, created_at \
-             FROM personnel_authorizations WHERE id = last_insert_rowid()"
-                .to_string(),
+             FROM personnel_authorizations WHERE id = ?",
+            [authorization_id.into()],
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("authorization insert")))?;
@@ -1937,6 +1933,17 @@ pub async fn create_authorization(
 // ═══════════════════════════════════════════════════════════════════════════════
 // O/P/Q) external companies
 // ═══════════════════════════════════════════════════════════════════════════════
+
+/// Contractor company projection: contract facts plus the cost of the work orders given to it
+/// (its consumed amount), cancelled work orders excluded.
+const COMPANY_SELECT: &str = "SELECT id, name, service_domain, contract_start, contract_end, contract_number, \
+        contract_amount, COALESCE(contract_alert_days, 30) AS contract_alert_days, \
+        (SELECT COALESCE(SUM(COALESCE(wo.service_cost_input, wo.service_cost, 0.0)), 0.0) \
+           FROM work_orders wo \
+           WHERE wo.external_company_id = external_companies.id \
+             AND wo.status_id NOT IN (SELECT id FROM work_order_statuses WHERE code = 'cancelled')) AS consumed_amount,         (SELECT COUNT(*) FROM work_orders wo            WHERE wo.external_company_id = external_companies.id              AND wo.status_id NOT IN (SELECT id FROM work_order_statuses WHERE code = 'cancelled')) AS wo_count,         (SELECT COUNT(*) FROM work_orders wo            WHERE wo.external_company_id = external_companies.id AND wo.closed_at IS NOT NULL              AND wo.planned_end IS NOT NULL              AND wo.status_id NOT IN (SELECT id FROM work_order_statuses WHERE code = 'cancelled')) AS wo_closed_with_deadline,         (SELECT COUNT(*) FROM work_orders wo            WHERE wo.external_company_id = external_companies.id AND wo.closed_at IS NOT NULL              AND wo.planned_end IS NOT NULL AND wo.closed_at <= wo.planned_end              AND wo.status_id NOT IN (SELECT id FROM work_order_statuses WHERE code = 'cancelled')) AS wo_on_time, \
+        onboarding_status, insurance_status, notes, is_active, created_at, updated_at \
+     FROM external_companies";
 
 pub async fn list_external_companies(
     db: &DatabaseConnection,
@@ -1960,9 +1967,7 @@ pub async fn list_external_companies(
     }
 
     let sql = format!(
-        "SELECT id, name, service_domain, contract_start, contract_end, onboarding_status, insurance_status, \
-                notes, is_active, created_at, updated_at \
-         FROM external_companies WHERE {} ORDER BY name ASC",
+        "{COMPANY_SELECT} WHERE {} ORDER BY name ASC",
         where_clauses.join(" AND ")
     );
 
@@ -1977,7 +1982,33 @@ pub async fn list_external_companies(
 }
 
 fn map_external_company_row(row: &sea_orm::QueryResult) -> AppResult<ExternalCompany> {
+    let contract_end: Option<String> = row
+        .try_get("", "contract_end")
+        .map_err(|e| map_err("contract_end", e))?;
+    let contract_alert_days: i64 = row
+        .try_get("", "contract_alert_days")
+        .map_err(|e| map_err("contract_alert_days", e))?;
+    let today = crate::clock::now().format("%Y-%m-%d").to_string();
+    let (contract_state, contract_days_left) =
+        crate::wo::subcontracting::contract_status(contract_end.as_deref(), contract_alert_days, &today);
     Ok(ExternalCompany {
+        contract_number: row
+            .try_get("", "contract_number")
+            .map_err(|e| map_err("contract_number", e))?,
+        contract_amount: row
+            .try_get("", "contract_amount")
+            .map_err(|e| map_err("contract_amount", e))?,
+        contract_alert_days,
+        consumed_amount: row
+            .try_get("", "consumed_amount")
+            .map_err(|e| map_err("consumed_amount", e))?,
+        contract_state,
+        contract_days_left,
+        wo_count: row.try_get("", "wo_count").map_err(|e| map_err("wo_count", e))?,
+        wo_closed_with_deadline: row
+            .try_get("", "wo_closed_with_deadline")
+            .map_err(|e| map_err("wo_closed_with_deadline", e))?,
+        wo_on_time: row.try_get("", "wo_on_time").map_err(|e| map_err("wo_on_time", e))?,
         id: row.try_get("", "id").map_err(|e| map_err("id", e))?,
         name: row.try_get("", "name").map_err(|e| map_err("name", e))?,
         service_domain: row
@@ -2010,8 +2041,9 @@ pub async fn create_external_company(
     contract_end: Option<String>,
     notes: Option<String>,
 ) -> AppResult<ExternalCompany> {
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    db.execute(Statement::from_sql_and_values(
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let insert_result = db
+        .execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO external_companies \
             (name, service_domain, contract_start, contract_end, notes, onboarding_status, insurance_status, is_active, created_at, updated_at) \
@@ -2028,13 +2060,12 @@ pub async fn create_external_company(
     ))
     .await?;
 
+    let company_id = crate::db::inserted_id(&insert_result)?;
     let row = db
-        .query_one(Statement::from_string(
+        .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id, name, service_domain, contract_start, contract_end, onboarding_status, insurance_status, \
-                    notes, is_active, created_at, updated_at \
-             FROM external_companies WHERE id = last_insert_rowid()"
-                .to_string(),
+            format!("{COMPANY_SELECT} WHERE id = ?"),
+            [company_id.into()],
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("external company insert")))?;
@@ -2051,6 +2082,9 @@ pub struct ExternalCompanyUpdateInput {
     pub service_domain: Option<String>,
     pub contract_start: Option<String>,
     pub contract_end: Option<String>,
+    pub contract_number: Option<String>,
+    pub contract_amount: Option<f64>,
+    pub contract_alert_days: Option<i64>,
     pub onboarding_status: String,
     pub insurance_status: String,
     pub notes: Option<String>,
@@ -2079,21 +2113,41 @@ pub async fn update_external_company(
             return Err(issue("COMPANY_CONTRACT_DATES", "The contract end is before its start."));
         }
     }
+    if input.contract_amount.is_some_and(|a| !a.is_finite() || a < 0.0) {
+        return Err(issue(
+            "COMPANY_CONTRACT_AMOUNT",
+            "The contract amount cannot be negative.",
+        ));
+    }
+    if input.contract_alert_days.is_some_and(|d| !(0..=365).contains(&d)) {
+        return Err(issue(
+            "COMPANY_ALERT_DAYS",
+            "The alert delay is between 0 and 365 days.",
+        ));
+    }
     let res = db
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "UPDATE external_companies SET name = ?, service_domain = ?, contract_start = ?, contract_end = ?, \
+             contract_number = ?, contract_amount = ?, contract_alert_days = COALESCE(?, contract_alert_days), \
              onboarding_status = ?, insurance_status = ?, notes = ?, is_active = ?, updated_at = ? WHERE id = ?",
             [
                 name.into(),
                 clean(input.service_domain).into(),
                 start.into(),
                 end.into(),
+                clean(input.contract_number).into(),
+                input
+                    .contract_amount
+                    .map_or(sea_orm::Value::Double(None), sea_orm::Value::from),
+                input
+                    .contract_alert_days
+                    .map_or(sea_orm::Value::BigInt(None), sea_orm::Value::from),
                 input.onboarding_status.into(),
                 input.insurance_status.into(),
                 clean(input.notes).into(),
                 i64::from(input.is_active).into(),
-                Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string().into(),
+                crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string().into(),
                 input.id.into(),
             ],
         ))
@@ -2107,9 +2161,7 @@ pub async fn update_external_company(
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id, name, service_domain, contract_start, contract_end, onboarding_status, insurance_status, \
-                    notes, is_active, created_at, updated_at \
-             FROM external_companies WHERE id = ?",
+            format!("{COMPANY_SELECT} WHERE id = ?"),
             [input.id.into()],
         ))
         .await?
@@ -2272,7 +2324,7 @@ pub async fn set_team_lead(
     input: crate::personnel::domain::SetTeamLeadInput,
 ) -> AppResult<crate::personnel::domain::TeamMemberRow> {
     let _ = crate::repository::team_repository::get_team_by_id(db, input.team_id).await?;
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
     let txn = db.begin().await?;
 

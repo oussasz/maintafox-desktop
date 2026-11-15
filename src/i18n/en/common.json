@@ -1,6 +1,21 @@
 {
+  "fileInput": {
+    "choose": "Choose a file",
+    "chooseMany": "Choose files",
+    "none": "No file chosen",
+    "many": "{{count}} files chosen"
+  },
   "toast": {
     "dismiss": "Dismiss the message"
+  },
+  "listExport": {
+    "button": "Export (Excel/CSV)",
+    "title": "Export the list as shown",
+    "saved": "List exported",
+    "failed": "The export failed",
+    "empty": "No rows to export",
+    "truncatedUnknown": "Only the {{shown}} loaded rows are exported: more rows exist. Load the rest before exporting to get everything.",
+    "truncated": "Only the {{shown}} rows loaded out of {{total}} are exported. Load the rest before exporting to get everything."
   },
   "decimalField": {
     "dotHint": "A point is the decimal mark (1.250 = 1.25)."
@@ -53,6 +68,12 @@
     "loading": "Loading...",
     "loadingModule": "Loading module...",
     "error": "An error occurred"
+  },
+  "discardGuard": {
+    "title": "Leave without saving?",
+    "description": "What you typed in this window will be lost.",
+    "keep": "Keep editing",
+    "leave": "Leave without saving"
   },
   "action": {
     "save": "Save",
@@ -180,7 +201,7 @@
     "clearSearch": "Clear search",
     "removeFilter": "Remove {{label}} filter",
     "searchChip": "Search: {{query}}",
-    "addFilter": "Add…",
+    "addFilter": "Choose…",
     "noMoreOptions": "No more options"
   },
   "assetPicker": {
@@ -321,5 +342,15 @@
     "none": "No urgency",
     "targetsShort": "Response ≤ {{response}} h · completion ≤ {{completion}} h",
     "targetsTooltip": "Target times: response ≤ {{response}} h, completion ≤ {{completion}} h"
+  },
+  "personnelLink": {
+    "message": {
+      "rounds": "Your account is not linked to a personnel record: you cannot save round readings (readings are attributed to a person). Link your account to a record first.",
+      "myWork": "Your account is not linked to a personnel record: \"My work\" cannot find your work orders, requests and rounds, which is why the figures stay at zero."
+    },
+    "linkAccount": "Link my account to a record (Administration > Users)",
+    "openPersonnel": "Open Personnel (create the record)",
+    "askAdmin": "Ask an administrator to link your account to your personnel record.",
+    "howTo": "If the record does not exist yet, create it in Personnel, then open your account in Administration > Users and choose it."
   }
 }

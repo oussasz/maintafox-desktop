@@ -2,12 +2,11 @@
  * Reliability study workspace: scope bar (equipment, period, failure mode, time base) and the six
  * steps — data, life (Weibull), FMECA, RCM decision, system model, decisions.
  */
-import { ArrowLeft, ClipboardCheck } from "lucide-react";
+import { ArrowLeft, ArrowRight, ClipboardCheck, Pencil } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 
-import { PermissionGate } from "@/components/PermissionGate";
 import { ModulePageShell } from "@/components/layout/ModulePageShell";
 import {
   DecisionDialog,
@@ -15,26 +14,33 @@ import {
 } from "@/components/reliability/study/DecisionDialog";
 import { StudyDataStep } from "@/components/reliability/study/StudyDataStep";
 import { StudyDecisionsStep } from "@/components/reliability/study/StudyDecisionsStep";
+import { StudyExportMenu } from "@/components/reliability/study/StudyExportMenu";
 import { StudyFmecaStep } from "@/components/reliability/study/StudyFmecaStep";
 import { StudyLifeStep } from "@/components/reliability/study/StudyLifeStep";
+import { StudyNameDialog } from "@/components/reliability/study/StudyNameDialog";
 import { StudyRcmStep } from "@/components/reliability/study/StudyRcmStep";
 import { StudySystemStep } from "@/components/reliability/study/StudySystemStep";
 import {
   RAMS_FILTER_LABEL,
   RAMS_SELECT_CLASS,
+  RamsReadOnlyNote,
   dayToIso,
   isoDay,
+  useRamsRight,
 } from "@/components/reliability/study/rams-ui";
+import { type SummaryRecord, summarizeStudy } from "@/components/reliability/study/study-summary";
+import { hasScreenToReturnTo } from "@/components/ui/back-to-origin-button";
 import { Button } from "@/components/ui/button";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import { DateField } from "@/components/ui/date-field";
 import { StatusChip } from "@/components/ui/status-chip";
 import { mfLayout } from "@/design-system/tokens";
-import { usePermissions } from "@/hooks/use-permissions";
+import { useFormatters } from "@/hooks/use-formatters";
 import { cn } from "@/lib/utils";
 import { listFailureCodes, listFailureHierarchies } from "@/services/reliability-service";
 import {
   type StudyDataset,
+  type StudyDecision,
   type UpdateStudyInput,
   getReliabilityStudyDataset,
   updateReliabilityStudy,
@@ -122,7 +128,10 @@ function StudyDateField({
 
 export function RamsStudyPage() {
   const { t } = useTranslation("reliability");
+  const { t: tc } = useTranslation("common");
   const navigate = useNavigate();
+  // Opened from another screen (the fleet, a link): "Retour" goes back there, filters intact.
+  const [cameFromScreen] = useState(hasScreenToReturnTo);
   const { studyId: raw } = useParams();
   const studyId = Number(raw);
   const [params, setParams] = useSearchParams();
@@ -130,7 +139,7 @@ export function RamsStudyPage() {
   const step: StudyStep = (STUDY_STEPS as readonly string[]).includes(stepParam ?? "")
     ? (stepParam as StudyStep)
     : "data";
-  const { can } = usePermissions();
+  const { can, reasonFor } = useRamsRight();
   const canAnalyze = can(P.RAM_ANALYZE);
   const [dataset, setDataset] = useState<StudyDataset | null>(null);
   const [error, setError] = useState<unknown>(null);
@@ -138,6 +147,9 @@ export function RamsStudyPage() {
   const [modes, setModes] = useState<FailureCode[]>([]);
   const [decisionOpen, setDecisionOpen] = useState(false);
   const [prefill, setPrefill] = useState<DecisionPrefill | null>(null);
+  /** A proposed decision its proposer edits in the decision dialog. */
+  const [revising, setRevising] = useState<StudyDecision | null>(null);
+  const [renameOpen, setRenameOpen] = useState(false);
   const [decisionsVersion, setDecisionsVersion] = useState(0);
   const [saving, setSaving] = useState(false);
   const [dateError, setDateError] = useState<string | null>(null);
@@ -208,7 +220,13 @@ export function RamsStudyPage() {
   };
 
   const openDecision = (p: DecisionPrefill | null) => {
+    setRevising(null);
     setPrefill(p);
+    setDecisionOpen(true);
+  };
+  const reviseDecision = (d: StudyDecision) => {
+    setPrefill(null);
+    setRevising(d);
     setDecisionOpen(true);
   };
 
@@ -228,24 +246,57 @@ export function RamsStudyPage() {
     <ModulePageShell
       headerLeft={
         <div className="flex min-w-0 items-center gap-3">
-          <Button variant="outline" className="h-11" onClick={() => navigate("/reliability")}>
+          <Button
+            variant="outline"
+            className="h-11"
+            onClick={() => (cameFromScreen ? navigate(-1) : navigate("/reliability"))}
+          >
             <ArrowLeft className="h-4 w-4" aria-hidden />
-            {t("rams.study.back")}
+            {cameFromScreen ? tc("action.back") : t("rams.study.back")}
           </Button>
           <h1 className={cn(mfLayout.moduleTitle, "truncate")}>
             {study ? t("rams.study.title", { title: study.title }) : t("rams.title")}
           </h1>
           {archived ? <StatusChip tone="neutral" label={t("rams.study.archived")} /> : null}
+          {study && !archived ? (
+            <Button
+              variant="ghost"
+              className="h-10"
+              disabled={!canAnalyze}
+              title={reasonFor(P.RAM_ANALYZE)}
+              aria-label={t("rams.studies.renameNamed", { title: study.title })}
+              onClick={() => setRenameOpen(true)}
+            >
+              <Pencil className="h-4 w-4" aria-hidden />
+              {t("rams.studies.rename")}
+            </Button>
+          ) : null}
         </div>
       }
       actions={
-        study && !archived ? (
-          <PermissionGate permission={P.RAM_ANALYZE}>
-            <Button className={mfLayout.primaryAction} onClick={() => openDecision(null)}>
-              <ClipboardCheck className="h-4 w-4" aria-hidden />
-              {t("rams.study.recordDecision")}
-            </Button>
-          </PermissionGate>
+        study ? (
+          <>
+            <StudyExportMenu study={study} scope="study" />
+            {step === "data" ? (
+              // The main action of the first step stays in the header: no scrolling to find it.
+              <Button className={mfLayout.primaryAction} onClick={() => goStep("life")}>
+                {t("rams.data.next")}
+                <ArrowRight className="h-4 w-4" aria-hidden />
+              </Button>
+            ) : null}
+            {!archived ? (
+              <Button
+                variant={step === "data" ? "outline" : "default"}
+                className={step === "data" ? "h-11" : mfLayout.primaryAction}
+                disabled={!canAnalyze}
+                title={reasonFor(P.RAM_ANALYZE)}
+                onClick={() => openDecision(null)}
+              >
+                <ClipboardCheck className="h-4 w-4" aria-hidden />
+                {t("rams.study.recordDecision")}
+              </Button>
+            ) : null}
+          </>
         ) : null
       }
       bodyClassName={null}
@@ -367,6 +418,7 @@ export function RamsStudyPage() {
             {toCheck > 0 ? (
               <StatusChip tone="warning" dot label={t("rams.study.toCheck", { count: toCheck })} />
             ) : null}
+            {!canAnalyze ? <RamsReadOnlyNote right={P.RAM_ANALYZE} /> : null}
           </div>
         ) : null
       }
@@ -441,6 +493,7 @@ export function RamsStudyPage() {
             aria-labelledby={`rams-tab-${step}`}
             className="p-4"
           >
+            <StudyPlainSummary records={dataset.records} />
             {step === "data" ? (
               <StudyDataStep
                 dataset={dataset}
@@ -458,14 +511,11 @@ export function RamsStudyPage() {
                 }
                 onStudyChanged={() => void load()}
                 onDecide={(p) => openDecision(p)}
+                onGoData={() => goStep("data")}
               />
             ) : null}
             {step === "fmeca" ? (
-              <StudyFmecaStep
-                study={dataset.study}
-                editable={editable}
-                onGoRcm={() => goStep("rcm")}
-              />
+              <StudyFmecaStep study={dataset.study} onGoRcm={() => goStep("rcm")} />
             ) : null}
             {step === "rcm" ? (
               <StudyRcmStep
@@ -483,6 +533,7 @@ export function RamsStudyPage() {
                 study={dataset.study}
                 version={decisionsVersion}
                 onRecord={() => openDecision(null)}
+                onRevise={reviseDecision}
               />
             ) : null}
           </div>
@@ -494,6 +545,7 @@ export function RamsStudyPage() {
           onOpenChange={setDecisionOpen}
           study={study}
           prefill={prefill}
+          revising={revising}
           onCreated={() => {
             setDecisionsVersion((v) => v + 1);
             void load();
@@ -501,6 +553,45 @@ export function RamsStudyPage() {
           }}
         />
       ) : null}
+      {study ? (
+        <StudyNameDialog
+          open={renameOpen}
+          onOpenChange={setRenameOpen}
+          mode="rename"
+          initialName={study.title}
+          onSubmit={async (name) => {
+            await updateReliabilityStudy({
+              id: study.id,
+              expected_row_version: study.row_version,
+              title: name,
+            });
+            await load();
+          }}
+        />
+      ) : null}
     </ModulePageShell>
+  );
+}
+
+/** "En bref" (UX L2-37): the plain reading of the study before the expert steps. */
+function StudyPlainSummary({ records }: { records: readonly SummaryRecord[] }) {
+  const { t } = useTranslation("reliability");
+  const { formatNumber } = useFormatters();
+  const s = summarizeStudy(records);
+  if (s.failures === 0) return null;
+  return (
+    <p className="mb-4 rounded-md border border-surface-border bg-surface-1 px-3 py-2 text-sm">
+      <span className="font-semibold">{t("rams.summary.title")} </span>
+      {t("rams.summary.failures", {
+        count: s.failures,
+        hours: formatNumber(Math.round(s.downtimeHours)),
+      })}
+      {s.topAsset
+        ? ` ${t("rams.summary.topAsset", { code: s.topAsset.code, count: s.topAsset.count })}`
+        : ""}
+      {s.topMode
+        ? ` ${t("rams.summary.topMode", { mode: s.topMode.label, count: s.topMode.count })}`
+        : ""}
+    </p>
   );
 }

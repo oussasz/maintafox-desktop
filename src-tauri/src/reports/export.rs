@@ -171,15 +171,18 @@ fn dashboard_summary_rows(locale: ReportLocale, f: &DashboardSummaryFigures) -> 
         ),
         (
             locale
-                .pick("Qualité moyenne des données (365 j)", "Average data quality (365 days)")
+                .pick(
+                    "Taille d'échantillon (instantanés, 365 j)",
+                    "Sample size (snapshots, 365 days)",
+                )
                 .to_string(),
-            f.data_quality
+            f.sample_size_score
                 .map(|v| locale.percent(v))
                 .unwrap_or_else(|| none.clone()),
         ),
         (
             locale
-                .pick("MTBF du parc, regroupé (365 j)", "Fleet MTBF, pooled (365 days)")
+                .pick("MTBF du parc (12 derniers mois)", "Fleet MTBF (last 12 months)")
                 .to_string(),
             f.mtbf_hours
                 .map(|v| format!("{} h", locale.decimal(v, 1)))
@@ -329,12 +332,14 @@ mod tests {
             open_wo: 7,
             assets: 120,
             assets_with_snapshots: 30,
-            data_quality: Some(0.875),
+            sample_size_score: Some(0.875),
             mtbf_hours: Some(412.26),
         };
         let fr = dashboard_summary_rows(ReportLocale::Fr, &figures);
         assert_eq!(fr[0], ("Demandes d'intervention ouvertes".to_string(), "4".to_string()));
+        assert_eq!(fr[4].0, "Taille d'échantillon (instantanés, 365 j)");
         assert_eq!(fr[4].1, "87,5 %");
+        assert_eq!(fr[5].0, "MTBF du parc (12 derniers mois)");
         assert_eq!(fr[5].1, "412,3 h");
         let en = dashboard_summary_rows(ReportLocale::En, &figures);
         assert_eq!(en[1], ("Work orders not yet closed".to_string(), "7".to_string()));
@@ -342,7 +347,7 @@ mod tests {
         assert_eq!(en[5].1, "412.3 h");
 
         let empty = DashboardSummaryFigures {
-            data_quality: None,
+            sample_size_score: None,
             mtbf_hours: None,
             ..figures
         };

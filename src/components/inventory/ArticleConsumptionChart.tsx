@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { BarChart } from "@/components/charts/BarChart";
+import { useFormatters } from "@/hooks/use-formatters";
 import { appErrorReason } from "@/lib/app-error";
 import { getArticleConsumptionMonthly } from "@/services/inventory-service";
 import type { ArticleConsumptionMonth } from "@shared/ipc-types";
@@ -17,6 +18,7 @@ export interface ArticleConsumptionChartProps {
 
 export function ArticleConsumptionChart({ articleId, months = 12 }: ArticleConsumptionChartProps) {
   const { t } = useTranslation("inventory");
+  const { formatYearMonth } = useFormatters();
   const [rows, setRows] = useState<ArticleConsumptionMonth[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -47,10 +49,10 @@ export function ArticleConsumptionChart({ articleId, months = 12 }: ArticleConsu
   const chartData = useMemo(
     () =>
       rows.map((row) => ({
-        label: row.year_month.slice(5),
+        label: formatYearMonth(row.year_month),
         value: row.issued_qty,
       })),
-    [rows],
+    [rows, formatYearMonth],
   );
 
   return (

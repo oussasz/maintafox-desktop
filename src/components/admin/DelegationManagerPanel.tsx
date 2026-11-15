@@ -1,4 +1,4 @@
-import { type ColumnDef } from "@tanstack/react-table";
+import type { ColumnDef } from "@tanstack/react-table";
 import { Pencil, Plus, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -25,8 +25,9 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { usePermissions } from "@/hooks/use-permissions";
-import { useStepUp } from "@/hooks/use-step-up";
-import { describeAppError } from "@/lib/app-error";
+import { isStepUpCancelled, useStepUp } from "@/hooks/use-step-up";
+import { appErrorReason } from "@/lib/app-error";
+import { roleLabel } from "@/lib/role-labels";
 import {
   createDelegationPolicy,
   deleteDelegationPolicy,
@@ -128,7 +129,7 @@ export function DelegationManagerPanel() {
       void fetchData();
     } catch (err) {
       toast({
-        title: describeAppError(err).title,
+        title: appErrorReason(err),
         variant: "destructive",
       });
     }
@@ -170,7 +171,7 @@ export function DelegationManagerPanel() {
       void fetchData();
     } catch (err) {
       toast({
-        title: describeAppError(err).title,
+        title: appErrorReason(err),
         variant: "destructive",
       });
     }
@@ -185,9 +186,11 @@ export function DelegationManagerPanel() {
       toast({ title: t("delegation.deleted", "Policy deleted"), variant: "success" });
       setDeleteTarget(null);
       void fetchData();
-    } catch {
+    } catch (err) {
+      if (isStepUpCancelled(err)) return;
       toast({
         title: t("delegation.errors.deleteFailed", "Failed to delete policy"),
+        description: appErrorReason(err),
         variant: "destructive",
       });
     }
@@ -215,7 +218,9 @@ export function DelegationManagerPanel() {
       {
         accessorKey: "admin_role_name",
         header: t("delegation.columns.adminRole", "Admin Role"),
-        cell: ({ row }) => <span className="font-medium">{row.original.admin_role_name}</span>,
+        cell: ({ row }) => (
+          <span className="font-medium">{roleLabel(t, row.original.admin_role_name)}</span>
+        ),
       },
       {
         id: "scope",
@@ -361,7 +366,7 @@ export function DelegationManagerPanel() {
                 <SelectContent>
                   {nonSystemRoles.map((r) => (
                     <SelectItem key={r.id} value={String(r.id)}>
-                      {r.name}
+                      {roleLabel(t, r.name)}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -431,7 +436,7 @@ export function DelegationManagerPanel() {
           <DialogHeader>
             <DialogTitle>{t("delegation.editTitle", "Edit Delegation Policy")}</DialogTitle>
             <DialogDescription>
-              {editTarget?.admin_role_name} —{" "}
+              {editTarget ? roleLabel(t, editTarget.admin_role_name) : ""} —{" "}
               {t(`delegation.scopeTypes.${editTarget?.managed_scope_type ?? "tenant"}`)}
             </DialogDescription>
           </DialogHeader>
@@ -469,7 +474,8 @@ export function DelegationManagerPanel() {
             <DialogDescription>{t("delegation.deleteConfirmDesc")}</DialogDescription>
           </DialogHeader>
           <p className="text-sm text-text-secondary">
-            {deleteTarget?.admin_role_name} — {deleteTarget?.allowed_domains.join(", ")}
+            {deleteTarget ? roleLabel(t, deleteTarget.admin_role_name) : ""} —{" "}
+            {deleteTarget?.allowed_domains.join(", ")}
           </p>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeleteTarget(null)}>

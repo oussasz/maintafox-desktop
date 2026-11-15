@@ -12,6 +12,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { UrgencyBadge } from "@/components/common/urgency/UrgencyBadge";
+import { useDiReferenceLabels } from "@/components/di/di-reference-labels";
 import { Button } from "@/components/ui/button";
 import { ErrorState } from "@/components/ui/data-state";
 import {
@@ -49,6 +50,16 @@ interface RuleDraft {
 
 export function DiSlaRulesPanel({ open, onClose }: DiSlaRulesPanelProps) {
   const { t } = useTranslation("di");
+  const { originLabel } = useDiReferenceLabels();
+  // L1-28: a rule is named by what it covers, in the user's language (the stored name is the
+  // seed's English label, e.g. "Critical - All Origins").
+  const ruleScope = (rule: DiSlaRule): string => {
+    const parts = [rule.origin_type ? originLabel(rule.origin_type) : t("sla.scopeAllOrigins")];
+    if (rule.asset_criticality_class) {
+      parts.push(t("sla.scopeCriticality", { code: rule.asset_criticality_class }));
+    }
+    return parts.join(" · ");
+  };
 
   const [rules, setRules] = useState<DiSlaRule[]>([]);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -149,6 +160,7 @@ export function DiSlaRulesPanel({ open, onClose }: DiSlaRulesPanelProps) {
           <DialogTitle>{t("sla.title")}</DialogTitle>
           <p className="text-sm text-text-muted">{t("sla.description")}</p>
           <p className="text-xs text-text-muted">{t("sla.scaleHint")}</p>
+          <p className="text-xs text-text-muted">{t("sla.escalationHint")}</p>
         </DialogHeader>
         {saveError ? (
           <p className="text-sm text-tone-danger-fg" role="alert">
@@ -184,7 +196,9 @@ export function DiSlaRulesPanel({ open, onClose }: DiSlaRulesPanelProps) {
                   if (!draft) return null;
                   return (
                     <tr key={rule.id} className="border-b last:border-0">
-                      <td className="px-3 py-2 font-medium">{rule.name}</td>
+                      <td className="px-3 py-2 font-medium" title={rule.name}>
+                        {ruleScope(rule)}
+                      </td>
                       <td className="px-3 py-2">
                         <UrgencyBadge code={rule.urgency_level} />
                       </td>
@@ -230,7 +244,14 @@ export function DiSlaRulesPanel({ open, onClose }: DiSlaRulesPanelProps) {
                           onCheckedChange={(checked) =>
                             updateDraft(rule.id, { is_active: checked })
                           }
+                          aria-label={t("sla.columns.active")}
                         />
+                        {/* L1-28: an inactive rule still leaves a target: the urgency scale's. */}
+                        {!draft.is_active && (
+                          <p className="mt-1 text-[11px] text-text-muted">
+                            {t("sla.inactiveHint")}
+                          </p>
+                        )}
                       </td>
                       <td className="px-3 py-2">
                         <Button

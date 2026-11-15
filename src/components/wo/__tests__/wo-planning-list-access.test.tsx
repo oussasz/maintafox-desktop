@@ -20,6 +20,7 @@ vi.mock("react-i18next", () => ({ useTranslation: () => i18nMock }));
 const inv = vi.hoisted(() => ({
   checkWoPartStockAvailability: vi.fn().mockResolvedValue([]),
   createProcurementRequisitionFromWoPart: vi.fn(),
+  listWorkOrderRequisitionNumbers: vi.fn().mockResolvedValue({}),
   evaluateInventoryUnitCost: vi.fn().mockResolvedValue(null),
   listInventoryArticles: vi.fn().mockResolvedValue([]),
   listInventoryLocations: vi.fn().mockResolvedValue([]),
@@ -213,6 +214,10 @@ describe("WoPlanningPanel — required / optional part lines", () => {
         quantity_issued: 0,
         notes: null,
         is_required: false,
+        pending_issue_qty: 0,
+        is_non_stock: false,
+        non_stock_received_qty: 0,
+        handed_to_personnel_id: null,
       },
     ]);
     render(
@@ -249,6 +254,10 @@ function savedPart(overrides: Record<string, unknown> = {}) {
     reservation_id: 90,
     quantity_reserved: 2,
     quantity_issued: 0,
+    pending_issue_qty: 0,
+    is_non_stock: false,
+    non_stock_received_qty: 0,
+    handed_to_personnel_id: null,
     notes: null,
     origin: "planned",
     consumption_status: "pending",

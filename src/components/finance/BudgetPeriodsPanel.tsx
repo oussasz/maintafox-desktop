@@ -15,7 +15,7 @@ import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import { Label } from "@/components/ui/label";
 import { StatusChip } from "@/components/ui/status-chip";
 import { Textarea } from "@/components/ui/textarea";
-import { toneOf } from "@/design-system/tone";
+import { mfTone, toneOf } from "@/design-system/tone";
 import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useStepUp } from "@/hooks/use-step-up";
@@ -120,9 +120,20 @@ export function BudgetPeriodsPanel({
     return <ErrorState error={error} title={t("periods.loadError")} onRetry={() => void load()} />;
   }
 
+  // Months that have ended but are still open: their actuals can still change (field test L7-13).
+  const endedOpen = periods.filter((p) => p.status !== "closed" && !p.is_future).length;
+
   return (
     <div className="space-y-3">
       <p className="max-w-3xl text-sm text-text-secondary">{t("periods.intro")}</p>
+      {endedOpen > 0 ? (
+        <p
+          role="status"
+          className={`max-w-3xl rounded-md border px-3 py-2 text-sm ${mfTone.attention.panel}`}
+        >
+          {t("periods.endedOpen", { count: endedOpen })}
+        </p>
+      ) : null}
       <div className="overflow-x-auto rounded-lg border border-surface-border">
         <table className="w-full text-sm">
           <caption className="sr-only">{t("periods.caption", { year: fiscalYear })}</caption>

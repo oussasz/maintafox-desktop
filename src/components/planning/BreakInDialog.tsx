@@ -6,7 +6,10 @@ import {
   AssigneeCapacityDetails,
   assigneeOptionSuffix,
 } from "@/components/planning/AssigneeCapacityDetails";
-import { BreakInSignerFields, signatureMissing } from "@/components/planning/BreakInSignerFields";
+import {
+  BreakInSignerFields,
+  breakInDisabledReasonKey,
+} from "@/components/planning/BreakInSignerFields";
 import {
   breakInReasonLabel,
   isUrgentBreakInReason,
@@ -14,6 +17,7 @@ import {
 } from "@/components/planning/break-in-reasons";
 import { fromDateTimeLocal, toDateTimeLocal } from "@/components/planning/planning-model";
 import { useAssigneeCapacity } from "@/components/planning/use-assignee-capacity";
+import { ActionReason } from "@/components/ui/action-reason";
 import { Button } from "@/components/ui/button";
 import { DateTimeField } from "@/components/ui/date-time-field";
 import {
@@ -160,6 +164,15 @@ export function BreakInDialog({
     setNewEnd(toDateTimeLocal(selected.committed_end));
     setNewPersonnelId(selected.assigned_personnel_id);
   }, [selected, open]);
+
+  const disabledReasonKey = breakInDisabledReasonKey({
+    hasTarget: selected != null,
+    targetKey: "breakIns.disabled.noCommitment",
+    saving,
+    required: urgent,
+    approverUserId,
+    password: approverPassword,
+  });
 
   async function handleSubmit() {
     if (!selected) return;
@@ -392,6 +405,11 @@ export function BreakInDialog({
           </div>
         </div>
 
+        <PermissionGate permission={P.PLAN_CONFIRM}>
+          <ActionReason className="text-right" data-testid="break-in-disabled-reason">
+            {disabledReasonKey ? t(disabledReasonKey) : null}
+          </ActionReason>
+        </PermissionGate>
         <DialogFooter>
           <Button type="button" variant="outline" size="sm" onClick={() => onOpenChange(false)}>
             {t("dialogs.cancel")}
@@ -401,9 +419,7 @@ export function BreakInDialog({
               type="button"
               size="sm"
               variant="outline"
-              disabled={
-                !selected || saving || signatureMissing(urgent, approverUserId, approverPassword)
-              }
+              disabled={disabledReasonKey != null}
               onClick={() => void handleSubmit()}
             >
               {t("breakIns.create")}

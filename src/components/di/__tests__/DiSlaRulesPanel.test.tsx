@@ -12,6 +12,10 @@ vi.mock("@/components/common/urgency/UrgencyBadge", () => ({
   UrgencyBadge: () => <span>urgency</span>,
 }));
 
+vi.mock("@/components/di/di-reference-labels", () => ({
+  useDiReferenceLabels: () => ({ originLabel: (code: string) => `origin:${code}` }),
+}));
+
 const svc = vi.hoisted(() => ({
   listSlaRules: vi.fn(),
   updateSlaRule: vi.fn(),
@@ -40,7 +44,8 @@ describe("DiSlaRulesPanel", () => {
     render(<DiSlaRulesPanel open onClose={() => undefined} />);
     const retry = await screen.findByRole("button", { name: /retry|réessayer/i });
     fireEvent.click(retry);
-    expect(await screen.findByText("Standard")).toBeInTheDocument();
+    // L1-28: named by what it covers, in the user's language (not the stored English name).
+    expect(await screen.findByText("sla.scopeAllOrigins")).toBeInTheDocument();
   });
 
   it("refuses an emptied hours field instead of saving 0", async () => {
@@ -66,5 +71,15 @@ describe("DiSlaRulesPanel", () => {
         expect.objectContaining({ id: 1, target_response_hours: 6, target_resolution_hours: 24 }),
       ),
     );
+  });
+
+  it("names a rule by its origin and criticality and says an inactive rule leaves the scale's targets (L1-28)", async () => {
+    svc.listSlaRules.mockResolvedValue([
+      { ...rule, origin_type: "operator", asset_criticality_class: "A", is_active: false },
+    ]);
+    render(<DiSlaRulesPanel open onClose={() => undefined} />);
+    expect(await screen.findByText("origin:operator · sla.scopeCriticality")).toBeInTheDocument();
+    expect(screen.getByText("sla.inactiveHint")).toBeInTheDocument();
+    expect(screen.getByText("sla.escalationHint")).toBeInTheDocument();
   });
 });

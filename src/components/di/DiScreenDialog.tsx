@@ -13,6 +13,7 @@ import { useTranslation } from "react-i18next";
 
 import { UrgencySelect } from "@/components/common/urgency/UrgencySelect";
 import { useUrgencyScale } from "@/components/common/urgency/use-urgency-scale";
+import { SAFETY_MIN_URGENCY } from "@/components/di/di-safety";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -54,7 +55,7 @@ export function DiScreenDialog({ di, open, onOpenChange, onScreened }: DiScreenD
   const { t } = useTranslation("di");
   const screen = useDiReviewStore((s) => s.screen);
   const [urgency, setUrgency] = useState<string>("");
-  const { labelOf: urgencyLabel } = useUrgencyScale();
+  const { labelOf: urgencyLabel, rankOf: urgencyRank, levelOf } = useUrgencyScale();
   const [classificationId, setClassificationId] = useState<string>(NONE);
   const [note, setNote] = useState("");
   const [classifications, setClassifications] = useState<ReferenceValue[]>([]);
@@ -95,6 +96,15 @@ export function DiScreenDialog({ di, open, onOpenChange, onScreened }: DiScreenD
   if (!di) return null;
 
   const urgencyChanged = urgency !== di.reported_urgency;
+  // A request flagged "sécurité" validated less urgent than "Urgent": only with the reason of the
+  // review, which the server requires and records in the request's audit trail (L4-11).
+  const safetyMinRank = levelOf(SAFETY_MIN_URGENCY)?.rank;
+  const safetyReasonRequired =
+    di.safety_flag &&
+    safetyMinRank != null &&
+    urgency !== "" &&
+    urgencyRank(urgency) > safetyMinRank;
+  const reasonMissing = safetyReasonRequired && note.trim() === "";
 
   const handleSubmit = async () => {
     setPending(true);
@@ -138,6 +148,15 @@ export function DiScreenDialog({ di, open, onOpenChange, onScreened }: DiScreenD
                 ? t("screening.urgencyChanged", { reported: urgencyLabel(di.reported_urgency) })
                 : t("screening.urgencyAsReported")}
             </p>
+            {safetyReasonRequired ? (
+              <p
+                className="text-xs font-medium text-status-danger"
+                role="status"
+                data-testid="di-screen-safety-reason"
+              >
+                {t("screening.safetyBelowUrgent")}
+              </p>
+            ) : null}
           </div>
 
           <div className="space-y-1.5">
@@ -173,13 +192,17 @@ export function DiScreenDialog({ di, open, onOpenChange, onScreened }: DiScreenD
           </div>
 
           <div className="space-y-1.5">
-            <Label htmlFor="di-screen-note">{t("screening.note")}</Label>
+            <Label htmlFor="di-screen-note">
+              {safetyReasonRequired ? t("screening.noteRequired") : t("screening.note")}
+            </Label>
             <Textarea
               id="di-screen-note"
               rows={3}
               value={note}
               placeholder={t("screening.notePlaceholder")}
               onChange={(e) => setNote(e.target.value)}
+              aria-required={safetyReasonRequired}
+              aria-invalid={reasonMissing}
             />
           </div>
         </div>
@@ -193,7 +216,11 @@ export function DiScreenDialog({ di, open, onOpenChange, onScreened }: DiScreenD
           >
             {t("screening.cancel")}
           </Button>
-          <Button className="h-11 gap-1.5" disabled={pending} onClick={() => void handleSubmit()}>
+          <Button
+            className="h-11 gap-1.5"
+            disabled={pending || reasonMissing}
+            onClick={() => void handleSubmit()}
+          >
             {pending ? (
               <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
             ) : (

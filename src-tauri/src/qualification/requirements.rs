@@ -1,7 +1,6 @@
 //! Qualification requirements of jobs (`qualification_requirements`) — what a work order, a
 //! work-order type, a permit type or a LOTO role asks of the people doing it.
 
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
@@ -403,7 +402,7 @@ pub async fn upsert_requirement(
         Some(id) => Some(get_requirement(&txn, id).await?),
         None => None,
     };
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     // A level only means something for a skill.
     let level = input.skill_reference_value_id.and(input.min_proficiency_level);
     let notes = input

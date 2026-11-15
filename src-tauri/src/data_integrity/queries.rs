@@ -79,17 +79,6 @@ pub async fn get_finding(db: &impl ConnectionTrait, id: i64) -> AppResult<Option
     row.map(|r| map_row(&r)).transpose()
 }
 
-pub async fn last_insert_rowid(db: &impl ConnectionTrait) -> AppResult<i64> {
-    let row = db
-        .query_one(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT last_insert_rowid() AS id".to_string(),
-        ))
-        .await?
-        .ok_or_else(|| crate::errors::AppError::Internal(anyhow::anyhow!("last_insert_rowid")))?;
-    row.try_get("", "id").map_err(|e| map_err("id", e))
-}
-
 /// A person who may be named as the second person approving a waiver.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct WaiverApproverOption {

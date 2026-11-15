@@ -1,6 +1,5 @@
 //! Valuation policy engine
 use crate::errors::{AppError, AppResult};
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -68,7 +67,7 @@ pub async fn evaluate_unit_cost(
         let method: String = row.try_get("", "valuation_method")?;
         let currency_value_id: i64 = row.try_get("", "currency_value_id")?;
         let standard: Option<f64> = row.try_get("", "standard_unit_cost")?;
-        let eff = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let eff = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
         return match method.as_str() {
             "STANDARD" => {
                 let u = standard.unwrap_or(0.0);

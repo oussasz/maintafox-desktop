@@ -21,9 +21,10 @@ describe("edition-capability-catalog fallback", () => {
     expect(capabilityMapForClaimEdition("pilot-v1")["finance"]).toBe(false);
   });
 
-  it("enables training only on Enterprise and Development factory maps", () => {
+  it("enables training with permits: Professional, Enterprise and Development factory maps", () => {
     expect(capabilityMapForEdition("core")["training"]).toBe(false);
-    expect(capabilityMapForEdition("professional")["training"]).toBe(false);
+    expect(capabilityMapForEdition("professional")["training"]).toBe(true);
+    expect(capabilityMapForEdition("professional")["permits"]).toBe(true);
     expect(capabilityMapForEdition("enterprise")["training"]).toBe(true);
     expect(capabilityMapForEdition("development")["training"]).toBe(true);
   });

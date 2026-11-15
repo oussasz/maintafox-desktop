@@ -31,8 +31,14 @@ import {
 import { usePermissions } from "@/hooks/use-permissions";
 import { isStepUpCancelled, useStepUp } from "@/hooks/use-step-up";
 import { appErrorReason } from "@/lib/app-error";
+import { useRoleText, withoutFormerRoles } from "@/lib/role-labels";
 import { listPersonnel } from "@/services/personnel-service";
-import { createUser, listAssignableRoles, listAssignableScopeNodes } from "@/services/rbac-service";
+import {
+  createUser,
+  listAssignableRoles,
+  listAssignableScopeNodes,
+  listUsers,
+} from "@/services/rbac-service";
 import { pushAppToast } from "@/store/app-toast-store";
 import type {
   AssignableRoleSummary,
@@ -99,6 +105,7 @@ export function CreateUserDialog({
   lockPersonnel = false,
 }: CreateUserDialogProps) {
   const { t } = useTranslation("admin");
+  const roleText = useRoleText();
   // The global toast host shows them (a local useToast list was never rendered here).
   const toast = pushAppToast;
   const { can } = usePermissions();
@@ -106,6 +113,12 @@ export function CreateUserDialog({
   const canViewPersonnel = can(P.PER_VIEW);
 
   const [username, setUsername] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  /** The name last filled from the chosen person (replaced when the choice changes). */
+  const [autoDisplayName, setAutoDisplayName] = useState("");
+  /** Existing logins (lower case) and personnel already linked to an account (L5-23). */
+  const [takenUsernames, setTakenUsernames] = useState<Set<string>>(new Set());
+  const [linkedPersonnelIds, setLinkedPersonnelIds] = useState<Set<number>>(new Set());
   const [identityMode, setIdentityMode] = useState("local");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -150,6 +163,33 @@ export function CreateUserDialog({
     }
     void loadAssignableRoles();
   }, [open, loadAssignableRoles]);
+
+  // The accounts already there: a taken login is refused as it is typed, not after "Créer", and a
+  // person who already has an account is not offered again. The server checks both again.
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    void listUsers({})
+      .then((users) => {
+        if (cancelled) return;
+        setTakenUsernames(new Set(users.map((u) => u.username.trim().toLowerCase())));
+        setLinkedPersonnelIds(
+          new Set(users.map((u) => u.personnel_id).filter((id): id is number => id != null)),
+        );
+      })
+      .catch(() => {
+        // The server still refuses a taken login or a linked person on "Créer".
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
+
+  const usernameTaken = takenUsernames.has(username.trim().toLowerCase());
+  const offeredPersonnel = useMemo(
+    () => personnelItems.filter((p) => p.id === personnelId || !linkedPersonnelIds.has(p.id)),
+    [personnelItems, personnelId, linkedPersonnelIds],
+  );
 
   // Initialize personnelId from prop when dialog opens
   useEffect(() => {
@@ -213,6 +253,7 @@ export function CreateUserDialog({
 
   const canSubmit =
     username.trim().length > 0 &&
+    !usernameTaken &&
     roleSelectionValid &&
     !rolesLoading &&
     !submitting &&
@@ -240,6 +281,7 @@ export function CreateUserDialog({
         role_id: rid,
         ...(scope !== PLANT_SCOPE ? { scope_node_id: Number.parseInt(scope, 10) } : {}),
         ...(personnelId != null ? { personnel_id: personnelId } : {}),
+        ...(displayName.trim() ? { display_name: displayName.trim() } : {}),
         ...(showPasswordFields && password
           ? { initial_password: password, force_password_change: forceChange }
           : {}),
@@ -249,6 +291,8 @@ export function CreateUserDialog({
       onCreated();
       onClose();
       setUsername("");
+      setDisplayName("");
+      setAutoDisplayName("");
       setPassword("");
       setConfirmPassword("");
       setIdentityMode("local");
@@ -285,7 +329,28 @@ export function CreateUserDialog({
               onChange={(e) => setUsername(e.target.value)}
               placeholder={t("users.create.usernamePlaceholder")}
               autoComplete="off"
+              aria-invalid={usernameTaken || undefined}
             />
+            {usernameTaken ? (
+              <p role="alert" className="text-xs text-text-danger">
+                {t("users.create.usernameTaken")}
+              </p>
+            ) : null}
+          </div>
+
+          {/* The name shown as author and approver everywhere (else the login is shown). */}
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium" htmlFor="create-user-display-name">
+              {t("users.create.displayName")}
+            </label>
+            <Input
+              id="create-user-display-name"
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+              placeholder={t("users.create.displayNamePlaceholder")}
+              autoComplete="off"
+            />
+            <p className="text-xs text-text-secondary">{t("users.create.displayNameHint")}</p>
           </div>
 
           {/* Initial tenant role (required) */}
@@ -324,14 +389,16 @@ export function CreateUserDialog({
                   <SelectValue placeholder={t("users.create.rolePlaceholder")} />
                 </SelectTrigger>
                 <SelectContent>
-                  {assignableRoles.map((r) => (
+                  {withoutFormerRoles(assignableRoles).map((r) => (
                     <SelectItem
                       key={r.id}
                       value={String(r.id)}
-                      title={r.description ?? undefined}
-                      textValue={r.name}
+                      title={roleText.description(r.name, r.description) ?? undefined}
+                      textValue={roleText.label(r.name)}
                     >
-                      {r.is_system ? `${r.name} (${t("users.create.roleSystemBadge")})` : r.name}
+                      {r.is_system
+                        ? `${roleText.label(r.name)} (${t("users.create.roleSystemBadge")})`
+                        : roleText.label(r.name)}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -371,9 +438,19 @@ export function CreateUserDialog({
                 <p className="text-xs text-text-secondary">{t("common.loading")}</p>
               ) : (
                 <PersonnelPickerCombobox
-                  items={personnelItems}
+                  items={offeredPersonnel}
                   value={personnelId}
-                  onChange={setPersonnelId}
+                  onChange={(id) => {
+                    setPersonnelId(id);
+                    // The person's name becomes the account's name unless one was typed: a name
+                    // filled from the previous choice follows the new choice (or is cleared).
+                    const picked = personnelItems.find((p) => p.id === id);
+                    if (!displayName.trim() || displayName === autoDisplayName) {
+                      const next = picked?.full_name ?? "";
+                      setDisplayName(next);
+                      setAutoDisplayName(next);
+                    }
+                  }}
                   disabled={submitting}
                   placeholder={t("users.create.personnelSearchPlaceholder")}
                 />
