@@ -4,7 +4,7 @@
 //! shipped app this is exactly the system clock: the override below only exists in builds with
 //! the developer-only feature `demo-company`, which the shipped app never enables.
 //!
-//! With that feature, the demo-company generator (`src/bin/demo_company.rs`) walks a past year day
+//! With that feature, the demo-company generator (`examples/demo_company.rs`) walks a past year day
 //! by day and sets the clock of its own thread to each moment it records, so everything it writes
 //! through the services (record dates, audit trail, numbering by year, periods) carries the date
 //! it happened on. SQL `'now'` follows the same clock through the generator's SQLite VFS

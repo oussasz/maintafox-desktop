@@ -1,6 +1,6 @@
 //! Developer-only generator of the demo company (feature `demo-company`, never shipped).
 //!
-//! Usage: `demo-company --db <path-to-existing-db> [--seed N] [--today YYYY-MM-DD]`
+//! Usage: `cargo run --example demo-company --features demo-company -- --db <path-to-existing-db> [--seed N] [--today YYYY-MM-DD]`
 //!
 //! The database must be an existing Maintafox database, opened once by this version of the app
 //! (no pending migration), activated with the licence of the demo company and with no company data
