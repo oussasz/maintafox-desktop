@@ -157,7 +157,7 @@ jobs:
         env:
           CARGO_BUILD_JOBS: "2"
         run: |
-          cargo clippy --features demo-company --bin demo-company -- -D warnings
+          cargo clippy --features demo-company --example demo-company -- -D warnings
           cargo test --features demo-company --lib demo_company::
 
   # ─────────────────────────────────────────────────────────────────────────────
