@@ -78,17 +78,22 @@ ttf-parser = "0.25"
 [target.'cfg(target_os = "android")'.dependencies]
 webpki-roots = "1"
 
-[[bin]]
+# Developer tools are Cargo examples, not [[bin]] targets: the Tauri bundler packages every bin
+# target of the crate, so a dev-only bin either breaks `tauri build` (feature-gated, not built)
+# or ships inside the installer. Examples are never bundled.
+# Run: cargo run --example rams-readiness-eval -- <args>
+[[example]]
 name = "rams-readiness-eval"
-path = "src/bin/rams_readiness_eval.rs"
+path = "examples/rams_readiness_eval.rs"
 
-[[bin]]
+# Run: cargo run --example demo-company --features demo-company -- --db <path>
+[[example]]
 name = "demo-company"
-path = "src/bin/demo_company.rs"
+path = "examples/demo_company.rs"
 required-features = ["demo-company"]
 
 [features]
-# Developer-only: the demo-company generator (src/bin/demo_company.rs) and the simulated clock it
+# Developer-only: the demo-company generator (examples/demo_company.rs) and the simulated clock it
 # drives (src/clock.rs). The shipped app is never built with it.
 demo-company = []
 
