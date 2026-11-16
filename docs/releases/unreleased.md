@@ -8,7 +8,7 @@ Move entries into a dated version section when cutting a release.
 - Shared **EmptyState** UI primitive for consistent empty rendering across list modules.
 - Shared **Timeline** design-system primitive (rail, markers, day grouping, empty state) under `src/components/timeline/`.
 - Shared **KanbanBoard** design-system primitive (lanes, cards, drag, counts, empty state) under `src/components/kanban/`.
-- Design-system tokens `mfTimeline` / `mfKanban` and the `unified-interface-primitives` Cursor rule defining Timeline/Kanban adapter boundaries.
+- Design-system tokens `mfTimeline` / `mfKanban` and the `unified-interface-primitives` agent rule defining Timeline/Kanban adapter boundaries.
 - `common.kanban.emptyColumn` i18n label for board empty columns.
 - **ProcurementContextMenu** module (was imported by the base panel but never committed).
 - Admin **CreateUserDialog** extracted as a reusable dialog component.

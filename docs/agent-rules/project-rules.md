@@ -15,7 +15,7 @@
 - Prefer maintainable, low-surprise changes over clever shortcuts.
 
 ## 3) Cost-Saving Protocols (Context + Token Efficiency)
-- Before broad reads, use `@Codebase`/indexed search to locate relevant files and avoid full-file dumps.
+- Before broad reads, use targeted search (grep / glob) to locate relevant files and avoid full-file dumps.
 - Read only required sections of long files unless full context is essential for correctness.
 - Summarize large files into: purpose, key exports/functions, risks, and required edits.
 - Minimize repeated scans of unchanged directories; cache findings in the current session summary.
@@ -58,7 +58,7 @@
 ### Documentation alignment (always on)
 - Treat **`docs/PRD.md`** and **`docs/roadmap/`** as authoritative alongside the repository; keep implementation, terminology, and module boundaries consistent with them.
 - When they conflict with code, prefer **updating code toward PRD/roadmap** after calling out the mismatch; do not silently invent product behavior that contradicts them.
-- Cross-device sync follows **`docs/engineering/SYNC_STRATEGY.md`** and `.cursor/rules/universal-entity-sync.mdc` (entity_sync_id, outbox, inbox materialization).
+- Cross-device sync follows **`docs/engineering/SYNC_STRATEGY.md`** and `docs/agent-rules/universal-entity-sync.md` (entity_sync_id, outbox, inbox materialization).
 
 ### System continuity
 - This is an **evolving system** built across prior stages: **extend, refine, and integrate** with what exists—do not restart arbitrarily, reinterpret without evidence, or invent missing modules.
@@ -88,7 +88,7 @@
 - Roadmap files under `docs/roadmap/` are task lists, not long prompt documents.
 - Do not generate verbose future-prompt blocks in roadmap files.
 - Task format stays concise: **Task name** plus one sentence naming affected code areas.
-- After task approval, execute directly in Composer/Agent mode with focus on implementation, verification, and integration.
+- After task approval, execute directly with focus on implementation, verification, and integration.
 - Add concise completion notes in roadmap files after validation.
 
 ## 9) UI Pattern Enforcement (UX-DW-001)

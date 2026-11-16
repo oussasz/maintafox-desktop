@@ -1,9 +1,6 @@
----
-description: Develop-first daily integration, short-lived branches, stash/reachability hygiene, conventional commits, release/tag policy
-alwaysApply: true
----
-
 # GitHub & Git strategy (agent must follow)
+
+> **Applies to:** every change. Develop-first daily integration, short-lived branches, stash/reachability hygiene, conventional commits, release/tag policy
 
 **SSOT docs (read when unsure):** `docs/BRANCHING_STRATEGY.md`, `docs/VERSIONING_POLICY.md`, `docs/RELEASE_CHECKLIST.md`
 

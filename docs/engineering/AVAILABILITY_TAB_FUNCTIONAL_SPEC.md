@@ -188,4 +188,4 @@ Display on person row / detail only. No cert management on this tab.
 
 ## 12. Color / zoom standards
 
-See `docs/engineering/RESOURCE_TIMELINE.md` and `.cursor/rules/resource-timeline-horizon-colors.mdc`.
+See `docs/engineering/RESOURCE_TIMELINE.md` and `docs/agent-rules/resource-timeline-horizon-colors.md`.

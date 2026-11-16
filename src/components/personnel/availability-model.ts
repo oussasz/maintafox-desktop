@@ -108,7 +108,7 @@ export interface AvailabilitySummary {
   coverageRiskDays: number;
 }
 
-/** See `.cursor/rules/kpi-catalog.mdc` staging — Availability page summary KPIs. */
+/** See `docs/agent-rules/kpi-catalog.md` staging — Availability page summary KPIs. */
 export function computeAvailabilitySummary(
   people: AvailabilityPersonRow[],
   dates: string[],

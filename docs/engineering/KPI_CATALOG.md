@@ -3,7 +3,7 @@
 Single source of truth for Maintafox measurable outcomes.  
 Update this file **before** (or as part of) any schema / workflow / UI that enables or improves a KPI.
 
-Agent rule: `.cursor/rules/kpi-catalog.mdc`
+Agent rule: `docs/agent-rules/kpi-catalog.md`
 
 ---
 

@@ -1,17 +1,9 @@
----
-description: Canonical RBAC permission registry — no permission-name string literals
-globs:
-  - src/**/*.{ts,tsx}
-  - shared/**/*.{ts,tsx}
-  - src-tauri/src/**/*.rs
-  - scripts/**/*.{ts,mjs,js}
-alwaysApply: true
----
-
 # RBAC permissions (canonical registry)
 
+> **Applies to:** every change. Canonical RBAC permission registry — no permission-name string literals
+
 **SSOT:** [`shared/rbac/permission-registry.json`](shared/rbac/permission-registry.json) 
-**Per-feature workflow:** [`.cursor/rules/rbac-definition-of-done.mdc`](.cursor/rules/rbac-definition-of-done.mdc)
+**Per-feature workflow:** [`docs/agent-rules/rbac-definition-of-done.md`](docs/agent-rules/rbac-definition-of-done.md)
 
 Generated artifacts (checked in, never hand-edited):
 

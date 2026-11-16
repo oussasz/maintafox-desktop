@@ -1,15 +1,8 @@
----
-description: RBAC is part of the Definition of Done for every feature
-globs:
-  - src/**/*.{ts,tsx}
-  - shared/**/*.{ts,tsx}
-  - src-tauri/src/**/*.rs
-alwaysApply: true
----
-
 # RBAC Definition of Done
 
-Registry mechanics and the no-literals rule live in [`.cursor/rules/rbac-permissions.mdc`](.cursor/rules/rbac-permissions.mdc). This rule covers the delivery workflow: **no feature ships without an RBAC pass.**
+> **Applies to:** every change. RBAC is part of the Definition of Done for every feature
+
+Registry mechanics and the no-literals rule live in [`docs/agent-rules/rbac-permissions.md`](docs/agent-rules/rbac-permissions.md). This rule covers the delivery workflow: **no feature ships without an RBAC pass.**
 
 ## 1. New capability
 

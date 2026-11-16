@@ -1,9 +1,6 @@
----
-description: Never show raw DB/FK IDs in end-user UI — always resolve to business labels
-alwaysApply: true
----
-
 # No internal IDs in the UI
+
+> **Applies to:** every change. Never show raw DB/FK IDs in end-user UI — always resolve to business labels
 
 Never expose internal database IDs (numeric or opaque FKs) to end users. Resolve every foreign key to its **business representation** before rendering.
 

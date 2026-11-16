@@ -1,9 +1,6 @@
----
-description: Before schema/workflow/UI work, detect KPIs and update KPI_CATALOG.md (analytics platform design)
-alwaysApply: true
----
-
 # KPI Catalog governance
+
+> **Applies to:** every change. Before schema/workflow/UI work, detect KPIs and update KPI_CATALOG.md (analytics platform design)
 
 You are not only implementing features — you are designing the future analytics platform.
 

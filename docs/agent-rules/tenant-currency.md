@@ -1,9 +1,6 @@
----
-description: Tenant currency via Settings — never hardcode EUR/USD in money UI
-alwaysApply: true
----
-
 # Tenant currency (Settings SSOT)
+
+> **Applies to:** every change. Tenant currency via Settings — never hardcode EUR/USD in money UI
 
 Money display and cost math labels must follow the **tenant currency setting**, same class as language — not a hardcoded `EUR`, `USD`, or `€`.
 
