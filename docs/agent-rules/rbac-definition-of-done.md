@@ -2,7 +2,7 @@
 
 > **Applies to:** every change. RBAC is part of the Definition of Done for every feature
 
-Registry mechanics and the no-literals rule live in [`docs/agent-rules/rbac-permissions.md`](docs/agent-rules/rbac-permissions.md). This rule covers the delivery workflow: **no feature ships without an RBAC pass.**
+Registry mechanics and the no-literals rule live in [`docs/agent-rules/rbac-permissions.md`](rbac-permissions.md). This rule covers the delivery workflow: **no feature ships without an RBAC pass.**
 
 ## 1. New capability
 

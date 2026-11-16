@@ -2,13 +2,13 @@
 
 > **Applies to:** every change. Canonical RBAC permission registry — no permission-name string literals
 
-**SSOT:** [`shared/rbac/permission-registry.json`](shared/rbac/permission-registry.json) 
-**Per-feature workflow:** [`docs/agent-rules/rbac-definition-of-done.md`](docs/agent-rules/rbac-definition-of-done.md)
+**SSOT:** [`shared/rbac/permission-registry.json`](../../shared/rbac/permission-registry.json) 
+**Per-feature workflow:** [`docs/agent-rules/rbac-definition-of-done.md`](rbac-definition-of-done.md)
 
 Generated artifacts (checked in, never hand-edited):
 
-- Rust: [`src-tauri/src/rbac/permissions_generated.rs`](src-tauri/src/rbac/permissions_generated.rs) via `crate::rbac::permissions::*`
-- TypeScript: [`shared/rbac/permissions.generated.ts`](shared/rbac/permissions.generated.ts) via `P.*` / `PermissionName`
+- Rust: [`src-tauri/src/rbac/permissions_generated.rs`](../../src-tauri/src/rbac/permissions_generated.rs) via `crate::rbac::permissions::*`
+- TypeScript: [`shared/rbac/permissions.generated.ts`](../../shared/rbac/permissions.generated.ts) via `P.*` / `PermissionName`
 
 ## Hard rules
 
