@@ -2,7 +2,7 @@
 
 **Status:** every registered table syncs through the generic engine (Phase 2.4, 2026-10-11); proven by the multi-device harness (Phase 2.5)  
 **PRD:** §8 Sync Layer — Hybrid Cloud  
-**Agent rule:** `.cursor/rules/universal-entity-sync.mdc`
+**Agent rule:** `docs/agent-rules/universal-entity-sync.md`
 
 ## 1. Goal
 

@@ -2,7 +2,7 @@
 
 **SSOT renderer:** `src/components/timeline/ResourceTimeline.tsx`  
 **Tokens:** `src/design-system/resource-timeline-tokens.ts` + `resource-timeline.css`  
-**Rules:** `.cursor/rules/unified-interface-primitives.mdc`, `.cursor/rules/resource-timeline-horizon-colors.mdc`
+**Rules:** `docs/agent-rules/unified-interface-primitives.md`, `docs/agent-rules/resource-timeline-horizon-colors.md`
 
 ## Purpose
 

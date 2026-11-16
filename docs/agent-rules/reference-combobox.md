@@ -1,9 +1,6 @@
----
-description: Fields backed by Données de référence must use ReferenceCombobox; follow A/B/C governance
-alwaysApply: true
----
-
 # ReferenceCombobox for Données de référence
+
+> **Applies to:** every change. Fields backed by Données de référence must use ReferenceCombobox; follow A/B/C governance
 
 Any form field whose options come from **Données de référence** MUST use `ReferenceCombobox` — never a raw `Select`, `EquipmentSearchSelect`, or ad-hoc lookup.
 

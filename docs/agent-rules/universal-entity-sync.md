@@ -1,9 +1,6 @@
----
-description: Universal Entity Sync Standard — every primary domain entity must sync across trusted devices
-alwaysApply: true
----
-
 # Universal Entity Sync Standard
+
+> **Applies to:** every change. Universal Entity Sync Standard — every primary domain entity must sync across trusted devices
 
 Every primary domain entity that is tenant operational truth MUST carry:
 

@@ -52,7 +52,7 @@ After activation wipe or on a Target build, verify:
 3. Manager and ReferenceCombobox share the same B live-CRUD API.
 4. C retains draft → validate → publish; B has no draft/publish chrome.
 5. Domains remapped per the accepted philosophy table.
-6. Docs and Cursor rules match the new model.
+6. Docs and agent rules match the new model.
 
 ---
 
@@ -170,7 +170,7 @@ Files: [`reference-types.ts`](../../src/components/reference/reference-types.ts)
 - `valueMode: "code" | "id"` (DI symptom uses id).
 - DiCreateForm: origin / symptom / priority / impact on Combobox.
 - `ACTIVE_ENFORCEMENT_PHASE = Target` (architecture test: Manager needed no structural rewrite).
-- Docs + Cursor rule updated; Export documented as view-only.
+- Docs + agent rule updated; Export documented as view-only.
 
 ---
 
@@ -228,4 +228,4 @@ Files: [`reference-types.ts`](../../src/components/reference/reference-types.ts)
 - [ ] No UI path offers mutate that backend rejects for that category
 - [ ] B create/edit/deactivate identical from Combobox and Manager
 - [ ] C publish path only for controlled catalogs
-- [ ] Cursor rule + REFERENCE_COMBOBOX.md updated
+- [ ] Agent rule + REFERENCE_COMBOBOX.md updated

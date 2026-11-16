@@ -43,7 +43,7 @@ Detail dialogs remain under `docs/UX_DETAIL_DIALOG_PATTERN.md` (UX-DW-001).
 
 ## Rules
 
-- Reference-backed fields use `ReferenceCombobox` (see `.cursor/rules/reference-combobox.mdc`).
+- Reference-backed fields use `ReferenceCombobox` (see `docs/agent-rules/reference-combobox.md`).
 - Validation messages are localized enterprise copy (e.g. “Ce champ est obligatoire.”), never raw `"required"`.
 - Minimize mandatory fields to business-critical ones.
 - Do not hardcode Asset chrome classes in other modules — import entity-form components.

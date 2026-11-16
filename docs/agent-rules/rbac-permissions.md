@@ -1,22 +1,14 @@
----
-description: Canonical RBAC permission registry — no permission-name string literals
-globs:
-  - src/**/*.{ts,tsx}
-  - shared/**/*.{ts,tsx}
-  - src-tauri/src/**/*.rs
-  - scripts/**/*.{ts,mjs,js}
-alwaysApply: true
----
-
 # RBAC permissions (canonical registry)
 
-**SSOT:** [`shared/rbac/permission-registry.json`](shared/rbac/permission-registry.json) 
-**Per-feature workflow:** [`.cursor/rules/rbac-definition-of-done.mdc`](.cursor/rules/rbac-definition-of-done.mdc)
+> **Applies to:** every change. Canonical RBAC permission registry — no permission-name string literals
+
+**SSOT:** [`shared/rbac/permission-registry.json`](../../shared/rbac/permission-registry.json) 
+**Per-feature workflow:** [`docs/agent-rules/rbac-definition-of-done.md`](rbac-definition-of-done.md)
 
 Generated artifacts (checked in, never hand-edited):
 
-- Rust: [`src-tauri/src/rbac/permissions_generated.rs`](src-tauri/src/rbac/permissions_generated.rs) via `crate::rbac::permissions::*`
-- TypeScript: [`shared/rbac/permissions.generated.ts`](shared/rbac/permissions.generated.ts) via `P.*` / `PermissionName`
+- Rust: [`src-tauri/src/rbac/permissions_generated.rs`](../../src-tauri/src/rbac/permissions_generated.rs) via `crate::rbac::permissions::*`
+- TypeScript: [`shared/rbac/permissions.generated.ts`](../../shared/rbac/permissions.generated.ts) via `P.*` / `PermissionName`
 
 ## Hard rules
 

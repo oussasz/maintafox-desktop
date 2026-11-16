@@ -1,9 +1,6 @@
----
-description: Never show raw DB/FK IDs in end-user UI — always resolve to business labels
-alwaysApply: true
----
-
 # No internal IDs in the UI
+
+> **Applies to:** every change. Never show raw DB/FK IDs in end-user UI — always resolve to business labels
 
 Never expose internal database IDs (numeric or opaque FKs) to end users. Resolve every foreign key to its **business representation** before rendering.
 
@@ -13,7 +10,7 @@ Numeric IDs are backend implementation details. They may appear only in dedicate
 
 Enrich IPC list/get DTOs on the **backend** with display fields (`*_label`, `*_code`, `*_display_name`) via JOINs — same pattern as WO `asset_label` / `responsible_username`.
 
-- Frontend is **presentation-only**: use enriched fields + [`src/lib/display`](src/lib/display) formatters.
+- Frontend is **presentation-only**: use enriched fields + [`src/lib/display`](../../src/lib/display) formatters.
 - Do **not** add per-component `getById` / N+1 lookups to paint labels.
 - Keep FKs on the DTO for permissions and mutations; never render them.
 

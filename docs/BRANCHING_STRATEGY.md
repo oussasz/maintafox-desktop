@@ -2,7 +2,7 @@
 
 > Effective from Phase 1 · Sub-phase 01 · File 02 · Sprint S1.
 > This document governs all version control operations for the Maintafox Desktop project.
-> Agent automation detail (always-on): `.cursor/rules/github-git-strategy.mdc` — keep both in sync.
+> Agent automation detail (always-on): `docs/agent-rules/github-git-strategy.md` — keep both in sync.
 
 Maintafox is a **tightly integrated product**. Daily work expects a single runnable tree: **`develop` must contain every completed feature**.
 
@@ -143,7 +143,7 @@ Minimum for product-affecting changes:
 
 ## Section 7 — Health, stash, recovery, and cleanup
 
-Agent automation detail: `.cursor/rules/github-git-strategy.mdc`. Keep both in sync.
+Agent automation detail: `docs/agent-rules/github-git-strategy.md`. Keep both in sync.
 
 ### One branch = one feature
 

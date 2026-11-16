@@ -1,17 +1,6 @@
----
-description: ResourceTimeline horizon, zoom, and semantic color standards
-globs:
-  - src/components/timeline/**
-  - src/components/personnel/Availability*.tsx
-  - src/components/personnel/availability-model.ts
-  - src/pages/PersonnelPage.tsx
-  - src/design-system/resource-timeline*
-  - docs/engineering/AVAILABILITY_TAB_FUNCTIONAL_SPEC.md
-  - docs/engineering/RESOURCE_TIMELINE.md
-alwaysApply: false
----
-
 # ResourceTimeline — horizon, zoom, colors
+
+> **Applies to:** `src/components/timeline/**`, `src/components/personnel/Availability*.tsx`, `src/components/personnel/availability-model.ts`, `src/pages/PersonnelPage.tsx`, `src/design-system/resource-timeline*`, `docs/engineering/AVAILABILITY_TAB_FUNCTIONAL_SPEC.md`, `docs/engineering/RESOURCE_TIMELINE.md`. ResourceTimeline horizon, zoom, and semantic color standards
 
 ## Horizon
 

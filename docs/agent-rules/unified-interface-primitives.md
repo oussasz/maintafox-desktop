@@ -1,9 +1,6 @@
----
-description: Enforces one shared Design System renderer for unified interface patterns
-alwaysApply: true
----
-
 # Unified Interface Primitives
+
+> **Applies to:** every change. Enforces one shared Design System renderer for unified interface patterns
 
 Business modules own data, state, permissions, actions, and domain semantics.
 The Design System owns rendering. Modules may only provide typed presentation adapters.
@@ -23,7 +20,7 @@ The Design System owns rendering. Modules may only provide typed presentation ad
 - Modules may only provide typed groups, items, visible range, and selection callbacks; they must not import `react-calendar-timeline` directly or invent a second Gantt/calendar renderer.
 - Horizon presets, zoom chrome, and semantic bar colors come from `src/design-system/resource-timeline-tokens.ts` (+ CSS vars). Adapters must not hardcode Tailwind hex for states.
 - Reject any change that introduces a parallel resource×time library (`gantt-task-react`, Vis.js Timeline, custom CSS Gantt) outside this wrapper.
-- See also `.cursor/rules/resource-timeline-horizon-colors.mdc`.
+- See also `docs/agent-rules/resource-timeline-horizon-colors.md`.
 
 ## Kanban
 

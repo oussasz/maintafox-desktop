@@ -1,9 +1,6 @@
----
-description: List-module search/filter toolbars must use SmartFilterBar (debounced search, chips, reset)
-alwaysApply: true
----
-
 # SmartFilterBar for list module filters
+
+> **Applies to:** every change. List-module search/filter toolbars must use SmartFilterBar (debounced search, chips, reset)
 
 Any **module list / directory toolbar** with search and/or quick filters MUST use `SmartFilterBar` — never a one-off `setTimeout` search row, ad-hoc `moduleFilterBar` markup, or a Search/Apply button.
 

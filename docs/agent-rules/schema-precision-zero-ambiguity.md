@@ -1,9 +1,6 @@
----
-description: Schema/DTO/IPC field names must match target entity; no ambiguous or duplicate FKs
-alwaysApply: true
----
-
 # Schema Precision & Zero Domain Ambiguity
+
+> **Applies to:** every change. Schema/DTO/IPC field names must match target entity; no ambiguous or duplicate FKs
 
 Prevent technical debt, domain drift, and broken FK assumptions. Database schemas, Rust domain types, `shared/ipc-types`, Zod services, and UI models must use **one name per relation**.
 

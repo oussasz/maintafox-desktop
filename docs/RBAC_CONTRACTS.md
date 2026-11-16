@@ -9,7 +9,7 @@ dangerous action guards, and frontend usage.
 > from `@shared/rbac/permissions.generated` (TypeScript).
 > **Never** use permission-name string literals in application code.
 > Run `pnpm rbac:generate` after registry edits and `pnpm rbac:check` in CI.
-> See [`.cursor/rules/rbac-permissions.mdc`](../.cursor/rules/rbac-permissions.mdc).
+> See [`docs/agent-rules/rbac-permissions.md`](agent-rules/rbac-permissions.md).
 
 ## Permission Naming Convention
 

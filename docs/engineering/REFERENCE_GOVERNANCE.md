@@ -162,7 +162,7 @@ Legacy `lookup_*` is parallel debt; do not grow it for new features.
 
 - [REFERENCE_COMBOBOX.md](./REFERENCE_COMBOBOX.md) — form control standard
 - [REFERENCE_GOVERNANCE_IMPLEMENTATION_PLAN.md](./REFERENCE_GOVERNANCE_IMPLEMENTATION_PLAN.md) — migration execution plan (includes Target smoke checklist)
-- Cursor rule: `.cursor/rules/reference-combobox.mdc`
+- Agent rule: `docs/agent-rules/reference-combobox.md`
 
 **Integrity:** After activation wipe, `ensure_system_reference_catalog_integrity` restores A/B/C catalogs. `WORK.FAILURE_MODES` baseline values are seeded without depending on `failure_codes`.
 
