@@ -1,0 +1,161 @@
+# Linux TEST build (owner request 2026-11-17: "is there a Linux version?"). Builds Maintafox for
+# Linux from a release tag, as an Ubuntu/Debian package (.deb) and a portable AppImage, so the app
+# can be tried on a Linux PC. It is a test build, not a release:
+# - nothing is published (no GitHub release, no vendor console, no update catalog);
+# - no updater files are made: the release updater key is not used here, and the update catalog
+#   has no Linux entries, so this build gets no in-app updates;
+# - it uses the production control server (shared/control-plane.json): activating a licence or
+#   syncing from it acts on real data, so use a test licence and test data only;
+# - the AppImage step downloads linuxdeploy unpinned (acceptable here: no secret, read-only token);
+#   pin and verify it before any Linux build is released;
+# - the packages are kept 14 days as a workflow artifact named ...-LINUX-TEST.
+#
+# Runs:
+# - on a pull request that changes this file (builds the newest vX.Y.Z tag);
+# - by hand (Actions > Linux test build > Run workflow), once this file is on the default branch,
+#   with an optional tag; empty = the newest vX.Y.Z tag.
+#
+# Supply-chain rules as in release.yml: every ${{ }} value reaches scripts through env:, actions
+# are pinned to full commit SHAs, no build cache is restored.
+name: Linux test build
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/linux-test-build.yml"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build (vX.Y.Z). Empty = the newest release tag."
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-test-build-${{ github.ref }}-${{ inputs.tag }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  SQLX_OFFLINE: "true"
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  # The release build of the one large crate needs memory; at most two links at a time.
+  CARGO_BUILD_JOBS: "2"
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  linux:
+    name: Build the Linux test packages (.deb, AppImage)
+    # Pinned like Rust Quality in ci.yml. The packages need glibc 2.39+: Ubuntu 24.04 and newer
+    # (not Ubuntu 22.04 or Debian 12).
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Checkout (all tags)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Choose the release tag
+        id: tag
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          tag="${INPUT_TAG:-}"
+          if [ -z "$tag" ]; then
+            tag="$(git tag --list 'v*.*.*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed -n 1p || true)"
+          fi
+          if ! printf '%s' "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::'$tag' is not a release tag vX.Y.Z."; exit 1
+          fi
+          if ! git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "::error::Tag $tag does not exist."; exit 1
+          fi
+          git -c advice.detachedHead=false checkout --quiet "refs/tags/$tag"
+          version="${tag#v}"
+          # Same version rule as release.yml: tauri.conf.json, Cargo.toml and package.json all match the tag.
+          conf="$(jq -r .version src-tauri/tauri.conf.json)"
+          cargo_v="$(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/Cargo.toml | head -n 1)"
+          npm_v="$(jq -r .version package.json)"
+          if [ "$conf" != "$version" ] || [ "$cargo_v" != "$version" ] || [ "$npm_v" != "$version" ]; then
+            echo "::error::Tag $tag: versions differ (tauri.conf.json '$conf', Cargo.toml '$cargo_v', package.json '$npm_v')."; exit 1
+          fi
+          toolchain="$(sed -n 's/^channel = "\(.*\)"/\1/p' src-tauri/rust-toolchain.toml | head -n 1)"
+          if [ -z "$toolchain" ]; then echo "::error::No channel in src-tauri/rust-toolchain.toml."; exit 1; fi
+          echo "Building Maintafox $version for Linux (test build) from $tag at $(git rev-parse HEAD)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "toolchain=$toolchain" >> "$GITHUB_OUTPUT"
+          echo "artifact=maintafox-$version-LINUX-TEST" >> "$GITHUB_OUTPUT"
+
+      # Safety net against an out-of-memory kill while linking. On the runner's temporary disk.
+      - name: Add swap
+        run: |
+          sudo swapoff -a || true
+          sudo fallocate -l 8G /mnt/swapfile
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
+          free -m
+
+      - name: Install system libraries (WebKitGTK, GTK, AppImage tools)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential curl wget file \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libsqlite3-dev \
+            libssl-dev \
+            libxdo-dev
+
+      - name: Install Rust (the toolchain of src-tauri/rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master 2026-10-09 (input handling fix)
+        with:
+          toolchain: ${{ steps.tag.outputs.toolchain }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Direct-download flavour (as the Windows installer), packed as .deb and AppImage. No updater
+      # files: createUpdaterArtifacts is switched off, so no signing key is needed or used.
+      - name: Build the app and the Linux packages
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ""
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+        run: |
+          set -euo pipefail
+          conf="$RUNNER_TEMP/linux-test.conf.json"
+          printf '%s\n' '{"bundle":{"createUpdaterArtifacts":false}}' > "$conf"
+          pnpm tauri build --bundles deb,appimage --config "$conf"
+
+      - name: Collect the packages
+        run: |
+          set -euo pipefail
+          mkdir -p dist-linux
+          cp src-tauri/target/release/bundle/deb/*.deb dist-linux/
+          cp src-tauri/target/release/bundle/appimage/*.AppImage dist-linux/
+          ( cd dist-linux && sha256sum -- * > SHA256SUMS.txt )
+          ls -l dist-linux
+          cat dist-linux/SHA256SUMS.txt
+
+      - name: Keep the test packages
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ steps.tag.outputs.artifact }}
+          path: dist-linux/
+          if-no-files-found: error
+          retention-days: 14
