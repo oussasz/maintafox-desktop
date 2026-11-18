@@ -150,15 +150,21 @@ pub async fn init_db(db_path: &str) -> AppResult<DatabaseConnection> {
         AppError::DatabaseKeyUnavailable("the stored key does not open the database; enter the recovery key".into())
     })?;
 
-    // Apply SQLite pragmas for WAL mode, foreign keys, and performance
+    apply_connection_pragmas(&db).await?;
+
+    tracing::info!("Database connection established with WAL mode.");
+    Ok(db)
+}
+
+/// The pragmas the app sets on its database connection: WAL mode, foreign keys, and performance.
+/// Shared with the startup measurements (`startup_tests`), which open a database file like the app.
+pub(crate) async fn apply_connection_pragmas(db: &DatabaseConnection) -> AppResult<()> {
     db.execute_unprepared("PRAGMA journal_mode=WAL;").await?;
     db.execute_unprepared("PRAGMA foreign_keys=ON;").await?;
     db.execute_unprepared("PRAGMA busy_timeout=5000;").await?;
     db.execute_unprepared("PRAGMA cache_size=-20000;").await?;
     db.execute_unprepared("PRAGMA temp_store=MEMORY;").await?;
-
-    tracing::info!("Database connection established with WAL mode.");
-    Ok(db)
+    Ok(())
 }
 
 /// Run all pending sea-orm migrations.
