@@ -4493,6 +4493,15 @@ async fn a_commitment_closed_by_a_person_names_them_and_the_automatic_close_is_n
     )
     .await;
     exec_sql(&db, "DELETE FROM sync_capture_journal").await;
+    // A planner's change of that slot, captured but not staged yet when the tick comes.
+    exec_sql(
+        &db,
+        &format!(
+            "UPDATE schedule_commitments SET planned_labor_hours = 3.5 WHERE id = {}",
+            second.id
+        ),
+    )
+    .await;
     let closed = crate::planning::lifecycle::close_finished_commitments(&db)
         .await
         .expect("tick");
@@ -4507,6 +4516,31 @@ async fn a_commitment_closed_by_a_person_names_them_and_the_automatic_close_is_n
         .await,
         0,
         "an automatic close is not sent: nobody signs it"
+    );
+    let staged: String = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT o.payload_json AS p FROM sync_outbox o JOIN schedule_commitments c \
+                   ON c.entity_sync_id = o.entity_sync_id \
+                 WHERE o.entity_type = 'schedule_commitments' AND c.id = {} ORDER BY o.id DESC LIMIT 1",
+                second.id
+            ),
+        ))
+        .await
+        .expect("outbox")
+        .expect("the planner's change is staged")
+        .try_get("", "p")
+        .expect("payload");
+    let staged: serde_json::Value = serde_json::from_str(&staged).expect("json");
+    assert_eq!(
+        staged.get("status").and_then(serde_json::Value::as_str),
+        Some("committed"),
+        "the planner's change is sent as it stood, without the automatic close: {staged}"
+    );
+    assert_eq!(
+        staged.get("planned_labor_hours").and_then(serde_json::Value::as_f64),
+        Some(3.5)
     );
 }
 

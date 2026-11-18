@@ -215,6 +215,9 @@ async fn close_where(
 pub async fn close_finished_commitments(db: &DatabaseConnection) -> AppResult<u64> {
     let active = super::load::active_commitment_sql_as("schedule_commitments");
     let tx = db.begin().await?;
+    // Changes captured before it (a planner's edit not staged yet) are staged first, as they stood:
+    // the automatic close is never sent inside a person's change.
+    crate::sync::capture::drain_capture_journal(&tx).await?;
     crate::sync::capture::begin_suppression(&tx).await?;
     let closed = close_where(&tx, &format!("NOT {active}"), Vec::new(), None).await?;
     crate::sync::capture::end_suppression(&tx).await?;

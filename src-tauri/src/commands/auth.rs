@@ -149,7 +149,7 @@ pub(crate) async fn login_impl(
 
     // Get existing trust record for this user+device
     let trust = crate::auth::device::get_device_trust(&state.db, user_id, &fingerprint).await?;
-    // A first sign-in on this device registers its trust (audited after the session starts).
+    // A first sign-in on this device registers its trust (with its audit, once the session starts).
     let mut device_trusted_now = false;
 
     match (&trust, is_online) {
@@ -160,12 +160,11 @@ pub(crate) async fn login_impl(
                 "La premi\u{00e8}re connexion sur cet appareil n\u{00e9}cessite une connexion r\u{00e9}seau.".into(),
             ));
         }
-        // First login: register trust now (online). Its audit is written once the signing session
-        // has started (below), so it is this person's signed change.
+        // First login (online): the device is trusted once the signing session has started
+        // (below), together with its audit, so a sign-in refused before never leaves a trust
+        // without its audit.
         (None, true) => {
-            crate::auth::device::register_device_trust(&state.db, user_id, &fingerprint, None).await?;
             device_trusted_now = true;
-            tracing::info!(username = %username, "login::device_trust_registered");
         }
         // Known device but revoked: allow online login only
         (Some(t), _) if t.is_revoked => {
@@ -319,10 +318,18 @@ pub(crate) async fn login_impl(
         ));
     }
 
-    // Written in the person's session (capture actor set above): sent as their signed change. The
-    // sync server refuses an audit naming someone who did not sign it (`author_not_signer`).
+    // Registered and audited in the person's session (capture actor set above): the audit is sent
+    // as their signed change (the sync server refuses an audit naming someone who did not sign it,
+    // `author_not_signer`). The session itself does not depend on the trust row. A registration
+    // that fails is logged and written at the next sign-in (the device is still untrusted then).
     if device_trusted_now {
-        audit_device_trusted(&state.db, user_id, &fingerprint).await;
+        match crate::auth::device::register_device_trust(&state.db, user_id, &fingerprint, None).await {
+            Ok(_) => {
+                tracing::info!(username = %username, "login::device_trust_registered");
+                audit_device_trusted(&state.db, user_id, &fingerprint).await;
+            }
+            Err(e) => tracing::error!(error = %e, "login::device_trust_not_registered"),
+        }
     }
 
     if let Some((reason, summary)) = force_change_reason {

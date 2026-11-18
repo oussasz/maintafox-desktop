@@ -944,15 +944,27 @@ pub async fn ensure_complete_copy_for_late_costs<C: ConnectionTrait>(
     db: &C,
     synced_since_start: bool,
 ) -> AppResult<()> {
-    // Rows not tried yet (any type: the pass is not finished), and rows of the documents an OT's
-    // cost is made of that wait for a parent. Other rows waiting for a parent (which can wait for a
-    // long time) do not hold Finance back.
+    // Rows not tried yet (any type: the pass is not finished), and the documents of a settled OT's
+    // cost waiting for a parent: a row of a cost type that is the OT itself or names the OT or its
+    // settlement by sync id. Other rows waiting for a parent (possibly one that never arrives) do
+    // not hold Finance back.
     let waiting = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT COUNT(*) AS n FROM sync_inbox
-              WHERE apply_status = 'pending'
-                 OR (apply_status = 'deferred' AND entity_type IN (SELECT value FROM json_each(?)))",
+            "WITH settled(sync_id) AS (
+                 SELECT w.entity_sync_id FROM wo_cost_settlements s JOIN work_orders w ON w.id = s.work_order_id
+                  WHERE s.status = 'posted' AND w.entity_sync_id IS NOT NULL
+                 UNION
+                 SELECT s.entity_sync_id FROM wo_cost_settlements s WHERE s.status = 'posted'
+             )
+             SELECT COUNT(*) AS n FROM sync_inbox i
+              WHERE i.apply_status = 'pending'
+                 OR (i.apply_status = 'deferred'
+                     AND i.entity_type IN (SELECT value FROM json_each(?))
+                     AND (i.entity_sync_id IN (SELECT sync_id FROM settled)
+                          OR (json_valid(i.payload_json)
+                              AND EXISTS (SELECT 1 FROM json_tree(i.payload_json) t
+                                           WHERE t.type = 'text' AND t.atom IN (SELECT sync_id FROM settled)))))",
             [serde_json::to_string(LATE_COST_SOURCE_TYPES)?.into()],
         ))
         .await?

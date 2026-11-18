@@ -1733,12 +1733,28 @@ async fn s18_a_sync_pass_books_no_late_cost_by_itself() {
 /// Adds a received row to this PC's inbox, in `status` (`pending`: not applied yet; `deferred`:
 /// waiting for a parent).
 async fn inbox_row(db: &DatabaseConnection, entity_type: &str, sync_id: &str, status: &str) {
+    inbox_row_with(db, entity_type, sync_id, status, serde_json::json!({})).await;
+}
+
+/// [`inbox_row`] with its received payload.
+async fn inbox_row_with(
+    db: &DatabaseConnection,
+    entity_type: &str,
+    sync_id: &str,
+    status: &str,
+    payload: serde_json::Value,
+) {
     exec(
         db,
         "INSERT INTO sync_inbox (server_batch_id, checkpoint_token, entity_type, entity_sync_id, operation,
                                  row_version, payload_json, payload_hash, apply_status)
-         VALUES ('s19-batch', 'c1', ?, ?, 'upsert', 1, '{}', 'h', ?)",
-        vec![entity_type.into(), sync_id.into(), status.into()],
+         VALUES ('s19-batch', 'c1', ?, ?, 'upsert', 1, ?, 'h', ?)",
+        vec![
+            entity_type.into(),
+            sync_id.into(),
+            payload.to_string().into(),
+            status.into(),
+        ],
     )
     .await;
 }
@@ -1784,12 +1800,39 @@ async fn s19_the_catch_up_waits_for_a_complete_copy_and_the_waiting_costs_are_co
         vec![],
     )
     .await;
-    // A row of another kind waiting for its parent does not hold Finance back; a cost document does.
+    // A row of another kind waiting for its parent does not hold Finance back, nor does a cost
+    // document of an OT not settled here (its parent may never arrive); one of a settled OT does.
     inbox_row(&db, "teams", "s19-team-waits", "deferred").await;
+    inbox_row_with(
+        &db,
+        "inventory_transactions",
+        "s19-other-issue-waits",
+        "deferred",
+        serde_json::json!({ "source_sync_id": "wo-never-received", "quantity": 2 }),
+    )
+    .await;
     settlement::ensure_complete_copy_for_late_costs(&db, true)
         .await
-        .expect("nothing of an OT's cost is waiting");
-    inbox_row(&db, "inventory_transactions", "s19-issue-waits", "deferred").await;
+        .expect("nothing of a settled OT's cost is waiting");
+    let wo_sync: String = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT entity_sync_id FROM work_orders WHERE id = ?",
+            [wo_id.into()],
+        ))
+        .await
+        .expect("query")
+        .expect("work order")
+        .try_get("", "entity_sync_id")
+        .expect("sync id");
+    inbox_row_with(
+        &db,
+        "inventory_transactions",
+        "s19-issue-waits",
+        "deferred",
+        serde_json::json!({ "source_sync_id": wo_sync, "quantity": 5 }),
+    )
+    .await;
     assert!(refused(
         settlement::ensure_complete_copy_for_late_costs(&db, true).await
     ));

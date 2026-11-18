@@ -15,8 +15,8 @@
 //! its AUTOINCREMENT counter kept), then its indexes and triggers are created again from their own
 //! SQL. References from other tables (`weekly_schedule_events`, `weekly_schedule_baseline_items`)
 //! keep their name (`legacy_alter_table` on during the rename) and still point to the same ids;
-//! foreign keys are off during the rebuild only. A table already without the old check is left
-//! alone.
+//! foreign keys are off during the rebuild only. A table already carrying the new check is left
+//! alone; a table with neither check stops the migration with an error.
 //!
 //! One value changes: a week frozen automatically by an earlier version (frozen or published,
 //! nobody in `frozen_by`, with its "frozen automatically" event for the current baseline) loses its
@@ -78,7 +78,16 @@ impl MigrationTrait for Migration {
         )
         .expect("regex");
         if !old_check.is_match(&create_sql) {
-            return Ok(());
+            // Already rebuilt (this migration's check is there); anything else is a table this
+            // migration does not know, never rebuilt blindly.
+            if create_sql.contains(NEW_CHECK) {
+                return Ok(());
+            }
+            return Err(DbErr::Migration(
+                "migration 298: weekly_schedules has neither the freeze-time check of migration 212 nor its \
+                 replacement; table left unchanged"
+                    .to_string(),
+            ));
         }
         let name =
             Regex::new(r#"(?i)^\s*CREATE\s+TABLE\s+(IF\s+NOT\s+EXISTS\s+)?"?weekly_schedules"?"#).expect("regex");

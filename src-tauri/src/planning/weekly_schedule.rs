@@ -1021,12 +1021,13 @@ async fn auto_freeze_site(db: &DatabaseConnection, site: i64, now: DateTime<Utc>
 /// they stood: the automatic freeze is never sent inside a person's change.
 async fn auto_freeze_week(db: &DatabaseConnection, week: &SiteWeek) -> AppResult<bool> {
     let tx = db.begin().await?;
-    crate::sync::capture::drain_capture_journal(&tx).await?;
     let schedule = ensure_schedule(&tx, week).await?;
     if schedule.baseline_no != 0 || !matches!(schedule.status.as_str(), STATUS_DRAFT | STATUS_APPROVED) {
         tx.rollback().await?;
         return Ok(false);
     }
+    // Only when it freezes: staged before its writes, as the week stood.
+    crate::sync::capture::drain_capture_journal(&tx).await?;
     freeze_core(&tx, &schedule, week, None).await?;
     tx.commit().await?;
     Ok(true)
