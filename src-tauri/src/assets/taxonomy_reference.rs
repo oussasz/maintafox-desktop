@@ -563,12 +563,15 @@ pub async fn sync_equipment_classes_from_published_reference(db: &DatabaseConnec
             .await?;
 
         if existing.is_some() {
+            // Only a class that differs from the catalog is written: this runs at every start and
+            // every time an asset form reads the catalog, and each write is a new version sent to
+            // every PC (the same classes were sent again and again, in nobody's name).
             db.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "UPDATE equipment_classes \
                  SET name = ?, is_active = 1, deleted_at = NULL, updated_at = ? \
-                 WHERE code = ?",
-                [name.into(), now.clone().into(), code.into()],
+                 WHERE code = ? AND (name IS NOT ? OR is_active IS NOT 1 OR deleted_at IS NOT NULL)",
+                [name.clone().into(), now.clone().into(), code.into(), name.into()],
             ))
             .await?;
         } else {

@@ -768,6 +768,36 @@ async fn sign_in_bookkeeping_is_not_a_change_of_the_account_to_send() {
     );
 }
 
+/// Reading the equipment catalog (every asset form does) writes no equipment class that already
+/// matches it: each write was a new version of every class, sent to the server again and again
+/// (row version 10 for each class of one plant, the last ones pushed by a PC joining it).
+#[tokio::test]
+async fn reading_the_equipment_catalog_again_sends_no_class() {
+    use super::test_support::{scalar_i64 as count, started_db};
+    let db = started_db().await;
+    crate::assets::taxonomy_reference::ensure_equipment_taxonomy_reference_integrity(&db)
+        .await
+        .expect("catalog");
+    stage(&db).await;
+    assert!(
+        count(&db, "SELECT COUNT(*) FROM equipment_classes", vec![]).await > 0,
+        "the plant has equipment classes"
+    );
+    crate::assets::taxonomy_reference::list_equipment_taxonomy_catalog(&db)
+        .await
+        .expect("catalog read");
+    assert_eq!(
+        count(
+            &db,
+            "SELECT COUNT(*) FROM sync_capture_journal WHERE entity_type = 'equipment_classes'",
+            vec![]
+        )
+        .await,
+        0,
+        "nothing changed: nothing to send"
+    );
+}
+
 #[tokio::test]
 async fn many_children_received_before_their_parents_are_applied_parents_first_in_one_call() {
     let db = setup_db().await;
