@@ -17,7 +17,10 @@
 //! - cancel: an OT cancelled after consuming labour, parts or services is settled like a closed one.
 //! - late costs: when a settled OT's cost changes (receipt, issue, return or labour recorded after
 //!   the close, or synced after it), the difference with what is booked is posted (`wo_late_cost`)
-//!   by the inventory hooks, the post-sync sweep and Finance's catch-up.
+//!   in the name of the person who changed it (the inventory and work-order hooks of their command)
+//!   or of the Finance user who runs the catch-up ([`post_all_late_costs`]). A sync pass books
+//!   nothing by itself: a posted actual names who posted it (the sync server refuses it unsigned),
+//!   and a first synchronisation brings an OT's settlement and its documents in different passes.
 //! - reopen: the posted actuals (settlement and late costs) are reversed (negated rows, status
 //!   `reversed`) and the settlement becomes `reversed`; the next close settles the new cycle.
 
@@ -757,7 +760,7 @@ fn settlement_rows(breakdown: &WoCostBreakdown) -> [(&'static str, Option<&'stat
 /// different documents converge once their rows are exchanged (each recomputes against what it
 /// holds). A delta that cannot be placed yet (no approved version in the currency, or no open month
 /// this fiscal year) is left for the next run. Returns the amount booked.
-pub async fn post_late_costs<C: ConnectionTrait>(db: &C, wo_id: i64, actor_id: Option<i64>) -> AppResult<f64> {
+pub async fn post_late_costs<C: ConnectionTrait>(db: &C, wo_id: i64, actor_id: i64) -> AppResult<f64> {
     let Some(active) = active_settlement(db, wo_id).await? else {
         return Ok(0.0);
     };
@@ -844,7 +847,7 @@ pub async fn post_late_costs<C: ConnectionTrait>(db: &C, wo_id: i64, actor_id: O
             &currency,
             wo_id,
             breakdown.equipment_id,
-            actor_id,
+            Some(actor_id),
         )
         .await?;
         total += delta;
@@ -889,93 +892,6 @@ async fn settlement_actuals_complete<C: ConnectionTrait>(db: &C, settlement: &Wo
     Ok(present >= expected)
 }
 
-/// Entity types whose arrival by sync can change a settled OT's cost or complete its settlement.
-pub const LATE_COST_SYNC_TYPES: &[&str] = &[
-    "inventory_transactions",
-    "goods_receipt_lines",
-    "work_order_interveners",
-    "wo_cost_settlements",
-    "budget_actuals",
-];
-
-/// OT a synced row belongs to (by its sync identity), for the late-cost sweep.
-async fn work_order_of_synced_row<C: ConnectionTrait>(
-    db: &C,
-    entity_type: &str,
-    entity_sync_id: &str,
-) -> AppResult<Option<i64>> {
-    let sql = match entity_type {
-        "inventory_transactions" => format!(
-            "SELECT CASE WHEN t.source_type IN ({types}) THEN t.source_id
-                         ELSE (SELECT r.source_id FROM stock_reservations r
-                                WHERE r.id = t.reservation_id AND r.source_type IN ({types})) END AS wo_id
-             FROM inventory_transactions t
-             WHERE t.entity_sync_id = ? AND t.movement_type IN ('ISSUE', 'RETURN')",
-            types = crate::finance::wo_costing::WO_SOURCE_TYPES_SQL
-        ),
-        "goods_receipt_lines" => "SELECT pol.demand_source_id AS wo_id
-             FROM goods_receipt_lines grl JOIN purchase_order_lines pol ON pol.id = grl.po_line_id
-             WHERE grl.entity_sync_id = ? AND pol.demand_source_type = 'WORK_ORDER'"
-            .to_string(),
-        "work_order_interveners" => {
-            "SELECT work_order_id AS wo_id FROM work_order_interveners WHERE entity_sync_id = ?".to_string()
-        }
-        "wo_cost_settlements" => {
-            "SELECT work_order_id AS wo_id FROM wo_cost_settlements WHERE entity_sync_id = ?".to_string()
-        }
-        "budget_actuals" => "SELECT work_order_id AS wo_id FROM budget_actuals
-             WHERE entity_sync_id = ? AND source_type IN ('wo_settlement', 'wo_late_cost')"
-            .to_string(),
-        _ => return Ok(None),
-    };
-    let row = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            sql,
-            [entity_sync_id.into()],
-        ))
-        .await?;
-    Ok(match row {
-        Some(r) => decode(&r, "wo_id")?,
-        None => None,
-    })
-}
-
-/// Sync sweep, after a materialize pass has committed (capture active again, so the deltas it
-/// writes are captured and pushed like any local write): books the late costs of the settled OTs
-/// the pass touched. Best effort: a failure is logged and the next pass or Finance's catch-up
-/// books what is left. Returns the number of OTs updated.
-pub async fn post_late_costs_after_sync(db: &sea_orm::DatabaseConnection, applied: &[(String, String)]) -> i64 {
-    let mut wo_ids = std::collections::BTreeSet::new();
-    for (entity_type, entity_sync_id) in applied {
-        match work_order_of_synced_row(db, entity_type, entity_sync_id).await {
-            Ok(Some(wo_id)) => {
-                wo_ids.insert(wo_id);
-            }
-            Ok(None) => {}
-            Err(e) => {
-                tracing::warn!(target: "maintafox", "late cost lookup for synced {entity_type} {entity_sync_id}: {e}");
-            }
-        }
-    }
-    let mut touched = 0;
-    for wo_id in wo_ids {
-        let result = async {
-            let txn = sea_orm::TransactionTrait::begin(db).await?;
-            let booked = post_late_costs(&txn, wo_id, None).await?;
-            txn.commit().await?;
-            Ok::<f64, AppError>(booked)
-        }
-        .await;
-        match result {
-            Ok(booked) if booked.abs() >= 0.005 => touched += 1,
-            Ok(_) => {}
-            Err(e) => tracing::warn!(target: "maintafox", "late cost posting after sync for work order {wo_id}: {e}"),
-        }
-    }
-    touched
-}
-
 /// Inventory hook, after a receipt, issue or return is committed: books the late costs of the OTs
 /// it touched. Best effort: the stock movement is already committed and Finance's catch-up
 /// (`post_all_late_costs`) books anything left, so a failure is logged, never returned.
@@ -983,7 +899,7 @@ pub async fn post_late_costs_best_effort(db: &sea_orm::DatabaseConnection, wo_id
     for &wo_id in wo_ids {
         let result = async {
             let txn = sea_orm::TransactionTrait::begin(db).await?;
-            post_late_costs(&txn, wo_id, Some(actor_id)).await?;
+            post_late_costs(&txn, wo_id, actor_id).await?;
             txn.commit().await?;
             Ok::<(), AppError>(())
         }
@@ -1055,7 +971,7 @@ pub async fn post_all_late_costs<C: ConnectionTrait>(db: &C, actor_id: i64) -> A
     let mut touched = 0;
     for r in rows {
         let wo_id: i64 = decode(&r, "work_order_id")?;
-        if post_late_costs(db, wo_id, Some(actor_id)).await?.abs() >= 0.005 {
+        if post_late_costs(db, wo_id, actor_id).await?.abs() >= 0.005 {
             touched += 1;
         }
     }

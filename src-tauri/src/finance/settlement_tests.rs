@@ -15,7 +15,9 @@
 //!   after the close never reprices work already done, only new labour is a difference; S15 a
 //!   settlement synced before its actuals books no delta until they arrive; S16 a cancelled OT that
 //!   consumed something without a currency is a visible pending settlement; S17 the fiscal-year
-//!   start month is validated and locked once postings exist.
+//!   start month is validated and locked once postings exist; S18 a sync pass books no late cost
+//!   by itself (a PC joining the plant pushed hundreds of them, in nobody's name): Finance's
+//!   catch-up books it, in the name of the person who runs it.
 
 use chrono::{Datelike, Local};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
@@ -1112,9 +1114,7 @@ async fn s9_a_receipt_after_the_close_is_booked_once_as_a_late_cost() {
         vec![wo_id]
     );
 
-    let booked = settlement::post_late_costs(&db, wo_id, Some(actor))
-        .await
-        .expect("late");
+    let booked = settlement::post_late_costs(&db, wo_id, actor).await.expect("late");
     assert!(close_to(booked, 120.0), "late receipt booked, got {booked}");
     let rows = actual_rows(&db, wo_id).await;
     // The hook and the catch-up run again: nothing is booked twice.
@@ -1382,10 +1382,6 @@ async fn s12_a_cancelled_ot_is_settled_only_when_it_consumed_something() {
     assert_eq!(actual_rows(&db, idle).await, 0);
 }
 
-fn synced(entity_type: &str, entity_sync_id: &str) -> (String, String) {
-    (entity_type.to_string(), entity_sync_id.to_string())
-}
-
 async fn late_parts(db: &DatabaseConnection, wo_id: i64) -> f64 {
     scalar_f64(
         db,
@@ -1417,29 +1413,25 @@ async fn s13_an_issue_made_offline_before_the_close_and_synced_after_it_is_booke
         vec![wo_id.into()],
     )
     .await;
-    let movement = scalar_i64(
-        &db,
-        "SELECT id FROM inventory_transactions WHERE entity_sync_id = 'offline-issue-1'",
-        vec![],
-    )
-    .await;
-    settlement::post_late_costs_after_sync(&db, &[synced("inventory_transactions", "offline-issue-1")]).await;
+    // Finance's catch-up books it, in the name of the person who runs it.
+    let finance = admin_id(&db).await;
+    assert_eq!(
+        settlement::post_all_late_costs(&db, finance).await.expect("catch-up"),
+        1
+    );
     assert!(
         close_to(late_parts(&db, wo_id).await, 25.0),
         "difference booked on parts"
     );
     assert!(close_to(net_actuals(&db, wo_id).await, 485.0));
 
-    // The same row applied again, the catch-up, the inventory hook: still booked once.
+    // The catch-up again, the inventory hook: still booked once.
     let rows = actual_rows(&db, wo_id).await;
-    settlement::post_late_costs_after_sync(&db, &[synced("inventory_transactions", "offline-issue-1")]).await;
     assert_eq!(
-        settlement::post_all_late_costs(&db, admin_id(&db).await)
-            .await
-            .expect("catch-up"),
+        settlement::post_all_late_costs(&db, finance).await.expect("catch-up"),
         0
     );
-    settlement::post_late_costs_best_effort(&db, &[wo_id], admin_id(&db).await).await;
+    settlement::post_late_costs_best_effort(&db, &[wo_id], finance).await;
     assert_eq!(actual_rows(&db, wo_id).await, rows);
     assert!(close_to(late_parts(&db, wo_id).await, 25.0));
 }
@@ -1494,9 +1486,7 @@ async fn s14_a_rate_card_change_after_the_close_never_reprices_work_already_done
         vec![person.into()],
     )
     .await;
-    let booked = settlement::post_late_costs(&db, wo_id, Some(actor))
-        .await
-        .expect("late");
+    let booked = settlement::post_late_costs(&db, wo_id, actor).await.expect("late");
     assert!(close_to(booked, 0.0), "work already done is not repriced, got {booked}");
     let b = wo_costing::compute_wo_cost_breakdown(&db, wo_id)
         .await
@@ -1516,13 +1506,7 @@ async fn s14_a_rate_card_change_after_the_close_never_reprices_work_already_done
         vec![wo_id.into(), actor.into()],
     )
     .await;
-    let entry = scalar_i64(
-        &db,
-        "SELECT id FROM work_order_interveners WHERE entity_sync_id = 'late-labour-1'",
-        vec![],
-    )
-    .await;
-    settlement::post_late_costs_after_sync(&db, &[synced("work_order_interveners", "late-labour-1")]).await;
+    settlement::post_all_late_costs(&db, actor).await.expect("catch-up");
     assert!(close_to(net_actuals(&db, wo_id).await, 190.0), "120 frozen + 70 new");
 }
 
@@ -1562,41 +1546,33 @@ async fn s15_a_settlement_synced_before_its_actuals_books_no_delta_until_they_ar
         vec![wo_id.into()],
     )
     .await;
-    let settlement_sync = settlement::active_settlement(&db, wo_id)
-        .await
-        .expect("query")
-        .expect("settlement")
-        .entity_sync_id;
+    assert!(
+        settlement::active_settlement(&db, wo_id)
+            .await
+            .expect("query")
+            .is_some(),
+        "the settlement is here, its actuals are not"
+    );
 
     // Then an offline issue for the OT arrives: nothing is booked while the actuals are missing.
     offline_issue(&db, wo_id).await;
-    let touched = settlement::post_late_costs_after_sync(
-        &db,
-        &[
-            synced("wo_cost_settlements", &settlement_sync),
-            synced("inventory_transactions", "offline-issue-1"),
-        ],
-    )
-    .await;
-    assert_eq!(touched, 0);
+    let finance = admin_id(&db).await;
+    assert_eq!(
+        settlement::post_all_late_costs(&db, finance).await.expect("catch-up"),
+        0
+    );
     assert_eq!(actual_rows(&db, wo_id).await, 0, "no delta against missing actuals");
 
     // The actuals arrive: only the issue is a difference, once.
     exec(&db, "INSERT INTO budget_actuals SELECT * FROM held_actuals", vec![]).await;
-    let ids: Vec<String> = db
-        .query_all(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT entity_sync_id FROM budget_actuals WHERE work_order_id = ?",
-            [wo_id.into()],
-        ))
-        .await
-        .expect("ids")
-        .iter()
-        .map(|r| r.try_get::<String>("", "entity_sync_id").expect("id"))
-        .collect();
-    let applied: Vec<(String, String)> = ids.iter().map(|id| synced("budget_actuals", id)).collect();
-    assert_eq!(settlement::post_late_costs_after_sync(&db, &applied).await, 1);
-    assert_eq!(settlement::post_late_costs_after_sync(&db, &applied).await, 0);
+    assert_eq!(
+        settlement::post_all_late_costs(&db, finance).await.expect("catch-up"),
+        1
+    );
+    assert_eq!(
+        settlement::post_all_late_costs(&db, finance).await.expect("catch-up"),
+        0
+    );
     assert!(close_to(late_parts(&db, wo_id).await, 25.0));
     assert!(
         close_to(net_actuals(&db, wo_id).await, 485.0),
@@ -1655,4 +1631,99 @@ async fn s17_the_fiscal_year_start_month_is_validated_and_locked_once_postings_e
     let locked = write("4").await.expect_err("postings exist");
     assert!(locked.to_string().contains("GATE_FIN_FISCAL_START_LOCKED"), "{locked}");
     write("1").await.expect("saving the same month is not a change");
+}
+
+/// S18 — a PC joining the plant receives an OT's settlement and actuals in one pass and the OT's
+/// cost documents in later ones. A late cost booked by the pass itself would be computed on a
+/// cost only partly here and would name nobody as its poster: the sync server refuses it
+/// (`author_not_signer` on `posted_by_sync_id`; 685 such rows from one PC's first synchronisation).
+/// The pass books nothing; Finance's catch-up books the difference, in its user's name.
+#[tokio::test]
+async fn s18_a_sync_pass_books_no_late_cost_by_itself() {
+    let db = setup().await;
+    seed_plant(&db, Some(CC_CODE)).await;
+    let wo_id = wo_in_progress(&db).await;
+    add_costs(&db, wo_id).await;
+    complete_and_close(&db, wo_id).await;
+    // Everything above stands for rows received from the server: identities given, nothing to send.
+    crate::sync::capture::install_capture(&db).await.expect("capture");
+    exec(&db, "DELETE FROM sync_capture_journal", vec![]).await;
+    // The OT's cost here is no longer what is booked: an issue recorded elsewhere, not booked yet.
+    offline_issue(&db, wo_id).await;
+    let rows = actual_rows(&db, wo_id).await;
+    let settlement_sync = settlement::active_settlement(&db, wo_id)
+        .await
+        .expect("query")
+        .expect("settlement")
+        .entity_sync_id;
+
+    // A newer version of the OT's settlement arrives and is applied by a pass.
+    let mut payload =
+        crate::sync::test_support::current_payload(&db, "wo_cost_settlements", &settlement_sync, &Default::default())
+            .await
+            .expect("payload")
+            .expect("settlement row");
+    payload.insert("updated_at".into(), serde_json::json!("2026-11-17T02:48:56Z"));
+    let json = serde_json::Value::Object(payload).to_string();
+    let version = scalar_i64(
+        &db,
+        "SELECT row_version FROM wo_cost_settlements WHERE entity_sync_id = ?",
+        vec![settlement_sync.clone().into()],
+    )
+    .await
+        + 1;
+    exec(
+        &db,
+        "INSERT INTO sync_inbox (server_batch_id, checkpoint_token, entity_type, entity_sync_id, operation,
+                                 row_version, payload_json, payload_hash, apply_status)
+         VALUES ('s18-join', 'c1', 'wo_cost_settlements', ?, 'upsert', ?, ?, ?, 'pending')",
+        vec![
+            settlement_sync.clone().into(),
+            version.into(),
+            json.clone().into(),
+            crate::sync::queries::hash_payload(&json).into(),
+        ],
+    )
+    .await;
+    let result = crate::sync::materialize::materialize_inbox(&db, 200, true)
+        .await
+        .expect("materialize");
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT COUNT(*) FROM sync_inbox WHERE server_batch_id = 's18-join' AND apply_status = 'applied'",
+            vec![],
+        )
+        .await,
+        1,
+        "the received settlement is applied: {result:?}"
+    );
+    assert_eq!(actual_rows(&db, wo_id).await, rows, "the pass booked nothing");
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT COUNT(*) FROM budget_actuals WHERE posted_at IS NOT NULL AND posted_by_id IS NULL",
+            vec![],
+        )
+        .await,
+        0,
+        "no actual posted in nobody's name"
+    );
+
+    // Finance's catch-up books the difference, in the name of the person who runs it.
+    let finance = admin_id(&db).await;
+    assert_eq!(
+        settlement::post_all_late_costs(&db, finance).await.expect("catch-up"),
+        1
+    );
+    assert!(close_to(late_parts(&db, wo_id).await, 25.0));
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT COUNT(*) FROM budget_actuals WHERE source_type = 'wo_late_cost' AND posted_by_id = ?",
+            vec![finance.into()],
+        )
+        .await,
+        1
+    );
 }

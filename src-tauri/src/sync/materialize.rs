@@ -467,8 +467,6 @@ async fn materialize_pass(
     // One transaction per pass (one disk commit for up to `limit` rows instead of one per row);
     // each row still runs in its own savepoint, so a row that fails leaves nothing behind.
     let pass = db.begin().await?;
-    // Rows that can change a settled OT's cost (finance late costs, swept after the commit).
-    let mut late_cost_rows: Vec<(String, String)> = Vec::new();
     // Rows waiting for a parent are retried in the same run as long as other rows were applied,
     // so a child that arrived before its parent in the same run does not wait for the next one.
     let mut queue = items;
@@ -482,9 +480,6 @@ async fn materialize_pass(
                     progressed = true;
                     if RIGHTS_ENTITY_TYPES.contains(&item.entity_type.as_str()) {
                         result.rights_changed = true;
-                    }
-                    if crate::finance::settlement::LATE_COST_SYNC_TYPES.contains(&item.entity_type.as_str()) {
-                        late_cost_rows.push((item.entity_type.clone(), item.entity_sync_id.clone()));
                     }
                 }
                 ApplyOutcome::Unchanged => {
@@ -521,10 +516,12 @@ async fn materialize_pass(
     }
     pass.commit().await?;
 
-    // After the commit, with capture active: late-cost deltas are local writes, pushed like any other.
-    if !late_cost_rows.is_empty() {
-        crate::finance::settlement::post_late_costs_after_sync(db, &late_cost_rows).await;
-    }
+    // No late cost of a settled OT is booked here: a budget actual names who posted it, and nobody
+    // signs a pass. The cost documents a pass brings (a receipt, a movement, a labour entry) are
+    // booked by Finance's catch-up, in the name of the person who runs it
+    // (`finance::settlement::post_all_late_costs`). During a first synchronisation the settlement
+    // and the documents of the same OT arrive in different passes, so a pass would also see a cost
+    // that is only partly here.
     // After the commit, from the stored state, in their own transactions: the local consequences
     // of received permit ends and lock removals (`permit::ended_hold::sweep`); a failure never
     // refuses the received rows and is retried by the next pass (and at start-up).
