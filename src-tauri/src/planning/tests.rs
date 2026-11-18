@@ -4158,6 +4158,95 @@ async fn the_next_week_freezes_itself_but_never_counts_as_approved() {
     assert!(!view.awaiting_approval);
 }
 
+/// The automatic freeze names nobody, and the sync server takes a week's freeze time only from the
+/// person who froze it (`author_not_signer` on `frozen_by_sync_id`, seen on a PC joining the
+/// plant). The week's own row stays on this PC; its baseline and its "frozen automatically" event
+/// are captured as before. A person approving the week afterwards sends it, frozen, as their change.
+#[tokio::test]
+async fn an_automatic_freeze_keeps_the_week_row_on_this_pc_until_a_person_changes_it() {
+    let db = setup_db().await;
+    crate::sync::capture::install_capture(&db).await.expect("capture");
+    ensure_planning_notification_rule(&db).await;
+    let (site, team) = weekly_site(&db, "C").await;
+    let candidate = insert_candidate(&db, "manual_test", 7912, "ready", 100.0).await;
+    scheduling::create_schedule_commitment(
+        &db,
+        1,
+        commit_input(candidate, team, "2026-05-11T08:00", "2026-05-11T09:00"),
+    )
+    .await
+    .expect("next week's work");
+    // What came before stands for the plant's data, already on the server.
+    db.execute(Statement::from_string(
+        DbBackend::Sqlite,
+        "DELETE FROM sync_capture_journal".to_string(),
+    ))
+    .await
+    .expect("journal emptied");
+
+    let frozen = crate::planning::weekly_schedule::auto_freeze_due(&db, utc_at("2026-05-08T00:30"))
+        .await
+        .expect("tick");
+    assert!(frozen.contains(&(site, day("2026-05-10"))), "{frozen:?}");
+    let schedule = crate::planning::weekly_schedule::get_weekly_schedule(&db, site, "2026-05-11")
+        .await
+        .expect("view")
+        .schedule
+        .expect("schedule");
+    assert_eq!(schedule.status, "frozen");
+    assert!(schedule.frozen_by_id.is_none(), "frozen by the system");
+    assert_eq!(
+        scalar(
+            &db,
+            "SELECT COUNT(*) FROM sync_capture_journal WHERE entity_type = 'weekly_schedules'"
+        )
+        .await,
+        0,
+        "an automatic freeze is not sent: nobody signs it"
+    );
+    assert!(
+        scalar(
+            &db,
+            "SELECT COUNT(*) FROM sync_capture_journal WHERE entity_type = 'weekly_schedule_baseline_items'"
+        )
+        .await
+            > 0,
+        "the baseline travels"
+    );
+    assert!(
+        scalar(
+            &db,
+            "SELECT COUNT(*) FROM sync_capture_journal WHERE entity_type = 'weekly_schedule_events'"
+        )
+        .await
+            > 0,
+        "the \"frozen automatically\" event travels"
+    );
+
+    // A planner approves the week afterwards: the week is sent, as that person's change.
+    crate::planning::weekly_schedule::approve_weekly_schedule(
+        &db,
+        1,
+        week_ref(site, "2026-05-11", Some(schedule.row_version)),
+    )
+    .await
+    .expect("approved after the fact");
+    assert!(
+        scalar(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM sync_capture_journal j JOIN weekly_schedules w
+                   ON w.entity_sync_id = j.entity_sync_id
+                 WHERE j.entity_type = 'weekly_schedules' AND w.id = {}",
+                schedule.id
+            )
+        )
+        .await
+            > 0,
+        "the approval sends the week"
+    );
+}
+
 #[tokio::test]
 async fn a_released_slot_returns_the_job_to_the_backlog_and_finished_work_closes_its_commitment() {
     let db = setup_db().await;

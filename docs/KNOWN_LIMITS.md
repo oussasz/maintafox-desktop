@@ -193,6 +193,7 @@ Each figure says which one it shows, and its list link applies the same rule.
 | Certification and skill validity are judged on the PC's local calendar day (no site time zone). | Data | After pilot |
 | A site with a single person holding the planning-confirm right cannot unfreeze a week (four-eyes rule). | UX | Accepted |
 | Week boundaries and the automatic freeze use local time; the freeze runs only while a PC is open and catches up afterwards. | Data | Accepted |
+| The automatic freeze of a week is made by each PC itself and its week row is not sent (nobody signs it, and the sync server takes a freeze time only from the person who froze the week). The row reaches the server with the next change a person signs on it. A week the server already held before its automatic freeze (approved or edited by a person first) keeps that freeze on each PC only: a later publish or approval of it is refused by the server (`author_not_signer` on `frozen_by_sync_id`) until the server accepts a freeze made by no one. | Data | Open (server rule decision) |
 | A week that spans a change of the site's weekend rule lasts 6–13 days. | Data | Accepted |
 | Crews without a planning site (no organisation unit able to own work above them) appear on no weekly schedule; a banner lists them. | Data | Release (setup) |
 | The suggested-technician skill score on backlog cards is a simple skill-code match. | UX | After pilot |

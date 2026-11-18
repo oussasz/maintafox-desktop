@@ -610,6 +610,12 @@ async fn freeze_core(
             .await?;
         }
     }
+    // The automatic freeze of the week's own row stays on this PC ([`auto_freeze_week`]): its
+    // `frozen_at` is a claim the sync server only takes from the person who froze it.
+    let automatic = actor_id.is_none();
+    if automatic {
+        crate::sync::capture::begin_suppression(db).await?;
+    }
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE weekly_schedules SET status = 'frozen', frozen_at = ?, frozen_by_id = ?, \
@@ -625,6 +631,9 @@ async fn freeze_core(
         ],
     ))
     .await?;
+    if automatic {
+        crate::sync::capture::end_suppression(db).await?;
+    }
     record_event(
         db,
         schedule.id,
@@ -983,9 +992,20 @@ async fn auto_freeze_site(db: &DatabaseConnection, site: i64, now: DateTime<Utc>
 }
 
 /// Freezes one due week if it was never frozen.
+///
+/// Nobody signs an automatic freeze, and the sync server takes a week's `frozen_at` only from the
+/// person named in `frozen_by` who signed it (a `weekly_schedules` change setting it unsigned is
+/// refused `author_not_signer`). So the week's own row, when this freeze creates it and when it
+/// freezes it, stays on this PC: every PC freezes the same week itself at the same due time, from
+/// the same rule. Its baseline, the frozen commitments and the "frozen automatically" event travel
+/// as before (they record no claim of a person). The week's row reaches the server with the next
+/// change a person signs on it here (an approval of the week frozen without approval, a publish,
+/// an unfreeze request), which carries the freeze as it stands here.
 async fn auto_freeze_week(db: &DatabaseConnection, week: &SiteWeek) -> AppResult<bool> {
     let tx = db.begin().await?;
+    crate::sync::capture::begin_suppression(&tx).await?;
     let schedule = ensure_schedule(&tx, week).await?;
+    crate::sync::capture::end_suppression(&tx).await?;
     if schedule.baseline_no != 0 || !matches!(schedule.status.as_str(), STATUS_DRAFT | STATUS_APPROVED) {
         tx.rollback().await?;
         return Ok(false);
