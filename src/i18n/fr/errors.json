@@ -138,6 +138,7 @@
     "GATE_FIN_REFERENCE_VALUE_INACTIVE": "Cette valeur n'existe pas ou n'est plus active dans les données de référence. Choisissez une valeur active.",
     "GATE_FIN_SETTLEMENT_NOT_PENDING": "Seule une imputation en attente peut être relancée.",
     "GATE_FIN_SETTLEMENT_CHANGED": "L'imputation a été modifiée entre-temps : rechargez la liste.",
+    "GATE_FIN_LATE_COSTS_WAIT_FOR_SYNC": "Les coûts tardifs seront imputables quand ce poste aura terminé sa synchronisation : attendez la fin de la synchronisation, puis réessayez.",
     "GATE_FIN_REVERSAL_NO_OPEN_PERIOD": "Réouverture impossible : toutes les périodes budgétaires de l'exercice de l'imputation et de l'exercice en cours sont clôturées. Rouvrez une période pour annuler l'imputation de cet OT.",
     "GATE_FIN_ESTIMATE_NEGATIVE": "Les montants estimés doivent être positifs ou nuls.",
     "GATE_FIN_ESTIMATE_LOCKED": "L'estimation d'un OT clôturé ou annulé ne peut plus être modifiée.",

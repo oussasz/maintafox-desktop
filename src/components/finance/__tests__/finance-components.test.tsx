@@ -38,6 +38,7 @@ const svc = vi.hoisted(() => ({
   listWoSettlements: vi.fn(),
   retryWoSettlement: vi.fn(),
   postLateWoCosts: vi.fn(),
+  countLateWoCosts: vi.fn(),
   getBudgetCockpit: vi.fn(),
   getBudgetCockpitDrilldown: vi.fn(),
   listBudgetPeriods: vi.fn(),
@@ -482,6 +483,33 @@ describe("SettlementWorklist", () => {
     fireEvent.click(screen.getByRole("button", { name: "Settle late costs" }));
     await waitFor(() => expect(svc.postLateWoCosts).toHaveBeenCalled());
     await waitFor(() => expect(onChanged).toHaveBeenCalled());
+  });
+
+  it("shows how many settled work orders have costs waiting for the catch-up", async () => {
+    perms.granted = new Set([P.FIN_POST]);
+    svc.listWoSettlements.mockResolvedValue([settlement()]);
+    svc.countLateWoCosts.mockResolvedValue(3);
+    render(
+      <MemoryRouter>
+        <SettlementWorklist fiscalYear={2026} />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByTestId("settlement-late-waiting")).toHaveTextContent(
+      "3 settled work orders have costs waiting to be settled.",
+    );
+  });
+
+  it("shows nothing waiting when every settled cost is booked", async () => {
+    svc.listWoSettlements.mockResolvedValue([settlement()]);
+    svc.countLateWoCosts.mockResolvedValue(0);
+    render(
+      <MemoryRouter>
+        <SettlementWorklist fiscalYear={2026} />
+      </MemoryRouter>,
+    );
+    await screen.findByText("No cost centre for this work order.");
+    await waitFor(() => expect(svc.countLateWoCosts).toHaveBeenCalled());
+    expect(screen.queryByTestId("settlement-late-waiting")).not.toBeInTheDocument();
   });
 });
 

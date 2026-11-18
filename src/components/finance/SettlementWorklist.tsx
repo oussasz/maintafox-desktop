@@ -2,8 +2,9 @@
  * Settlement worklist: every closed OT and what happened to its cost — posted to a cost centre
  * and month, pending with the reason and what to fix, or reversed by a reopen. Finance retries a
  * pending settlement once the cause is fixed; nothing is posted silently or guessed. Late costs
- * (a settled OT whose cost changes later) are booked automatically; "Settle late costs"
- * catches up those brought by a sync.
+ * (a settled OT whose cost changes later) are booked at once when the document is entered on
+ * this PC; those brought by a sync wait for "Settle late costs" (booked in the user's name), and
+ * the worklist shows how many settled OTs have such costs waiting.
  */
 import type { ColumnDef } from "@tanstack/react-table";
 import { RefreshCcw, Receipt } from "lucide-react";
@@ -31,6 +32,7 @@ import { usePermissions } from "@/hooks/use-permissions";
 import {
   type WoCostSettlement,
   listWoSettlements,
+  countLateWoCosts,
   postLateWoCosts,
   retryWoSettlement,
 } from "@/services/finance-cost-service";
@@ -62,6 +64,16 @@ export function SettlementWorklist({
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [catchingUp, setCatchingUp] = useState(false);
+  /** Settled OTs whose cost differs from what is booked (counted by the engine). */
+  const [lateWaiting, setLateWaiting] = useState<number | null>(null);
+
+  const loadLateWaiting = useCallback(async () => {
+    try {
+      setLateWaiting(await countLateWoCosts());
+    } catch {
+      setLateWaiting(null);
+    }
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -84,7 +96,8 @@ export function SettlementWorklist({
   // biome-ignore lint/correctness/useExhaustiveDependencies: reloadToken forces a refresh
   useEffect(() => {
     void load();
-  }, [load, reloadToken]);
+    void loadLateWaiting();
+  }, [load, loadLateWaiting, reloadToken]);
 
   const retry = useCallback(
     async (s: WoCostSettlement) => {
@@ -131,8 +144,9 @@ export function SettlementWorklist({
       // The IPC layer already toasts the translated failure (describeAppError).
     } finally {
       setCatchingUp(false);
+      void loadLateWaiting();
     }
-  }, [t, load, onChanged]);
+  }, [t, load, loadLateWaiting, onChanged]);
 
   const canPost = can(P.FIN_POST);
   const columns = useMemo<ColumnDef<WoCostSettlement>[]>(
@@ -300,6 +314,11 @@ export function SettlementWorklist({
           </details>
         </div>
         <div className="flex items-center gap-2">
+          {lateWaiting ? (
+            <span className="text-xs text-text-secondary" data-testid="settlement-late-waiting">
+              {t("settlements.lateWaiting", { count: lateWaiting })}
+            </span>
+          ) : null}
           {canPost ? (
             <Button
               size="sm"

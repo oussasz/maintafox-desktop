@@ -17,7 +17,9 @@
 //!   consumed something without a currency is a visible pending settlement; S17 the fiscal-year
 //!   start month is validated and locked once postings exist; S18 a sync pass books no late cost
 //!   by itself (a PC joining the plant pushed hundreds of them, in nobody's name): Finance's
-//!   catch-up books it, in the name of the person who runs it.
+//!   catch-up books it, in the name of the person who runs it; S19 the catch-up waits until this PC
+//!   has synchronised since it started and applied what it received, and the worklist counts the
+//!   settled OTs whose costs wait for it.
 
 use chrono::{Datelike, Local};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
@@ -1726,4 +1728,87 @@ async fn s18_a_sync_pass_books_no_late_cost_by_itself() {
         .await,
         1
     );
+}
+
+/// Adds a received row to this PC's inbox, in `status` (`pending`: not applied yet; `deferred`:
+/// waiting for a parent).
+async fn inbox_row(db: &DatabaseConnection, entity_type: &str, sync_id: &str, status: &str) {
+    exec(
+        db,
+        "INSERT INTO sync_inbox (server_batch_id, checkpoint_token, entity_type, entity_sync_id, operation,
+                                 row_version, payload_json, payload_hash, apply_status)
+         VALUES ('s19-batch', 'c1', ?, ?, 'upsert', 1, '{}', 'h', ?)",
+        vec![entity_type.into(), sync_id.into(), status.into()],
+    )
+    .await;
+}
+
+/// S19 — Finance's catch-up books against the cost this PC holds. It is refused until this PC has
+/// completed a sync since it started and applied what it received (a PC joining the plant holds an
+/// OT's settlement before its labour and parts), and the worklist shows how many settled OTs have
+/// a cost that differs from what is booked, counted by the engine.
+#[tokio::test]
+async fn s19_the_catch_up_waits_for_a_complete_copy_and_the_waiting_costs_are_counted() {
+    let db = setup().await;
+    seed_plant(&db, Some(CC_CODE)).await;
+    let wo_id = wo_in_progress(&db).await;
+    add_costs(&db, wo_id).await;
+    complete_and_close(&db, wo_id).await;
+    assert_eq!(
+        settlement::work_orders_with_late_costs(&db).await.expect("count"),
+        0,
+        "everything booked"
+    );
+    offline_issue(&db, wo_id).await;
+    assert_eq!(
+        settlement::work_orders_with_late_costs(&db).await.expect("count"),
+        1,
+        "the issue received after the close waits for the catch-up"
+    );
+    let refused = |r: crate::errors::AppResult<()>| {
+        format!("{:?}", r.expect_err("refused")).contains(settlement::LATE_COSTS_WAIT_FOR_SYNC)
+    };
+
+    // No sync completed since this PC started.
+    assert!(refused(
+        settlement::ensure_complete_copy_for_late_costs(&db, false).await
+    ));
+    // Synced, but a received row is not applied yet.
+    inbox_row(&db, "teams", "s19-pending", "pending").await;
+    assert!(refused(
+        settlement::ensure_complete_copy_for_late_costs(&db, true).await
+    ));
+    exec(
+        &db,
+        "UPDATE sync_inbox SET apply_status = 'applied' WHERE entity_sync_id = 's19-pending'",
+        vec![],
+    )
+    .await;
+    // A row of another kind waiting for its parent does not hold Finance back; a cost document does.
+    inbox_row(&db, "teams", "s19-team-waits", "deferred").await;
+    settlement::ensure_complete_copy_for_late_costs(&db, true)
+        .await
+        .expect("nothing of an OT's cost is waiting");
+    inbox_row(&db, "inventory_transactions", "s19-issue-waits", "deferred").await;
+    assert!(refused(
+        settlement::ensure_complete_copy_for_late_costs(&db, true).await
+    ));
+    exec(
+        &db,
+        "DELETE FROM sync_inbox WHERE entity_sync_id = 's19-issue-waits'",
+        vec![],
+    )
+    .await;
+
+    // Ready: the catch-up books it in the Finance user's name, nothing waits any more.
+    settlement::ensure_complete_copy_for_late_costs(&db, true)
+        .await
+        .expect("ready");
+    assert_eq!(
+        settlement::post_all_late_costs(&db, admin_id(&db).await)
+            .await
+            .expect("catch-up"),
+        1
+    );
+    assert_eq!(settlement::work_orders_with_late_costs(&db).await.expect("count"), 0);
 }

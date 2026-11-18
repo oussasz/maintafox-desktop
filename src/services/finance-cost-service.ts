@@ -204,9 +204,17 @@ export function retryWoSettlement(settlementId: number): Promise<WoCostSettlemen
   return invokeParsed("retry_wo_settlement", { settlementId }, SettlementSchema);
 }
 
-/** Books late costs on settled OTs (catch-up after a sync); returns the number of OTs updated. */
+/**
+ * Books late costs on settled OTs in the current user's name (catch-up: a sync books nothing by
+ * itself); returns the number of OTs updated. Refused until this PC has finished synchronising.
+ */
 export function postLateWoCosts(): Promise<number> {
   return invokeParsed("post_late_wo_costs", {}, z.number());
+}
+
+/** Settled OTs whose cost now differs from what is booked (what the catch-up would book). */
+export function countLateWoCosts(): Promise<number> {
+  return invokeParsed("count_late_wo_costs", {}, z.number());
 }
 
 // ── Budget cockpit ──────────────────────────────────────────────────────────────────────

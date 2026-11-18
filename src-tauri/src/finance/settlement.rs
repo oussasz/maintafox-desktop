@@ -761,19 +761,90 @@ fn settlement_rows(breakdown: &WoCostBreakdown) -> [(&'static str, Option<&'stat
 /// holds). A delta that cannot be placed yet (no approved version in the currency, or no open month
 /// this fiscal year) is left for the next run. Returns the amount booked.
 pub async fn post_late_costs<C: ConnectionTrait>(db: &C, wo_id: i64, actor_id: i64) -> AppResult<f64> {
-    let Some(active) = active_settlement(db, wo_id).await? else {
+    let Some(due) = late_cost_due(db, wo_id).await? else {
         return Ok(0.0);
     };
-    let Some(cost_center_id) = active.cost_center_id.filter(|_| active.status == "posted") else {
-        return Ok(0.0);
-    };
-    // A settlement synced from another device can arrive before its actuals: until every original
-    // row is here, "booked" would read too low and the delta would double-count. Wait for them.
-    if !settlement_actuals_complete(db, &active).await? {
+    if due.deltas.is_empty() {
         return Ok(0.0);
     }
     let currency = crate::inventory::fx::tenant_currency(db).await?;
     let fiscal_start = fiscal::fiscal_start_month(db).await?;
+    let (year, month) = posting_period(None, fiscal_start);
+    let Some((version_id, version_currency)) = posting_budget_version(db, year).await? else {
+        return Ok(0.0);
+    };
+    if version_currency != currency {
+        return Ok(0.0);
+    }
+    let Some(period) = periods::first_open_month_from(db, year, month).await? else {
+        return Ok(0.0);
+    };
+    let mut total = 0.0;
+    for delta in &due.deltas {
+        let lane_part = delta.lane.map(|l| format!(":{l}")).unwrap_or_default();
+        let cents = (delta.amount * 100.0).round() as i64;
+        let source_id = format!(
+            "{}late:{}{lane_part}:{}:{cents}",
+            due.prefix,
+            delta.bucket,
+            delta.rank + 1
+        );
+        insert_actual(
+            db,
+            SETTLEMENT_LATE_SOURCE_TYPE,
+            &source_id,
+            version_id,
+            due.cost_center_id,
+            period,
+            delta.bucket,
+            delta.lane,
+            delta.amount,
+            &currency,
+            wo_id,
+            due.breakdown.equipment_id,
+            Some(actor_id),
+        )
+        .await?;
+        total += delta.amount;
+    }
+    if total.abs() >= 0.005 {
+        write_back_wo_costs(db, &due.breakdown, true).await?;
+    }
+    Ok(round_money(total))
+}
+
+/// One bucket (and labour lane) of a settled OT whose current cost differs from what is booked.
+struct LateCostDelta {
+    bucket: &'static str,
+    lane: Option<&'static str>,
+    amount: f64,
+    /// Late costs already booked on this bucket (the next one takes `rank + 1`).
+    rank: i64,
+}
+
+/// What a settled OT would book as late costs now ([`post_late_costs`]), read without writing.
+struct LateCostDue {
+    cost_center_id: i64,
+    breakdown: WoCostBreakdown,
+    /// `<settlement sync id>:`, the prefix of every source id booked on the settlement.
+    prefix: String,
+    deltas: Vec<LateCostDelta>,
+}
+
+/// The late costs of OT `wo_id` not booked yet: its cost recomputed now, bucket by bucket, against
+/// everything booked on its posted settlement. `None` when it has no posted settlement, or one whose
+/// original actuals are not all here yet (synced from another device before them: "booked" would
+/// read too low and the delta would double-count).
+async fn late_cost_due<C: ConnectionTrait>(db: &C, wo_id: i64) -> AppResult<Option<LateCostDue>> {
+    let Some(active) = active_settlement(db, wo_id).await? else {
+        return Ok(None);
+    };
+    let Some(cost_center_id) = active.cost_center_id.filter(|_| active.status == "posted") else {
+        return Ok(None);
+    };
+    if !settlement_actuals_complete(db, &active).await? {
+        return Ok(None);
+    }
     let breakdown = compute_wo_cost_breakdown(db, wo_id).await?;
     let prefix = format!("{}:", active.entity_sync_id);
     let rows = db
@@ -802,60 +873,99 @@ pub async fn post_late_costs<C: ConnectionTrait>(db: &C, wo_id: i64, actor_id: i
             (decode(&r, "amount")?, decode(&r, "deltas")?),
         );
     }
-
-    let mut placement: Option<(i64, i64)> = None;
-    let mut total = 0.0;
+    let mut deltas = Vec::new();
     for (bucket, lane, amount) in settlement_rows(&breakdown) {
         let (already, rank) = booked
             .get(&(bucket.to_string(), lane.map(str::to_string)))
             .copied()
             .unwrap_or((0.0, 0));
         let delta = round_money(amount - already);
-        if delta.abs() < 0.005 {
-            continue;
+        if delta.abs() >= 0.005 {
+            deltas.push(LateCostDelta {
+                bucket,
+                lane,
+                amount: delta,
+                rank,
+            });
         }
-        let (version_id, period) = match placement {
-            Some(p) => p,
-            None => {
-                let (year, month) = posting_period(None, fiscal_start);
-                let Some((version_id, version_currency)) = posting_budget_version(db, year).await? else {
-                    return Ok(0.0);
-                };
-                if version_currency != currency {
-                    return Ok(0.0);
-                }
-                let Some(period) = periods::first_open_month_from(db, year, month).await? else {
-                    return Ok(0.0);
-                };
-                placement = Some((version_id, period));
-                (version_id, period)
-            }
-        };
-        let lane_part = lane.map(|l| format!(":{l}")).unwrap_or_default();
-        let cents = (delta * 100.0).round() as i64;
-        let source_id = format!("{prefix}late:{bucket}{lane_part}:{}:{cents}", rank + 1);
-        insert_actual(
-            db,
-            SETTLEMENT_LATE_SOURCE_TYPE,
-            &source_id,
-            version_id,
-            cost_center_id,
-            period,
-            bucket,
-            lane,
-            delta,
-            &currency,
-            wo_id,
-            breakdown.equipment_id,
-            Some(actor_id),
-        )
+    }
+    Ok(Some(LateCostDue {
+        cost_center_id,
+        breakdown,
+        prefix,
+        deltas,
+    }))
+}
+
+/// Settled OTs whose cost now differs from what is booked on their settlement: what Finance's
+/// catch-up ([`post_all_late_costs`]) would book. Shown next to the catch-up in the settlement
+/// worklist: a sync books nothing by itself, so cost documents received from other PCs wait here.
+pub async fn work_orders_with_late_costs<C: ConnectionTrait>(db: &C) -> AppResult<i64> {
+    let rows = db
+        .query_all(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT DISTINCT work_order_id FROM wo_cost_settlements WHERE status = 'posted'".to_string(),
+        ))
         .await?;
-        total += delta;
+    let mut waiting = 0;
+    for r in rows {
+        let wo_id: i64 = decode(&r, "work_order_id")?;
+        if late_cost_due(db, wo_id)
+            .await?
+            .is_some_and(|due| !due.deltas.is_empty())
+        {
+            waiting += 1;
+        }
     }
-    if total.abs() >= 0.005 {
-        write_back_wo_costs(db, &breakdown, true).await?;
+    Ok(waiting)
+}
+
+/// Synchronised types an OT's cost or its booking is made of (`wo_costing`, the settlement).
+pub const LATE_COST_SOURCE_TYPES: &[&str] = &[
+    "work_orders",
+    "work_order_interveners",
+    "inventory_transactions",
+    "stock_reservations",
+    "goods_receipt_lines",
+    "purchase_order_lines",
+    "wo_cost_settlements",
+    "budget_actuals",
+];
+
+/// Code of the refusal of Finance's catch-up while this PC's copy may be incomplete.
+pub const LATE_COSTS_WAIT_FOR_SYNC: &str = "GATE_FIN_LATE_COSTS_WAIT_FOR_SYNC";
+
+/// Finance's catch-up books against the cost this PC holds: a PC that has not completed a sync
+/// since it started (`synced_since_start`, `planning::scheduler::shared_actions_allowed`), or whose
+/// received rows are still waiting to be applied, may hold only part of an OT's documents (a PC
+/// joining the plant receives a settlement in one pass and its labour and parts in later ones), and
+/// would book a wrong difference in the user's name. Refused until then.
+pub async fn ensure_complete_copy_for_late_costs<C: ConnectionTrait>(
+    db: &C,
+    synced_since_start: bool,
+) -> AppResult<()> {
+    // Rows not tried yet (any type: the pass is not finished), and rows of the documents an OT's
+    // cost is made of that wait for a parent. Other rows waiting for a parent (which can wait for a
+    // long time) do not hold Finance back.
+    let waiting = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT COUNT(*) AS n FROM sync_inbox
+              WHERE apply_status = 'pending'
+                 OR (apply_status = 'deferred' AND entity_type IN (SELECT value FROM json_each(?)))",
+            [serde_json::to_string(LATE_COST_SOURCE_TYPES)?.into()],
+        ))
+        .await?
+        .map(|r| decode::<i64>(&r, "n"))
+        .transpose()?
+        .unwrap_or(0);
+    if !synced_since_start || waiting > 0 {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "{LATE_COSTS_WAIT_FOR_SYNC}: les coûts tardifs seront imputables quand ce poste aura terminé \
+             sa synchronisation (données reçues pas encore toutes appliquées)."
+        )]));
     }
-    Ok(round_money(total))
+    Ok(())
 }
 
 /// True when every original actual of a posted settlement is present locally (one row per

@@ -295,6 +295,8 @@ struct HandleInner {
     commands: mpsc::UnboundedSender<SyncCommand>,
     receiver: Mutex<Option<mpsc::UnboundedReceiver<SyncCommand>>>,
     status: watch::Sender<SyncWorkerStatus>,
+    /// When this handle was made: at application start (`AppState::new`).
+    started_at: chrono::DateTime<chrono::Utc>,
 }
 
 /// Shared handle to the worker (in `AppState`): status for the UI, commands for the worker.
@@ -326,12 +328,20 @@ impl SyncWorkerHandle {
                 commands,
                 receiver: Mutex::new(Some(receiver)),
                 status,
+                started_at: crate::clock::now(),
             }),
         }
     }
 
     pub fn status(&self) -> SyncWorkerStatus {
         self.inner.status.borrow().clone()
+    }
+
+    /// When the application started (this handle is made by `AppState::new`): a sync completed
+    /// after it means this PC's copy was brought up to date in this run
+    /// (`planning::scheduler::shared_actions_allowed`).
+    pub fn started_at(&self) -> chrono::DateTime<chrono::Utc> {
+        self.inner.started_at
     }
 
     pub fn subscribe(&self) -> watch::Receiver<SyncWorkerStatus> {
