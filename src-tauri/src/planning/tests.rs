@@ -4381,6 +4381,105 @@ async fn a_released_slot_returns_the_job_to_the_backlog_and_finished_work_closes
     assert_eq!(commitment_status(&db, third.id).await, "closed");
 }
 
+/// A work order finished by a person's command closes its commitments in that person's name (the
+/// commitment's status author and its change-log row), which travels signed. The planning tick's
+/// automatic close names nobody, and the sync server takes `status_changed_at` only from the
+/// person named in `status_changed_by` who signed it: every PC makes the same close itself, so it
+/// is not sent.
+#[tokio::test]
+async fn a_commitment_closed_by_a_person_names_them_and_the_automatic_close_is_not_sent() {
+    let db = setup_db().await;
+    crate::sync::capture::install_capture(&db).await.expect("capture");
+    let team_id = get_any_team_id(&db).await;
+    let (wo_id, actor_id) = create_planning_wo(&db, "Close author WO").await;
+    let candidate = insert_candidate(&db, "work_order", wo_id, "ready", 100.0).await;
+    let first = scheduling::create_schedule_commitment(
+        &db,
+        actor_id,
+        commit_input(candidate, team_id, "2026-10-08T08:00", "2026-10-08T10:00"),
+    )
+    .await
+    .expect("committed");
+    let (other_wo, _) = create_planning_wo(&db, "Close author WO 2").await;
+    let other_candidate = insert_candidate(&db, "work_order", other_wo, "ready", 100.0).await;
+    let second = scheduling::create_schedule_commitment(
+        &db,
+        actor_id,
+        commit_input(other_candidate, team_id, "2026-10-09T08:00", "2026-10-09T10:00"),
+    )
+    .await
+    .expect("committed");
+    exec_sql(&db, "DELETE FROM sync_capture_journal").await;
+
+    // The person's command that finishes the first work order closes its slot in their name.
+    crate::planning::lifecycle::close_commitments_of_work_order(&db, wo_id, actor_id)
+        .await
+        .expect("closed by the command");
+    assert_eq!(commitment_status(&db, first.id).await, "closed");
+    assert_eq!(
+        scalar(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM schedule_commitments WHERE id = {} AND status_changed_by_id = {actor_id}",
+                first.id
+            )
+        )
+        .await,
+        1,
+        "the commitment names who closed it"
+    );
+    assert_eq!(
+        scalar(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM schedule_change_log WHERE commitment_id = {} \
+                   AND action_type = 'close_commitment' AND actor_id = {actor_id}",
+                first.id
+            )
+        )
+        .await,
+        1,
+        "its history names who closed it"
+    );
+    assert!(
+        scalar(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM sync_capture_journal j JOIN schedule_commitments c \
+                   ON c.entity_sync_id = j.entity_sync_id \
+                 WHERE j.entity_type = 'schedule_commitments' AND c.id = {}",
+                first.id
+            )
+        )
+        .await
+            > 0,
+        "the person's close is sent"
+    );
+
+    // The second work order is finished elsewhere: the planning tick closes its slot, unsent.
+    exec_sql(
+        &db,
+        &format!("UPDATE work_orders SET mechanically_completed_at = '2026-10-09T10:00:00Z' WHERE id = {other_wo}"),
+    )
+    .await;
+    exec_sql(&db, "DELETE FROM sync_capture_journal").await;
+    let closed = crate::planning::lifecycle::close_finished_commitments(&db)
+        .await
+        .expect("tick");
+    assert!(closed >= 1);
+    assert_eq!(commitment_status(&db, second.id).await, "closed");
+    assert_eq!(
+        scalar(
+            &db,
+            "SELECT COUNT(*) FROM sync_capture_journal \
+              WHERE entity_type IN ('schedule_commitments', 'schedule_change_log')"
+        )
+        .await,
+        0,
+        "an automatic close is not sent: nobody signs it"
+    );
+}
+
 #[tokio::test]
 async fn break_in_reasons_are_the_plants_own_list() {
     let db = setup_db().await;

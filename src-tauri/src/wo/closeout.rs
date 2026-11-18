@@ -1827,7 +1827,7 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
     crate::finance::settlement::settle_closed_work_order(&txn, input.wo_id, input.actor_id).await?;
 
     // Its schedule commitments are closed with it (`planning::lifecycle`).
-    crate::planning::lifecycle::close_commitments_of_work_order(&txn, input.wo_id).await?;
+    crate::planning::lifecycle::close_commitments_of_work_order(&txn, input.wo_id, input.actor_id).await?;
     // D13: the stock still reserved for it is released with the close, each release audited.
     crate::inventory::reservations::release_for_closed_wo(
         &txn,
