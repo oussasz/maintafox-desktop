@@ -491,6 +491,7 @@ describe("SettlementWorklist", () => {
     svc.getLateWoCostSummary.mockResolvedValue({
       work_orders_to_book: 3,
       work_orders_waiting_for_sync: 2,
+      untied_waiting_documents: 0,
     });
     render(
       <MemoryRouter>
@@ -510,6 +511,7 @@ describe("SettlementWorklist", () => {
     svc.getLateWoCostSummary.mockResolvedValue({
       work_orders_to_book: 0,
       work_orders_waiting_for_sync: 0,
+      untied_waiting_documents: 0,
     });
     render(
       <MemoryRouter>
@@ -520,6 +522,26 @@ describe("SettlementWorklist", () => {
     await waitFor(() => expect(svc.getLateWoCostSummary).toHaveBeenCalled());
     expect(screen.queryByTestId("settlement-late-waiting")).not.toBeInTheDocument();
     expect(screen.queryByTestId("settlement-late-held")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("settlement-late-blocked")).not.toBeInTheDocument();
+  });
+
+  it("says the catch-up waits for the sync instead of a count it would refuse", async () => {
+    perms.granted = new Set([P.FIN_POST]);
+    svc.listWoSettlements.mockResolvedValue([settlement()]);
+    svc.getLateWoCostSummary.mockResolvedValue({
+      work_orders_to_book: 3,
+      work_orders_waiting_for_sync: 0,
+      untied_waiting_documents: 2,
+    });
+    render(
+      <MemoryRouter>
+        <SettlementWorklist fiscalYear={2026} />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByTestId("settlement-late-blocked")).toHaveTextContent(
+      "Sync in progress: 2 received documents are still waiting",
+    );
+    expect(screen.queryByTestId("settlement-late-waiting")).not.toBeInTheDocument();
   });
 });
 

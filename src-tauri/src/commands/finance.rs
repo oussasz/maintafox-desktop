@@ -716,10 +716,11 @@ pub async fn get_late_wo_cost_summary(
 pub async fn post_late_wo_costs(state: State<'_, AppState>) -> AppResult<i64> {
     let user = require_session!(state);
     require_fin_post(&state, user.user_id).await?;
-    let synced_since_start =
-        crate::planning::scheduler::shared_actions_allowed(&state.sync_worker.status(), state.sync_worker.started_at());
-    let waits = crate::finance::settlement::ensure_complete_copy_for_late_costs(&state.db, synced_since_start).await?;
+    let synced_since_start = state.sync_worker.synced_since_start();
+    // Judged and booked in one transaction: no received row is applied between the check and the
+    // booking.
     let txn = sea_orm::TransactionTrait::begin(&state.db).await?;
+    let waits = crate::finance::settlement::ensure_complete_copy_for_late_costs(&txn, synced_since_start).await?;
     let touched =
         crate::finance::settlement::post_all_late_costs_except(&txn, i64::from(user.user_id), &waits.work_orders)
             .await?;

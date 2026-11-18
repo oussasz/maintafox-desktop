@@ -315,7 +315,14 @@ export function SettlementWorklist({
           </details>
         </div>
         <div className="flex items-center gap-2">
-          {lateSummary?.work_orders_to_book ? (
+          {lateSummary?.untied_waiting_documents ? (
+            <span className="text-xs text-text-secondary" data-testid="settlement-late-blocked">
+              {t("settlements.lateBlockedForSync", {
+                count: lateSummary.untied_waiting_documents,
+              })}
+            </span>
+          ) : null}
+          {lateSummary?.work_orders_to_book && !lateSummary.untied_waiting_documents ? (
             <span className="text-xs text-text-secondary" data-testid="settlement-late-waiting">
               {t("settlements.lateWaiting", { count: lateSummary.work_orders_to_book })}
             </span>

@@ -344,6 +344,13 @@ impl SyncWorkerHandle {
         self.inner.started_at
     }
 
+    /// Whether this PC may act on shared data on its own now: it does not synchronise, or it
+    /// completed a synchronisation since the application started
+    /// (`planning::scheduler::shared_actions_allowed`).
+    pub fn synced_since_start(&self) -> bool {
+        crate::planning::scheduler::shared_actions_allowed(&self.status(), self.started_at())
+    }
+
     pub fn subscribe(&self) -> watch::Receiver<SyncWorkerStatus> {
         self.inner.status.subscribe()
     }

@@ -217,6 +217,8 @@ const LateWoCostSummarySchema = z.object({
   work_orders_to_book: z.number(),
   /** Settled OTs left for later: a cost document received from another PC still waits here. */
   work_orders_waiting_for_sync: z.number(),
+  /** Received cost documents not yet tied to an OT here: the catch-up is refused until applied. */
+  untied_waiting_documents: z.number(),
 });
 export type LateWoCostSummary = z.infer<typeof LateWoCostSummarySchema>;
 

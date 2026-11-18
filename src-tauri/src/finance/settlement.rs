@@ -906,6 +906,9 @@ pub struct LateCostSummary {
     /// Settled OTs the catch-up leaves for later: a cost document of theirs received from another
     /// PC is still waiting here for a row it depends on.
     pub work_orders_waiting_for_sync: i64,
+    /// Received cost documents waiting for the row that ties them to an OT, which is nowhere on this
+    /// PC yet: the catch-up is refused until they are applied (they may belong to any settled OT).
+    pub untied_waiting_documents: i64,
 }
 
 /// [`LateCostSummary`] of this PC.
@@ -919,6 +922,7 @@ pub async fn late_cost_summary<C: ConnectionTrait>(db: &C) -> AppResult<LateCost
         .await?;
     let mut summary = LateCostSummary {
         work_orders_waiting_for_sync: i64::try_from(waits.work_orders.len()).unwrap_or(i64::MAX),
+        untied_waiting_documents: waits.untied_rows,
         ..LateCostSummary::default()
     };
     for r in rows {
@@ -962,10 +966,12 @@ pub struct LateCostWaits {
     pub untied_rows: i64,
 }
 
-/// Sync id → local OT of every row a settled OT's cost is read through (`wo_costing`): the OT
-/// itself, its posted settlement, its reservations, and the purchase order lines whose demand is
-/// the OT or one of those reservations. A received row names its direct parent by sync id.
-async fn settled_cost_ties<C: ConnectionTrait>(db: &C) -> AppResult<HashMap<String, i64>> {
+/// Sync id → local settled OTs of every row a settled OT's cost is read through (`wo_costing`):
+/// the OT itself, its posted settlement, its reservations, and the purchase order lines whose
+/// demand or source reservation is the OT or one of those reservations. A received row names its
+/// direct parent by sync id. One row may tie to several OTs (a purchase line for OT A sourced from
+/// a reservation of OT B): it holds back each of them.
+async fn settled_cost_ties<C: ConnectionTrait>(db: &C) -> AppResult<HashMap<String, std::collections::BTreeSet<i64>>> {
     let types = crate::finance::wo_costing::WO_SOURCE_TYPES_SQL;
     let rows = db
         .query_all(Statement::from_string(
@@ -998,12 +1004,12 @@ async fn settled_cost_ties<C: ConnectionTrait>(db: &C) -> AppResult<HashMap<Stri
             ),
         ))
         .await?;
-    let mut ties = HashMap::new();
+    let mut ties: HashMap<String, std::collections::BTreeSet<i64>> = HashMap::new();
     for r in rows {
         let sync_id: Option<String> = decode(&r, "sync_id")?;
         let wo_id: Option<i64> = decode(&r, "wo_id")?;
         if let (Some(sync_id), Some(wo_id)) = (sync_id, wo_id) {
-            ties.insert(sync_id, wo_id);
+            ties.entry(sync_id).or_default().insert(wo_id);
         }
     }
     Ok(ties)
@@ -1019,28 +1025,102 @@ fn payload_texts(value: &serde_json::Value, out: &mut Vec<String>) {
     }
 }
 
-/// Whether `sync_id` names a row of `table` here.
-async fn held_here<C: ConnectionTrait>(db: &C, table: &str, sync_id: &str) -> AppResult<bool> {
-    Ok(db
-        .query_one(Statement::from_sql_and_values(
+/// Sync ids of the rows of `table` held here.
+async fn sync_ids_here<C: ConnectionTrait>(db: &C, table: &str) -> AppResult<std::collections::HashSet<String>> {
+    let rows = db
+        .query_all(Statement::from_string(
             DbBackend::Sqlite,
-            format!("SELECT 1 AS present FROM {table} WHERE entity_sync_id = ?"),
-            [sync_id.into()],
+            format!("SELECT entity_sync_id FROM {table} WHERE entity_sync_id IS NOT NULL"),
         ))
-        .await?
-        .is_some())
+        .await?;
+    rows.iter().map(|r| decode::<String>(r, "entity_sync_id")).collect()
+}
+
+/// What ties a waiting cost document to the OTs: the settled OTs it holds back, or `None` when the
+/// row it is tied through is nowhere on this PC (not held, not waiting in the inbox either).
+struct TieContext<'a> {
+    ties: &'a HashMap<String, std::collections::BTreeSet<i64>>,
+    /// Deferred received cost rows by sync id: `(entity_type, payload)`.
+    deferred: &'a HashMap<String, (String, serde_json::Value)>,
+    po_lines_here: &'a std::collections::HashSet<String>,
+    reservations_here: &'a std::collections::HashSet<String>,
+}
+
+/// Links of a received cost row to the rows that tie it to an OT: `(payload key, kind, required)`,
+/// kind `true` for a purchase order line, `false` for a reservation.
+fn tie_links(entity_type: &str, payload: &serde_json::Value) -> Vec<(&'static str, bool, bool)> {
+    match entity_type {
+        "goods_receipt_lines" => vec![("po_line_sync_id", true, true)],
+        "inventory_transactions" => vec![("reservation_sync_id", false, false)],
+        "purchase_order_lines" => {
+            let mut links = vec![("source_reservation_sync_id", false, false)];
+            if payload.get("demand_source_type").and_then(serde_json::Value::as_str) == Some("RESERVATION") {
+                links.push(("demand_source_sync_id", false, false));
+            }
+            links
+        }
+        _ => Vec::new(),
+    }
+}
+
+impl TieContext<'_> {
+    /// The settled OTs the received row `sync_id` of `entity_type` holds back; `None` when its link
+    /// to an OT is nowhere on this PC. A link waiting in the inbox itself (behind a parent in
+    /// conflict, or one deleted elsewhere) is followed through its own payload.
+    fn work_orders_of(
+        &self,
+        sync_id: &str,
+        entity_type: &str,
+        payload: &serde_json::Value,
+        depth: u8,
+    ) -> Option<std::collections::BTreeSet<i64>> {
+        let mut texts = vec![sync_id.to_string()];
+        payload_texts(payload, &mut texts);
+        let mut work_orders: std::collections::BTreeSet<i64> = texts
+            .iter()
+            .filter_map(|t| self.ties.get(t))
+            .flatten()
+            .copied()
+            .collect();
+        for (key, is_po_line, required) in tie_links(entity_type, payload) {
+            let Some(link) = payload.get(key).and_then(serde_json::Value::as_str) else {
+                if required {
+                    return None;
+                }
+                continue;
+            };
+            let here = if is_po_line {
+                self.po_lines_here.contains(link)
+            } else {
+                self.reservations_here.contains(link)
+            };
+            if here {
+                // Held here: its OT, when settled, is among the ties above.
+                continue;
+            }
+            match self.deferred.get(link) {
+                Some((link_type, link_payload)) if depth < 4 => {
+                    work_orders.extend(self.work_orders_of(link, link_type, link_payload, depth + 1)?);
+                }
+                _ => return None,
+            }
+        }
+        Some(work_orders)
+    }
 }
 
 /// The received cost documents ([`LATE_COST_SOURCE_TYPES`]) still waiting here for a row they
-/// depend on (`deferred`): the settled OTs they belong to, and how many cannot be tied to an OT.
-/// A waiting row that names no settled OT and whose link to an OT is here belongs to an OT not
-/// settled here: the catch-up does not book that OT anyway.
+/// depend on (`deferred`): the settled OTs they belong to, and how many cannot be tied to an OT
+/// because the row that ties them is nowhere on this PC. A waiting row that names no settled OT and
+/// whose link to an OT is here (or waits here too) belongs to an OT not settled here: the catch-up
+/// does not book that OT anyway.
 pub async fn late_cost_waits<C: ConnectionTrait>(db: &C) -> AppResult<LateCostWaits> {
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT entity_type, entity_sync_id, payload_json FROM sync_inbox
-              WHERE apply_status = 'deferred' AND entity_type IN (SELECT value FROM json_each(?))",
+              WHERE apply_status = 'deferred' AND entity_type IN (SELECT value FROM json_each(?))
+              ORDER BY id",
             [serde_json::to_string(LATE_COST_SOURCE_TYPES)?.into()],
         ))
         .await?;
@@ -1048,45 +1128,30 @@ pub async fn late_cost_waits<C: ConnectionTrait>(db: &C) -> AppResult<LateCostWa
     if rows.is_empty() {
         return Ok(waits);
     }
-    let ties = settled_cost_ties(db).await?;
-    for r in rows {
-        let entity_type: String = decode(&r, "entity_type")?;
-        let entity_sync_id: String = decode(&r, "entity_sync_id")?;
-        let payload_json: Option<String> = decode(&r, "payload_json")?;
+    let mut deferred: HashMap<String, (String, serde_json::Value)> = HashMap::new();
+    for r in &rows {
+        let entity_type: String = decode(r, "entity_type")?;
+        let entity_sync_id: String = decode(r, "entity_sync_id")?;
+        let payload_json: Option<String> = decode(r, "payload_json")?;
         let payload: serde_json::Value = payload_json
             .as_deref()
             .and_then(|p| serde_json::from_str(p).ok())
             .unwrap_or(serde_json::Value::Null);
-        let mut texts = vec![entity_sync_id];
-        payload_texts(&payload, &mut texts);
-        let tied: Vec<i64> = texts.iter().filter_map(|t| ties.get(t).copied()).collect();
-        if !tied.is_empty() {
-            waits.work_orders.extend(tied);
-            continue;
-        }
-        // The link to the OT is the row this one waits for: it cannot be tied here.
-        let link = |key: &str| payload.get(key).and_then(serde_json::Value::as_str).map(str::to_string);
-        let untied = match entity_type.as_str() {
-            "goods_receipt_lines" => match link("po_line_sync_id") {
-                Some(line) => !held_here(db, "purchase_order_lines", &line).await?,
-                None => true,
-            },
-            "inventory_transactions" => match link("reservation_sync_id") {
-                Some(reservation) => !held_here(db, "stock_reservations", &reservation).await?,
-                None => false,
-            },
-            "purchase_order_lines" => {
-                let by_reservation =
-                    payload.get("demand_source_type").and_then(serde_json::Value::as_str) == Some("RESERVATION");
-                match (by_reservation, link("demand_source_sync_id")) {
-                    (true, Some(reservation)) => !held_here(db, "stock_reservations", &reservation).await?,
-                    _ => false,
-                }
-            }
-            _ => false,
-        };
-        if untied {
-            waits.untied_rows += 1;
+        deferred.insert(entity_sync_id, (entity_type, payload));
+    }
+    let ties = settled_cost_ties(db).await?;
+    let po_lines_here = sync_ids_here(db, "purchase_order_lines").await?;
+    let reservations_here = sync_ids_here(db, "stock_reservations").await?;
+    let context = TieContext {
+        ties: &ties,
+        deferred: &deferred,
+        po_lines_here: &po_lines_here,
+        reservations_here: &reservations_here,
+    };
+    for (sync_id, (entity_type, payload)) in &deferred {
+        match context.work_orders_of(sync_id, entity_type, payload, 0) {
+            Some(work_orders) => waits.work_orders.extend(work_orders),
+            None => waits.untied_rows += 1,
         }
     }
     Ok(waits)
@@ -1163,10 +1228,36 @@ async fn settlement_actuals_complete<C: ConnectionTrait>(db: &C, settlement: &Wo
 /// Inventory hook, after a receipt, issue or return is committed: books the late costs of the OTs
 /// it touched. Best effort: the stock movement is already committed and Finance's catch-up
 /// (`post_all_late_costs`) books anything left, so a failure is logged, never returned.
-pub async fn post_late_costs_best_effort(db: &sea_orm::DatabaseConnection, wo_ids: &[i64], actor_id: i64) {
+///
+/// Like the catch-up, it books only on a complete copy ([`ensure_complete_copy_for_late_costs`]):
+/// nothing before this PC has synchronised since it started (`synced_since_start`) or while
+/// received rows wait, and never an OT whose received cost documents still wait here. What it
+/// leaves is booked by Finance's catch-up later.
+pub async fn post_late_costs_best_effort(
+    db: &sea_orm::DatabaseConnection,
+    wo_ids: &[i64],
+    actor_id: i64,
+    synced_since_start: bool,
+) {
     for &wo_id in wo_ids {
         let result = async {
             let txn = sea_orm::TransactionTrait::begin(db).await?;
+            let waits = match ensure_complete_copy_for_late_costs(&txn, synced_since_start).await {
+                Ok(waits) => waits,
+                Err(AppError::ValidationFailed(_)) => {
+                    tracing::info!(
+                        target: "maintafox",
+                        "late cost of work order {wo_id} left for Finance's catch-up: this PC's copy is not complete yet"
+                    );
+                    txn.rollback().await?;
+                    return Ok(());
+                }
+                Err(e) => return Err(e),
+            };
+            if waits.work_orders.contains(&wo_id) {
+                txn.rollback().await?;
+                return Ok(());
+            }
             post_late_costs(&txn, wo_id, actor_id).await?;
             txn.commit().await?;
             Ok::<(), AppError>(())
