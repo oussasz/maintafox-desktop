@@ -359,6 +359,8 @@
     "lateHint": "Settles, in your name, the cost difference of already settled work orders. Costs received from another PC by sync are settled only by this button, once this PC has synchronised.",
     "lateWaiting_one": "{{count}} settled work order has costs waiting to be settled.",
     "lateWaiting_other": "{{count}} settled work orders have costs waiting to be settled.",
+    "lateHeldForSync_one": "{{count}} work order is still waiting for documents received from another PC: settled once they are applied.",
+    "lateHeldForSync_other": "{{count}} work orders are still waiting for documents received from another PC: settled once they are applied.",
     "lateBooked_one": "Late costs settled on {{count}} work order.",
     "lateBooked_other": "Late costs settled on {{count}} work orders.",
     "lateNone": "No late cost to settle.",

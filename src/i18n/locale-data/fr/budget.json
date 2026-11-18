@@ -359,6 +359,8 @@
     "lateHint": "Impute en votre nom la différence de coût des OT déjà imputés. Les coûts reçus d'un autre poste par synchronisation ne sont imputés que par ce bouton, une fois ce poste synchronisé.",
     "lateWaiting_one": "{{count}} OT imputé a des coûts en attente d'imputation.",
     "lateWaiting_other": "{{count}} OT imputés ont des coûts en attente d'imputation.",
+    "lateHeldForSync_one": "{{count}} OT attend encore des documents reçus d'un autre poste : imputé une fois ces documents appliqués.",
+    "lateHeldForSync_other": "{{count}} OT attendent encore des documents reçus d'un autre poste : imputés une fois ces documents appliqués.",
     "lateBooked_one": "Coûts tardifs imputés sur {{count}} OT.",
     "lateBooked_other": "Coûts tardifs imputés sur {{count}} OT.",
     "lateNone": "Aucun coût tardif à imputer.",

@@ -38,7 +38,7 @@ const svc = vi.hoisted(() => ({
   listWoSettlements: vi.fn(),
   retryWoSettlement: vi.fn(),
   postLateWoCosts: vi.fn(),
-  countLateWoCosts: vi.fn(),
+  getLateWoCostSummary: vi.fn(),
   getBudgetCockpit: vi.fn(),
   getBudgetCockpitDrilldown: vi.fn(),
   listBudgetPeriods: vi.fn(),
@@ -488,7 +488,10 @@ describe("SettlementWorklist", () => {
   it("shows how many settled work orders have costs waiting for the catch-up", async () => {
     perms.granted = new Set([P.FIN_POST]);
     svc.listWoSettlements.mockResolvedValue([settlement()]);
-    svc.countLateWoCosts.mockResolvedValue(3);
+    svc.getLateWoCostSummary.mockResolvedValue({
+      work_orders_to_book: 3,
+      work_orders_waiting_for_sync: 2,
+    });
     render(
       <MemoryRouter>
         <SettlementWorklist fiscalYear={2026} />
@@ -497,19 +500,26 @@ describe("SettlementWorklist", () => {
     expect(await screen.findByTestId("settlement-late-waiting")).toHaveTextContent(
       "3 settled work orders have costs waiting to be settled.",
     );
+    expect(screen.getByTestId("settlement-late-held")).toHaveTextContent(
+      "2 work orders are still waiting for documents received from another PC",
+    );
   });
 
   it("shows nothing waiting when every settled cost is booked", async () => {
     svc.listWoSettlements.mockResolvedValue([settlement()]);
-    svc.countLateWoCosts.mockResolvedValue(0);
+    svc.getLateWoCostSummary.mockResolvedValue({
+      work_orders_to_book: 0,
+      work_orders_waiting_for_sync: 0,
+    });
     render(
       <MemoryRouter>
         <SettlementWorklist fiscalYear={2026} />
       </MemoryRouter>,
     );
     await screen.findByText("No cost centre for this work order.");
-    await waitFor(() => expect(svc.countLateWoCosts).toHaveBeenCalled());
+    await waitFor(() => expect(svc.getLateWoCostSummary).toHaveBeenCalled());
     expect(screen.queryByTestId("settlement-late-waiting")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("settlement-late-held")).not.toBeInTheDocument();
   });
 });
 

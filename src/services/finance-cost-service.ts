@@ -212,9 +212,17 @@ export function postLateWoCosts(): Promise<number> {
   return invokeParsed("post_late_wo_costs", {}, z.number());
 }
 
-/** Settled OTs whose cost now differs from what is booked (what the catch-up would book). */
-export function countLateWoCosts(): Promise<number> {
-  return invokeParsed("count_late_wo_costs", {}, z.number());
+const LateWoCostSummarySchema = z.object({
+  /** Settled OTs whose cost differs from what is booked and that the catch-up books. */
+  work_orders_to_book: z.number(),
+  /** Settled OTs left for later: a cost document received from another PC still waits here. */
+  work_orders_waiting_for_sync: z.number(),
+});
+export type LateWoCostSummary = z.infer<typeof LateWoCostSummarySchema>;
+
+/** What the late-cost catch-up would do now (counted by the engine). */
+export function getLateWoCostSummary(): Promise<LateWoCostSummary> {
+  return invokeParsed("get_late_wo_cost_summary", {}, LateWoCostSummarySchema);
 }
 
 // ── Budget cockpit ──────────────────────────────────────────────────────────────────────

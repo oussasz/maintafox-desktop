@@ -897,27 +897,43 @@ async fn late_cost_due<C: ConnectionTrait>(db: &C, wo_id: i64) -> AppResult<Opti
     }))
 }
 
-/// Settled OTs whose cost now differs from what is booked on their settlement: what Finance's
-/// catch-up ([`post_all_late_costs`]) would book. Shown next to the catch-up in the settlement
-/// worklist: a sync books nothing by itself, so cost documents received from other PCs wait here.
-pub async fn work_orders_with_late_costs<C: ConnectionTrait>(db: &C) -> AppResult<i64> {
+/// What Finance's catch-up would do now, shown next to it in the settlement worklist (a sync books
+/// nothing by itself, so cost documents received from other PCs wait for it).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LateCostSummary {
+    /// Settled OTs whose cost now differs from what is booked and that the catch-up books.
+    pub work_orders_to_book: i64,
+    /// Settled OTs the catch-up leaves for later: a cost document of theirs received from another
+    /// PC is still waiting here for a row it depends on.
+    pub work_orders_waiting_for_sync: i64,
+}
+
+/// [`LateCostSummary`] of this PC.
+pub async fn late_cost_summary<C: ConnectionTrait>(db: &C) -> AppResult<LateCostSummary> {
+    let waits = late_cost_waits(db).await?;
     let rows = db
         .query_all(Statement::from_string(
             DbBackend::Sqlite,
             "SELECT DISTINCT work_order_id FROM wo_cost_settlements WHERE status = 'posted'".to_string(),
         ))
         .await?;
-    let mut waiting = 0;
+    let mut summary = LateCostSummary {
+        work_orders_waiting_for_sync: i64::try_from(waits.work_orders.len()).unwrap_or(i64::MAX),
+        ..LateCostSummary::default()
+    };
     for r in rows {
         let wo_id: i64 = decode(&r, "work_order_id")?;
+        if waits.work_orders.contains(&wo_id) {
+            continue;
+        }
         if late_cost_due(db, wo_id)
             .await?
             .is_some_and(|due| !due.deltas.is_empty())
         {
-            waiting += 1;
+            summary.work_orders_to_book += 1;
         }
     }
-    Ok(waiting)
+    Ok(summary)
 }
 
 /// Synchronised types an OT's cost or its booking is made of (`wo_costing`, the settlement).
@@ -935,49 +951,179 @@ pub const LATE_COST_SOURCE_TYPES: &[&str] = &[
 /// Code of the refusal of Finance's catch-up while this PC's copy may be incomplete.
 pub const LATE_COSTS_WAIT_FOR_SYNC: &str = "GATE_FIN_LATE_COSTS_WAIT_FOR_SYNC";
 
-/// Finance's catch-up books against the cost this PC holds: a PC that has not completed a sync
-/// since it started (`synced_since_start`, `planning::scheduler::shared_actions_allowed`), or whose
-/// received rows are still waiting to be applied, may hold only part of an OT's documents (a PC
-/// joining the plant receives a settlement in one pass and its labour and parts in later ones), and
-/// would book a wrong difference in the user's name. Refused until then.
+/// Received cost documents still waiting here for a row they depend on ([`late_cost_waits`]).
+#[derive(Debug, Clone, Default)]
+pub struct LateCostWaits {
+    /// Settled OTs (local ids) one of them belongs to: left out of the catch-up for now.
+    pub work_orders: std::collections::BTreeSet<i64>,
+    /// Waiting rows that cannot be tied to an OT here (the receipt line's purchase order line, the
+    /// movement's reservation or the purchase line's reservation has not arrived): they may belong
+    /// to any settled OT, so the catch-up waits for them.
+    pub untied_rows: i64,
+}
+
+/// Sync id → local OT of every row a settled OT's cost is read through (`wo_costing`): the OT
+/// itself, its posted settlement, its reservations, and the purchase order lines whose demand is
+/// the OT or one of those reservations. A received row names its direct parent by sync id.
+async fn settled_cost_ties<C: ConnectionTrait>(db: &C) -> AppResult<HashMap<String, i64>> {
+    let types = crate::finance::wo_costing::WO_SOURCE_TYPES_SQL;
+    let rows = db
+        .query_all(Statement::from_string(
+            DbBackend::Sqlite,
+            format!(
+                "WITH settled(wo_id) AS (
+                     SELECT DISTINCT work_order_id FROM wo_cost_settlements WHERE status = 'posted'
+                 ),
+                 reservations(sync_id, local_id, wo_id) AS (
+                     SELECT r.entity_sync_id, r.id, r.source_id FROM stock_reservations r
+                      WHERE r.source_type IN ({types}) AND r.source_id IN (SELECT wo_id FROM settled)
+                 )
+                 SELECT w.entity_sync_id AS sync_id, w.id AS wo_id FROM work_orders w
+                  WHERE w.id IN (SELECT wo_id FROM settled)
+                 UNION ALL
+                 SELECT s.entity_sync_id, s.work_order_id FROM wo_cost_settlements s WHERE s.status = 'posted'
+                 UNION ALL
+                 SELECT sync_id, wo_id FROM reservations
+                 UNION ALL
+                 SELECT pol.entity_sync_id, pol.demand_source_id FROM purchase_order_lines pol
+                  WHERE pol.demand_source_type IN ('WORK_ORDER', 'WORK_ORDER_PART')
+                    AND pol.demand_source_id IN (SELECT wo_id FROM settled)
+                 UNION ALL
+                 SELECT pol.entity_sync_id, res.wo_id FROM purchase_order_lines pol
+                   JOIN reservations res ON res.local_id = pol.demand_source_id
+                  WHERE pol.demand_source_type = 'RESERVATION'
+                 UNION ALL
+                 SELECT pol.entity_sync_id, res.wo_id FROM purchase_order_lines pol
+                   JOIN reservations res ON res.local_id = pol.source_reservation_id"
+            ),
+        ))
+        .await?;
+    let mut ties = HashMap::new();
+    for r in rows {
+        let sync_id: Option<String> = decode(&r, "sync_id")?;
+        let wo_id: Option<i64> = decode(&r, "wo_id")?;
+        if let (Some(sync_id), Some(wo_id)) = (sync_id, wo_id) {
+            ties.insert(sync_id, wo_id);
+        }
+    }
+    Ok(ties)
+}
+
+/// Every text value of a received payload (the sync ids it names among them).
+fn payload_texts(value: &serde_json::Value, out: &mut Vec<String>) {
+    match value {
+        serde_json::Value::String(s) => out.push(s.clone()),
+        serde_json::Value::Array(items) => items.iter().for_each(|v| payload_texts(v, out)),
+        serde_json::Value::Object(map) => map.values().for_each(|v| payload_texts(v, out)),
+        _ => {}
+    }
+}
+
+/// Whether `sync_id` names a row of `table` here.
+async fn held_here<C: ConnectionTrait>(db: &C, table: &str, sync_id: &str) -> AppResult<bool> {
+    Ok(db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!("SELECT 1 AS present FROM {table} WHERE entity_sync_id = ?"),
+            [sync_id.into()],
+        ))
+        .await?
+        .is_some())
+}
+
+/// The received cost documents ([`LATE_COST_SOURCE_TYPES`]) still waiting here for a row they
+/// depend on (`deferred`): the settled OTs they belong to, and how many cannot be tied to an OT.
+/// A waiting row that names no settled OT and whose link to an OT is here belongs to an OT not
+/// settled here: the catch-up does not book that OT anyway.
+pub async fn late_cost_waits<C: ConnectionTrait>(db: &C) -> AppResult<LateCostWaits> {
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT entity_type, entity_sync_id, payload_json FROM sync_inbox
+              WHERE apply_status = 'deferred' AND entity_type IN (SELECT value FROM json_each(?))",
+            [serde_json::to_string(LATE_COST_SOURCE_TYPES)?.into()],
+        ))
+        .await?;
+    let mut waits = LateCostWaits::default();
+    if rows.is_empty() {
+        return Ok(waits);
+    }
+    let ties = settled_cost_ties(db).await?;
+    for r in rows {
+        let entity_type: String = decode(&r, "entity_type")?;
+        let entity_sync_id: String = decode(&r, "entity_sync_id")?;
+        let payload_json: Option<String> = decode(&r, "payload_json")?;
+        let payload: serde_json::Value = payload_json
+            .as_deref()
+            .and_then(|p| serde_json::from_str(p).ok())
+            .unwrap_or(serde_json::Value::Null);
+        let mut texts = vec![entity_sync_id];
+        payload_texts(&payload, &mut texts);
+        let tied: Vec<i64> = texts.iter().filter_map(|t| ties.get(t).copied()).collect();
+        if !tied.is_empty() {
+            waits.work_orders.extend(tied);
+            continue;
+        }
+        // The link to the OT is the row this one waits for: it cannot be tied here.
+        let link = |key: &str| payload.get(key).and_then(serde_json::Value::as_str).map(str::to_string);
+        let untied = match entity_type.as_str() {
+            "goods_receipt_lines" => match link("po_line_sync_id") {
+                Some(line) => !held_here(db, "purchase_order_lines", &line).await?,
+                None => true,
+            },
+            "inventory_transactions" => match link("reservation_sync_id") {
+                Some(reservation) => !held_here(db, "stock_reservations", &reservation).await?,
+                None => false,
+            },
+            "purchase_order_lines" => {
+                let by_reservation =
+                    payload.get("demand_source_type").and_then(serde_json::Value::as_str) == Some("RESERVATION");
+                match (by_reservation, link("demand_source_sync_id")) {
+                    (true, Some(reservation)) => !held_here(db, "stock_reservations", &reservation).await?,
+                    _ => false,
+                }
+            }
+            _ => false,
+        };
+        if untied {
+            waits.untied_rows += 1;
+        }
+    }
+    Ok(waits)
+}
+
+/// Finance's catch-up books against the cost this PC holds. It is refused while this PC has not
+/// completed a sync since it started (`synced_since_start`, `planning::scheduler::shared_actions_allowed`),
+/// while received rows are not applied yet (a PC joining the plant receives a settlement in one pass
+/// and its labour and parts in later ones), and while a received cost document waits for a row
+/// that ties it to an OT (it may belong to any settled OT). Otherwise it returns the settled OTs
+/// whose received cost documents still wait here: the catch-up leaves those OTs for later
+/// ([`post_all_late_costs_except`]) and books the others.
 pub async fn ensure_complete_copy_for_late_costs<C: ConnectionTrait>(
     db: &C,
     synced_since_start: bool,
-) -> AppResult<()> {
-    // Rows not tried yet (any type: the pass is not finished), and the documents of a settled OT's
-    // cost waiting for a parent: a row of a cost type that is the OT itself or names the OT or its
-    // settlement by sync id. Other rows waiting for a parent (possibly one that never arrives) do
-    // not hold Finance back.
-    let waiting = db
-        .query_one(Statement::from_sql_and_values(
+) -> AppResult<LateCostWaits> {
+    let pending = db
+        .query_one(Statement::from_string(
             DbBackend::Sqlite,
-            "WITH settled(sync_id) AS (
-                 SELECT w.entity_sync_id FROM wo_cost_settlements s JOIN work_orders w ON w.id = s.work_order_id
-                  WHERE s.status = 'posted' AND w.entity_sync_id IS NOT NULL
-                 UNION
-                 SELECT s.entity_sync_id FROM wo_cost_settlements s WHERE s.status = 'posted'
-             )
-             SELECT COUNT(*) AS n FROM sync_inbox i
-              WHERE i.apply_status = 'pending'
-                 OR (i.apply_status = 'deferred'
-                     AND i.entity_type IN (SELECT value FROM json_each(?))
-                     AND (i.entity_sync_id IN (SELECT sync_id FROM settled)
-                          OR (json_valid(i.payload_json)
-                              AND EXISTS (SELECT 1 FROM json_tree(i.payload_json) t
-                                           WHERE t.type = 'text' AND t.atom IN (SELECT sync_id FROM settled)))))",
-            [serde_json::to_string(LATE_COST_SOURCE_TYPES)?.into()],
+            "SELECT COUNT(*) AS n FROM sync_inbox WHERE apply_status = 'pending'".to_string(),
         ))
         .await?
         .map(|r| decode::<i64>(&r, "n"))
         .transpose()?
         .unwrap_or(0);
-    if !synced_since_start || waiting > 0 {
+    let waits = if synced_since_start && pending == 0 {
+        late_cost_waits(db).await?
+    } else {
+        LateCostWaits::default()
+    };
+    if !synced_since_start || pending > 0 || waits.untied_rows > 0 {
         return Err(AppError::ValidationFailed(vec![format!(
             "{LATE_COSTS_WAIT_FOR_SYNC}: les coûts tardifs seront imputables quand ce poste aura terminé \
              sa synchronisation (données reçues pas encore toutes appliquées)."
         )]));
     }
-    Ok(())
+    Ok(waits)
 }
 
 /// True when every original actual of a posted settlement is present locally (one row per
@@ -1084,6 +1230,16 @@ pub async fn late_cost_total<C: ConnectionTrait>(db: &C, settlement_sync_id: &st
 /// Catch-up for every settled OT: books the late costs not yet booked (see [`post_late_costs`]).
 /// Returns the number of OTs updated.
 pub async fn post_all_late_costs<C: ConnectionTrait>(db: &C, actor_id: i64) -> AppResult<i64> {
+    post_all_late_costs_except(db, actor_id, &std::collections::BTreeSet::new()).await
+}
+
+/// [`post_all_late_costs`] leaving out the OTs in `waiting` (their received cost documents still
+/// wait here, [`LateCostWaits`]): booked by a later catch-up once those documents are applied.
+pub async fn post_all_late_costs_except<C: ConnectionTrait>(
+    db: &C,
+    actor_id: i64,
+    waiting: &std::collections::BTreeSet<i64>,
+) -> AppResult<i64> {
     let rows = db
         .query_all(Statement::from_string(
             DbBackend::Sqlite,
@@ -1093,6 +1249,9 @@ pub async fn post_all_late_costs<C: ConnectionTrait>(db: &C, actor_id: i64) -> A
     let mut touched = 0;
     for r in rows {
         let wo_id: i64 = decode(&r, "work_order_id")?;
+        if waiting.contains(&wo_id) {
+            continue;
+        }
         if post_late_costs(db, wo_id, actor_id).await?.abs() >= 0.005 {
             touched += 1;
         }

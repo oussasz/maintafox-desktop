@@ -32,7 +32,8 @@ import { usePermissions } from "@/hooks/use-permissions";
 import {
   type WoCostSettlement,
   listWoSettlements,
-  countLateWoCosts,
+  type LateWoCostSummary,
+  getLateWoCostSummary,
   postLateWoCosts,
   retryWoSettlement,
 } from "@/services/finance-cost-service";
@@ -64,14 +65,14 @@ export function SettlementWorklist({
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [catchingUp, setCatchingUp] = useState(false);
-  /** Settled OTs whose cost differs from what is booked (counted by the engine). */
-  const [lateWaiting, setLateWaiting] = useState<number | null>(null);
+  /** What the late-cost catch-up would book now and leave for later (counted by the engine). */
+  const [lateSummary, setLateSummary] = useState<LateWoCostSummary | null>(null);
 
   const loadLateWaiting = useCallback(async () => {
     try {
-      setLateWaiting(await countLateWoCosts());
+      setLateSummary(await getLateWoCostSummary());
     } catch {
-      setLateWaiting(null);
+      setLateSummary(null);
     }
   }, []);
 
@@ -314,9 +315,16 @@ export function SettlementWorklist({
           </details>
         </div>
         <div className="flex items-center gap-2">
-          {lateWaiting ? (
+          {lateSummary?.work_orders_to_book ? (
             <span className="text-xs text-text-secondary" data-testid="settlement-late-waiting">
-              {t("settlements.lateWaiting", { count: lateWaiting })}
+              {t("settlements.lateWaiting", { count: lateSummary.work_orders_to_book })}
+            </span>
+          ) : null}
+          {lateSummary?.work_orders_waiting_for_sync ? (
+            <span className="text-xs text-text-secondary" data-testid="settlement-late-held">
+              {t("settlements.lateHeldForSync", {
+                count: lateSummary.work_orders_waiting_for_sync,
+              })}
             </span>
           ) : null}
           {canPost ? (

@@ -691,10 +691,12 @@ pub async fn retry_wo_settlement(
     Ok(settlement)
 }
 
-/// Settled OTs whose cost now differs from what is booked: what Finance's catch-up would book
-/// (`finance::settlement::work_orders_with_late_costs`), shown next to it in the settlement worklist.
+/// What Finance's catch-up would do now (`finance::settlement::late_cost_summary`): the settled OTs
+/// it books and those it leaves for later, shown next to it in the settlement worklist.
 #[tauri::command]
-pub async fn count_late_wo_costs(state: State<'_, AppState>) -> AppResult<i64> {
+pub async fn get_late_wo_cost_summary(
+    state: State<'_, AppState>,
+) -> AppResult<crate::finance::settlement::LateCostSummary> {
     let user = require_session!(state);
     require_permission!(
         state,
@@ -702,22 +704,25 @@ pub async fn count_late_wo_costs(state: State<'_, AppState>) -> AppResult<i64> {
         crate::rbac::permissions::FIN_VIEW,
         PermissionScope::Global
     );
-    crate::finance::settlement::work_orders_with_late_costs(&state.db).await
+    crate::finance::settlement::late_cost_summary(&state.db).await
 }
 
 /// Finance catch-up: books the cost documents that reached settled OTs after their settlement
 /// (for instance receipts or movements brought by a sync), in the name of the user who runs it.
 /// Refused until this PC has completed a sync since it started and applied what it received
-/// (`finance::settlement::ensure_complete_copy_for_late_costs`). Returns the number of OTs updated.
+/// (`finance::settlement::ensure_complete_copy_for_late_costs`); the OTs whose received cost
+/// documents still wait here are left for a later catch-up. Returns the number of OTs updated.
 #[tauri::command]
 pub async fn post_late_wo_costs(state: State<'_, AppState>) -> AppResult<i64> {
     let user = require_session!(state);
     require_fin_post(&state, user.user_id).await?;
     let synced_since_start =
         crate::planning::scheduler::shared_actions_allowed(&state.sync_worker.status(), state.sync_worker.started_at());
-    crate::finance::settlement::ensure_complete_copy_for_late_costs(&state.db, synced_since_start).await?;
+    let waits = crate::finance::settlement::ensure_complete_copy_for_late_costs(&state.db, synced_since_start).await?;
     let txn = sea_orm::TransactionTrait::begin(&state.db).await?;
-    let touched = crate::finance::settlement::post_all_late_costs(&txn, i64::from(user.user_id)).await?;
+    let touched =
+        crate::finance::settlement::post_all_late_costs_except(&txn, i64::from(user.user_id), &waits.work_orders)
+            .await?;
     txn.commit().await?;
     Ok(touched)
 }

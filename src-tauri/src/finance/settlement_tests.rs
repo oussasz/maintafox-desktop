@@ -1761,8 +1761,10 @@ async fn inbox_row_with(
 
 /// S19 — Finance's catch-up books against the cost this PC holds. It is refused until this PC has
 /// completed a sync since it started and applied what it received (a PC joining the plant holds an
-/// OT's settlement before its labour and parts), and the worklist shows how many settled OTs have
-/// a cost that differs from what is booked, counted by the engine.
+/// OT's settlement before its labour and parts), and while a received cost document waits for the
+/// row that ties it to an OT. A waiting document tied to a settled OT (it names the OT, its
+/// reservation or its purchase order line) leaves only that OT for later; one of an OT not settled
+/// here holds nothing back. The worklist counts both, from the engine.
 #[tokio::test]
 async fn s19_the_catch_up_waits_for_a_complete_copy_and_the_waiting_costs_are_counted() {
     let db = setup().await;
@@ -1770,18 +1772,19 @@ async fn s19_the_catch_up_waits_for_a_complete_copy_and_the_waiting_costs_are_co
     let wo_id = wo_in_progress(&db).await;
     add_costs(&db, wo_id).await;
     complete_and_close(&db, wo_id).await;
+    let summary = |db: DatabaseConnection| async move { settlement::late_cost_summary(&db).await.expect("summary") };
     assert_eq!(
-        settlement::work_orders_with_late_costs(&db).await.expect("count"),
-        0,
+        summary(db.clone()).await,
+        settlement::LateCostSummary::default(),
         "everything booked"
     );
     offline_issue(&db, wo_id).await;
     assert_eq!(
-        settlement::work_orders_with_late_costs(&db).await.expect("count"),
+        summary(db.clone()).await.work_orders_to_book,
         1,
         "the issue received after the close waits for the catch-up"
     );
-    let refused = |r: crate::errors::AppResult<()>| {
+    let refused = |r: crate::errors::AppResult<settlement::LateCostWaits>| {
         format!("{:?}", r.expect_err("refused")).contains(settlement::LATE_COSTS_WAIT_FOR_SYNC)
     };
 
@@ -1800,58 +1803,125 @@ async fn s19_the_catch_up_waits_for_a_complete_copy_and_the_waiting_costs_are_co
         vec![],
     )
     .await;
-    // A row of another kind waiting for its parent does not hold Finance back, nor does a cost
-    // document of an OT not settled here (its parent may never arrive); one of a settled OT does.
+
+    // Waiting rows of another kind, or of an OT not settled here, hold nothing back.
     inbox_row(&db, "teams", "s19-team-waits", "deferred").await;
     inbox_row_with(
         &db,
         "inventory_transactions",
         "s19-other-issue-waits",
         "deferred",
-        serde_json::json!({ "source_sync_id": "wo-never-received", "quantity": 2 }),
+        serde_json::json!({ "source_type": "WO", "source_sync_id": "wo-never-received", "reservation_sync_id": null, "quantity": 2 }),
     )
     .await;
-    settlement::ensure_complete_copy_for_late_costs(&db, true)
+    let waits = settlement::ensure_complete_copy_for_late_costs(&db, true)
         .await
         .expect("nothing of a settled OT's cost is waiting");
-    let wo_sync: String = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT entity_sync_id FROM work_orders WHERE id = ?",
-            [wo_id.into()],
-        ))
-        .await
-        .expect("query")
-        .expect("work order")
-        .try_get("", "entity_sync_id")
-        .expect("sync id");
+    assert!(waits.work_orders.is_empty());
+
+    // The settled OT's purchase order line and reservation, as their sync ids (the rows a received
+    // receipt line or movement names).
+    exec(
+        &db,
+        "UPDATE purchase_order_lines SET entity_sync_id = 's19-po-line'
+          WHERE demand_source_type = 'WORK_ORDER' AND demand_source_id = ?
+            AND (entity_sync_id IS NULL OR entity_sync_id = '')",
+        vec![wo_id.into()],
+    )
+    .await;
+    exec(
+        &db,
+        "UPDATE stock_reservations SET entity_sync_id = 's19-reservation'
+          WHERE source_id = ? AND (entity_sync_id IS NULL OR entity_sync_id = '')",
+        vec![wo_id.into()],
+    )
+    .await;
+    let text = |sql: &'static str| {
+        let db = db.clone();
+        async move {
+            db.query_one(Statement::from_sql_and_values(DbBackend::Sqlite, sql, [wo_id.into()]))
+                .await
+                .expect("query")
+                .expect("row")
+                .try_get_by_index::<String>(0)
+                .expect("sync id")
+        }
+    };
+    let po_line = text(
+        "SELECT entity_sync_id FROM purchase_order_lines
+          WHERE demand_source_type = 'WORK_ORDER' AND demand_source_id = ? LIMIT 1",
+    )
+    .await;
+    let reservation = text("SELECT entity_sync_id FROM stock_reservations WHERE source_id = ? LIMIT 1").await;
+
+    // A receipt line of the settled OT's purchase order line, waiting for its receipt header, and
+    // a movement tied to the OT only through its reservation: that OT is left for later.
+    inbox_row_with(
+        &db,
+        "goods_receipt_lines",
+        "s19-receipt-line-waits",
+        "deferred",
+        serde_json::json!({ "po_line_sync_id": po_line, "goods_receipt_sync_id": "gr-not-here", "received_qty": 1 }),
+    )
+    .await;
     inbox_row_with(
         &db,
         "inventory_transactions",
-        "s19-issue-waits",
+        "s19-reserved-issue-waits",
         "deferred",
-        serde_json::json!({ "source_sync_id": wo_sync, "quantity": 5 }),
+        serde_json::json!({ "source_type": null, "source_sync_id": null, "reservation_sync_id": reservation, "quantity": 1 }),
+    )
+    .await;
+    let waits = settlement::ensure_complete_copy_for_late_costs(&db, true)
+        .await
+        .expect("tied to one OT");
+    assert_eq!(waits.work_orders.iter().copied().collect::<Vec<_>>(), vec![wo_id]);
+    assert_eq!(
+        summary(db.clone()).await,
+        settlement::LateCostSummary {
+            work_orders_to_book: 0,
+            work_orders_waiting_for_sync: 1,
+        }
+    );
+    let finance = admin_id(&db).await;
+    assert_eq!(
+        settlement::post_all_late_costs_except(&db, finance, &waits.work_orders)
+            .await
+            .expect("catch-up"),
+        0,
+        "the OT waiting for its documents is left for later"
+    );
+
+    // A receipt line whose purchase order line has not arrived cannot be tied to an OT: refused.
+    inbox_row_with(
+        &db,
+        "goods_receipt_lines",
+        "s19-orphan-receipt-line",
+        "deferred",
+        serde_json::json!({ "po_line_sync_id": "po-line-not-here", "goods_receipt_sync_id": "gr-not-here", "received_qty": 1 }),
     )
     .await;
     assert!(refused(
         settlement::ensure_complete_copy_for_late_costs(&db, true).await
     ));
+
+    // The documents are applied: the catch-up books the OT in the Finance user's name.
     exec(
         &db,
-        "DELETE FROM sync_inbox WHERE entity_sync_id = 's19-issue-waits'",
+        "DELETE FROM sync_inbox WHERE entity_sync_id IN
+             ('s19-receipt-line-waits', 's19-reserved-issue-waits', 's19-orphan-receipt-line')",
         vec![],
     )
     .await;
-
-    // Ready: the catch-up books it in the Finance user's name, nothing waits any more.
-    settlement::ensure_complete_copy_for_late_costs(&db, true)
+    let waits = settlement::ensure_complete_copy_for_late_costs(&db, true)
         .await
         .expect("ready");
+    assert!(waits.work_orders.is_empty());
     assert_eq!(
-        settlement::post_all_late_costs(&db, admin_id(&db).await)
+        settlement::post_all_late_costs_except(&db, finance, &waits.work_orders)
             .await
             .expect("catch-up"),
         1
     );
-    assert_eq!(settlement::work_orders_with_late_costs(&db).await.expect("count"), 0);
+    assert_eq!(summary(db.clone()).await, settlement::LateCostSummary::default());
 }
