@@ -411,6 +411,32 @@ async fn stock_at_reorder_point_goes_to_the_inventory_managers_and_clears_when_r
     .is_some());
 }
 
+/// Owner test 2026-11-17: a part with a reorder point and no stock row at all (never received, or
+/// every balance removed) is the most critical case. The check read its "0" as a whole number,
+/// stopped with a decode error, and no critical-stock notice was raised for any part.
+#[tokio::test]
+async fn a_part_with_no_stock_row_at_all_is_critical_and_does_not_stop_the_check() {
+    let db = db().await;
+    user(&db, 52, None).await;
+    grant(&db, 52, &[crate::rbac::permissions::INV_MANAGE]).await;
+    tick(&db).await;
+    exec(
+        &db,
+        &format!(
+            "INSERT INTO articles (id, article_code, article_name, unit_value_id, reorder_point, is_active, entity_sync_id, \
+             created_at, updated_at) VALUES (901, 'ART-901', 'Coupling', 1, 2, 1, 'nt-art-901', {NOW}, {NOW})"
+        ),
+        vec![],
+    )
+    .await;
+    let c = watchers::candidates(&db, "stock_critical", Utc::now(), None, false)
+        .await
+        .expect("a part without stock must not stop the critical-stock check");
+    assert!(c.iter().any(|c| c.record_key.starts_with("nt-art-901")));
+    tick(&db).await;
+    assert_eq!(notifications_of(&db, 52, "stock_critical").await, 1);
+}
+
 #[tokio::test]
 async fn unacknowledged_critical_notification_escalates_to_the_supervisor_then_stops_on_acknowledgement() {
     let db = db().await;
