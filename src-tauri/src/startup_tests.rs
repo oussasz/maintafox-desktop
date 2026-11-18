@@ -98,8 +98,11 @@ mod startup_tests {
             REFERENCE_INTEGRITY,
         ];
 
-        /// Fails when a phase of [`ONE_COMMIT_PHASES`] committed more than once.
+        /// Fails when a phase of [`ONE_COMMIT_PHASES`] committed more than once, or when the commit
+        /// counter counted nothing at all (a counter that stopped working would pass every phase).
         pub fn assert_one_commit_phases(phases: &[Phase]) {
+            let counted: u64 = phases.iter().map(|p| p.commits).sum();
+            assert!(counted > 0, "the commit counter counted no commit in any phase");
             for name in ONE_COMMIT_PHASES {
                 let phase = phases
                     .iter()
