@@ -300,6 +300,11 @@ mod startup_tests {
             types.retain(|t| !refused.contains(t));
             rows = synced_rows(&db).await;
         }
+        // On a site the changes are staged for sending (drained) at every push and sign-out: a
+        // normal start finds the capture journal empty, not holding the whole fill.
+        crate::sync::capture::set_capture_actor(&db, None)
+            .await
+            .expect("capture journal drained");
         db.close().await.expect("close");
         rows
     }
