@@ -149,6 +149,8 @@ pub(crate) async fn login_impl(
 
     // Get existing trust record for this user+device
     let trust = crate::auth::device::get_device_trust(&state.db, user_id, &fingerprint).await?;
+    // A first sign-in on this device registers its trust (with its audit, once the session starts).
+    let mut device_trusted_now = false;
 
     match (&trust, is_online) {
         // First login: device not yet trusted. Requires connectivity.
@@ -158,22 +160,11 @@ pub(crate) async fn login_impl(
                 "La premi\u{00e8}re connexion sur cet appareil n\u{00e9}cessite une connexion r\u{00e9}seau.".into(),
             ));
         }
-        // First login: register trust now (online)
+        // First login (online): the device is trusted once the signing session has started
+        // (below), together with its audit, so a sign-in refused before never leaves a trust
+        // without its audit.
         (None, true) => {
-            crate::auth::device::register_device_trust(&state.db, user_id, &fingerprint, None).await?;
-            crate::audit::emit(
-                &state.db,
-                crate::audit::AuditEvent {
-                    event_type: crate::audit::event_type::DEVICE_TRUST_REGISTERED,
-                    actor_id: Some(user_id),
-                    entity_type: Some("trusted_device"),
-                    entity_id: Some(&fingerprint),
-                    summary: "Device trust registered on first online login",
-                    ..Default::default()
-                },
-            )
-            .await;
-            tracing::info!(username = %username, "login::device_trust_registered");
+            device_trusted_now = true;
         }
         // Known device but revoked: allow online login only
         (Some(t), _) if t.is_revoked => {
@@ -327,6 +318,20 @@ pub(crate) async fn login_impl(
         ));
     }
 
+    // Registered and audited in the person's session (capture actor set above): the audit is sent
+    // as their signed change (the sync server refuses an audit naming someone who did not sign it,
+    // `author_not_signer`). The session itself does not depend on the trust row. A registration
+    // that fails is logged and written at the next sign-in (the device is still untrusted then).
+    if device_trusted_now {
+        match crate::auth::device::register_device_trust(&state.db, user_id, &fingerprint, None).await {
+            Ok(_) => {
+                tracing::info!(username = %username, "login::device_trust_registered");
+                audit_device_trusted(&state.db, user_id, &fingerprint).await;
+            }
+            Err(e) => tracing::error!(error = %e, "login::device_trust_not_registered"),
+        }
+    }
+
     if let Some((reason, summary)) = force_change_reason {
         crate::audit::emit(
             &state.db,
@@ -358,6 +363,23 @@ pub(crate) async fn login_impl(
 
     let info = state.session.read().await.session_info();
     Ok(LoginResponse { session_info: info })
+}
+
+/// Audit of this device trusted for `user_id` at their first sign-in on it. Written once their
+/// signing session has started, so it travels as their signed change.
+pub(crate) async fn audit_device_trusted(db: &sea_orm::DatabaseConnection, user_id: i32, fingerprint: &str) {
+    crate::audit::emit(
+        db,
+        crate::audit::AuditEvent {
+            event_type: crate::audit::event_type::DEVICE_TRUST_REGISTERED,
+            actor_id: Some(user_id),
+            entity_type: Some("trusted_device"),
+            entity_id: Some(fingerprint),
+            summary: "Device trust registered on first online login",
+            ..Default::default()
+        },
+    )
+    .await;
 }
 
 /// Per-user signing at sign-in: the user's key is unlocked (or made) with the password they just
@@ -424,6 +446,20 @@ pub(crate) async fn logout_impl(state: &AppState) -> AppResult<()> {
     // Capture actor before clearing the session
     let actor_id = state.session.read().await.current.as_ref().map(|s| s.user.user_id);
 
+    // Written while the person's session still captures their changes: the sign-out travels as
+    // their signed change (after the session ends it would name someone who did not sign it, which
+    // the sync server refuses, `author_not_signer`).
+    crate::audit::emit(
+        &state.db,
+        crate::audit::AuditEvent {
+            event_type: crate::audit::event_type::LOGOUT,
+            actor_id,
+            summary: "User logged out",
+            ..Default::default()
+        },
+    )
+    .await;
+
     // The user's captured changes are staged as theirs before the session (and their key) ends.
     let actor_cleared = crate::sync::signing::end_signing_session(&state.db).await;
 
@@ -451,17 +487,6 @@ pub(crate) async fn logout_impl(state: &AppState) -> AppResult<()> {
             }
         }
     }
-
-    crate::audit::emit(
-        &state.db,
-        crate::audit::AuditEvent {
-            event_type: crate::audit::event_type::LOGOUT,
-            actor_id,
-            summary: "User logged out",
-            ..Default::default()
-        },
-    )
-    .await;
 
     Ok(())
 }
@@ -891,16 +916,16 @@ pub(crate) async fn set_pin_impl(state: &AppState, payload: SetPinInput) -> AppR
     pin::validate_pin_format(payload.new_pin.trim())?;
     let pin_hash = pin::hash_pin(payload.new_pin.trim())?;
 
-    let now = chrono::Utc::now().to_rfc3339();
+    // The PIN unlocks this PC only (device-local in `sync::row_spec`): the account's `updated_at`
+    // is left as it is, so setting it is not a change of the account to send.
     state
         .db
         .execute(sea_orm::Statement::from_sql_and_values(
             sea_orm::DbBackend::Sqlite,
             r"UPDATE user_accounts
-               SET pin_hash = ?,
-                   updated_at = ?
+               SET pin_hash = ?
                WHERE id = ?",
-            [pin_hash.into(), now.into(), user.user_id.into()],
+            [pin_hash.into(), user.user_id.into()],
         ))
         .await?;
 
@@ -956,16 +981,15 @@ pub(crate) async fn clear_pin_impl(state: &AppState, payload: ClearPinInput) -> 
         return Err(AppError::Auth("Mot de passe incorrect.".into()));
     }
 
-    let now = chrono::Utc::now().to_rfc3339();
+    // Device-local, like setting it (above).
     state
         .db
         .execute(sea_orm::Statement::from_sql_and_values(
             sea_orm::DbBackend::Sqlite,
             r"UPDATE user_accounts
-               SET pin_hash = NULL,
-                   updated_at = ?
+               SET pin_hash = NULL
                WHERE id = ?",
-            [now.into(), user.user_id.into()],
+            [user.user_id.into()],
         ))
         .await?;
 

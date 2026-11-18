@@ -3209,17 +3209,18 @@ async fn unlock_user_account_impl(state: &AppState, admin: &AuthenticatedUser, u
         });
     }
 
-    let now = chrono::Utc::now().to_rfc3339();
     let tx = state.db.begin().await?;
+    // Lock state of this PC (device-local in `sync::row_spec`): the account's `updated_at` is left
+    // as it is, so the unlock is not a change of the account to send (`auth::lockout`). The
+    // administrator's act is recorded in `admin_change_events` below.
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE user_accounts \
          SET failed_login_attempts = 0, \
              locked_until = NULL, \
-             consecutive_lockouts = 0, \
-             updated_at = ? \
+             consecutive_lockouts = 0 \
          WHERE id = ?",
-        [now.into(), user_id.into()],
+        [user_id.into()],
     ))
     .await?;
 

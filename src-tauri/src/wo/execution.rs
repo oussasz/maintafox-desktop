@@ -1463,7 +1463,7 @@ pub async fn complete_wo_mechanically(db: &DatabaseConnection, input: WoMechComp
             id: input.wo_id.to_string(),
         })?;
     // Its schedule commitments are closed with it (`planning::lifecycle`).
-    crate::planning::lifecycle::close_commitments_of_work_order(&txn, input.wo_id).await?;
+    crate::planning::lifecycle::close_commitments_of_work_order(&txn, input.wo_id, input.actor_id).await?;
     txn.commit().await?;
     Ok(wo)
 }

@@ -136,6 +136,7 @@
     "GATE_FIN_REFERENCE_VALUE_INACTIVE": "This value does not exist or is no longer active in the reference data. Choose an active value.",
     "GATE_FIN_SETTLEMENT_NOT_PENDING": "Only a pending settlement can be retried.",
     "GATE_FIN_SETTLEMENT_CHANGED": "The settlement was changed meanwhile: reload the list.",
+    "GATE_FIN_LATE_COSTS_WAIT_FOR_SYNC": "Late costs can be settled once this PC has finished synchronising: wait for the sync to complete, then try again.",
     "GATE_FIN_REVERSAL_NO_OPEN_PERIOD": "Cannot reopen: every budget period of the settlement's fiscal year and of the current one is closed. Reopen a period to reverse this work order's settlement.",
     "GATE_FIN_ESTIMATE_NEGATIVE": "Estimated amounts must be zero or positive.",
     "GATE_FIN_ESTIMATE_LOCKED": "The estimate of a closed or cancelled work order can no longer be changed.",

@@ -356,14 +356,20 @@
     },
     "duplicate": "Plus d'une imputation active pour cet OT : à vérifier.",
     "lateCatchUp": "Imputer les coûts tardifs",
-    "lateHint": "Impute la différence de coût des OT déjà imputés (par exemple après une synchronisation).",
+    "lateHint": "Impute en votre nom la différence de coût des OT déjà imputés. Les coûts reçus d'un autre poste par synchronisation ne sont imputés que par ce bouton, une fois ce poste synchronisé.",
+    "lateWaiting_one": "{{count}} OT imputé a des coûts en attente d'imputation.",
+    "lateWaiting_other": "{{count}} OT imputés ont des coûts en attente d'imputation.",
+    "lateBlockedForSync_one": "{{count}} document reçu attend une autre donnée qui le relie à un OT : l'imputation des coûts tardifs est possible une fois ce document appliqué. Voir le centre de synchronisation.",
+    "lateBlockedForSync_other": "{{count}} documents reçus attendent une autre donnée qui les relie à un OT : l'imputation des coûts tardifs est possible une fois ces documents appliqués. Voir le centre de synchronisation.",
+    "lateHeldForSync_one": "{{count}} OT attend encore des documents reçus d'un autre poste : imputé une fois ces documents appliqués.",
+    "lateHeldForSync_other": "{{count}} OT attendent encore des documents reçus d'un autre poste : imputés une fois ces documents appliqués.",
     "lateBooked_one": "Coûts tardifs imputés sur {{count}} OT.",
     "lateBooked_other": "Coûts tardifs imputés sur {{count}} OT.",
     "lateNone": "Aucun coût tardif à imputer.",
     "howTitle": "Comment fonctionne l'imputation ?",
     "how": {
       "once": "Un OT annulé est aussi imputé s'il a consommé de la main-d'œuvre, des pièces ou des prestations.",
-      "late": "Si le coût d'un OT imputé change ensuite (réception, sortie, retour ou temps saisi après la clôture, même hors ligne), seule la différence est ajoutée.",
+      "late": "Si le coût d'un OT imputé change ensuite (réception, sortie, retour ou temps saisi après la clôture) : saisi sur ce poste, seule la différence est ajoutée aussitôt ; reçu d'un autre poste par synchronisation, la différence attend « Imputer les coûts tardifs ».",
       "pending": "Une imputation en attente indique ce qu'il faut corriger.",
       "reopen": "Rouvrir un OT annule son imputation."
     }

@@ -1785,6 +1785,7 @@ pub(crate) async fn issue_wo_part_to_issue_impl(
         &state.db,
         &[issued.work_order_id],
         i64::from(user.user_id),
+        state.sync_worker.synced_since_start(),
     )
     .await;
     Ok(issued)

@@ -204,9 +204,27 @@ export function retryWoSettlement(settlementId: number): Promise<WoCostSettlemen
   return invokeParsed("retry_wo_settlement", { settlementId }, SettlementSchema);
 }
 
-/** Books late costs on settled OTs (catch-up after a sync); returns the number of OTs updated. */
+/**
+ * Books late costs on settled OTs in the current user's name (catch-up: a sync books nothing by
+ * itself); returns the number of OTs updated. Refused until this PC has finished synchronising.
+ */
 export function postLateWoCosts(): Promise<number> {
   return invokeParsed("post_late_wo_costs", {}, z.number());
+}
+
+const LateWoCostSummarySchema = z.object({
+  /** Settled OTs whose cost differs from what is booked and that the catch-up books. */
+  work_orders_to_book: z.number(),
+  /** Settled OTs left for later: a cost document received from another PC still waits here. */
+  work_orders_waiting_for_sync: z.number(),
+  /** Received cost documents not yet tied to an OT here: the catch-up is refused until applied. */
+  untied_waiting_documents: z.number(),
+});
+export type LateWoCostSummary = z.infer<typeof LateWoCostSummarySchema>;
+
+/** What the late-cost catch-up would do now (counted by the engine). */
+export function getLateWoCostSummary(): Promise<LateWoCostSummary> {
+  return invokeParsed("get_late_wo_cost_summary", {}, LateWoCostSummarySchema);
 }
 
 // ── Budget cockpit ──────────────────────────────────────────────────────────────────────

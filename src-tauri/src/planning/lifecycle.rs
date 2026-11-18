@@ -162,26 +162,39 @@ pub async fn end_commitment(
 
 /// Closes the `committed` commitments matching `filter` (a condition on `schedule_commitments`
 /// columns) and writes one `close_commitment` change-log row each, so the job's history says why
-/// its slot ended. No actor: the work's own end closes it, at the moment the work ended
-/// (`load::finished_at_sql`), so every device records the same closing time.
-async fn close_where(db: &impl ConnectionTrait, filter: &str, values: Vec<sea_orm::Value>) -> AppResult<u64> {
+/// its slot ended. The close is dated at the moment the work ended (`load::finished_at_sql`), so
+/// every device records the same closing time. `actor_id`: the person whose command finished the
+/// work (named as who changed the status and in the change log), `None` for the automatic close.
+async fn close_where(
+    db: &impl ConnectionTrait,
+    filter: &str,
+    values: Vec<sea_orm::Value>,
+    actor_id: Option<i64>,
+) -> AppResult<u64> {
+    let mut log_values: Vec<sea_orm::Value> = vec![actor_id.into()];
+    log_values.extend(values.clone());
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         format!(
-            "INSERT INTO schedule_change_log                 (commitment_id, action_type, actor_id, field_changed, old_value, new_value, reason_code)              SELECT id, 'close_commitment', NULL, 'status', 'committed', 'closed', 'work_finished'                FROM schedule_commitments WHERE status = 'committed' AND {filter}"
+            "INSERT INTO schedule_change_log \
+                 (commitment_id, action_type, actor_id, field_changed, old_value, new_value, reason_code) \
+             SELECT id, 'close_commitment', ?, 'status', 'committed', 'closed', 'work_finished' \
+               FROM schedule_commitments WHERE status = 'committed' AND {filter}"
         ),
-        values.clone(),
+        log_values,
     ))
     .await?;
     let now = now_z();
     let finished_at = super::load::finished_at_sql("schedule_commitments");
-    let mut update_values: Vec<sea_orm::Value> = vec![now.clone().into(), now.into()];
+    let mut update_values: Vec<sea_orm::Value> = vec![now.clone().into(), actor_id.into(), now.into()];
     update_values.extend(values);
     let result = db
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             format!(
-                "UPDATE schedule_commitments SET status = 'closed', status_changed_at = COALESCE({finished_at}, ?),                         row_version = row_version + 1, updated_at = ?                   WHERE status = 'committed' AND {filter}"
+                "UPDATE schedule_commitments SET status = 'closed', status_changed_at = COALESCE({finished_at}, ?), \
+                        status_changed_by_id = ?, row_version = row_version + 1, updated_at = ? \
+                  WHERE status = 'committed' AND {filter}"
             ),
             update_values,
         ))
@@ -192,18 +205,38 @@ async fn close_where(db: &impl ConnectionTrait, filter: &str, values: Vec<sea_or
 /// Closes the commitments whose work is finished (work order completed / closed / cancelled, PM
 /// occurrence completed / cancelled / missed, request converted / closed / declined / archived).
 /// Returns how many were closed.
-pub async fn close_finished_commitments(db: &impl ConnectionTrait) -> AppResult<u64> {
+///
+/// The automatic close (planning tick) names nobody, and the sync server takes a commitment's
+/// `status_changed_at` only from the person named in `status_changed_by` who signed it (refused
+/// `author_not_signer` otherwise). Every PC closes the same commitments itself, at the same time
+/// (the work's own end), so the close is written here with capture suppressed and is not sent; a
+/// work order finished by a person's command closes its commitments in that person's name
+/// ([`close_commitments_of_work_order`]), which travels.
+pub async fn close_finished_commitments(db: &DatabaseConnection) -> AppResult<u64> {
     let active = super::load::active_commitment_sql_as("schedule_commitments");
-    close_where(db, &format!("NOT {active}"), Vec::new()).await
+    let tx = db.begin().await?;
+    // Changes captured before it (a planner's edit not staged yet) are staged first, as they stood:
+    // the automatic close is never sent inside a person's change.
+    crate::sync::capture::drain_capture_journal(&tx).await?;
+    crate::sync::capture::begin_suppression(&tx).await?;
+    let closed = close_where(&tx, &format!("NOT {active}"), Vec::new(), None).await?;
+    crate::sync::capture::end_suppression(&tx).await?;
+    tx.commit().await?;
+    Ok(closed)
 }
 
 /// Closes the commitments of one work order (and of the PM occurrence / request it comes from),
-/// in the transaction that finishes it.
-pub async fn close_commitments_of_work_order(db: &impl ConnectionTrait, wo_id: i64) -> AppResult<u64> {
+/// in the transaction of `actor_id`'s command that finishes it, in their name.
+pub async fn close_commitments_of_work_order(db: &impl ConnectionTrait, wo_id: i64, actor_id: i64) -> AppResult<u64> {
     close_where(
         db,
-        "((source_type = 'work_order' AND source_id = ?)            OR (source_type = 'pm_occurrence' AND source_id IN                   (SELECT id FROM pm_occurrences WHERE linked_work_order_id = ?))            OR (source_type = 'inspection_follow_up' AND source_id IN                   (SELECT id FROM intervention_requests WHERE converted_to_wo_id = ?)))",
+        "((source_type = 'work_order' AND source_id = ?) \
+           OR (source_type = 'pm_occurrence' AND source_id IN \
+                  (SELECT id FROM pm_occurrences WHERE linked_work_order_id = ?)) \
+           OR (source_type = 'inspection_follow_up' AND source_id IN \
+                  (SELECT id FROM intervention_requests WHERE converted_to_wo_id = ?)))",
         vec![wo_id.into(), wo_id.into(), wo_id.into()],
+        Some(actor_id),
     )
     .await
 }

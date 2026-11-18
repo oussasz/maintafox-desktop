@@ -82,6 +82,9 @@ pub struct WeeklySchedule {
     pub status: String,
     pub approved_by_id: Option<i64>,
     pub approved_at: Option<String>,
+    /// When the week froze: its stored `frozen_at` (a person's freeze), or, for a week frozen
+    /// automatically (stored without a time, migration 298), the time of its "frozen
+    /// automatically" event for the current baseline ([`schedule_cols`]).
     pub frozen_at: Option<String>,
     /// `None` with `frozen_at` set: frozen automatically.
     pub frozen_by_id: Option<i64>,
@@ -97,10 +100,25 @@ pub struct WeeklySchedule {
     pub updated_at: String,
 }
 
-pub(crate) const SCHEDULE_COLS: &str =
-    "id, entity_id, week_start, week_end, status, approved_by_id, approved_at, frozen_at, \
-    frozen_by_id, frozen_without_approval, baseline_no, published_by_id, published_at, unfreeze_requested_by_id, \
-    unfreeze_requested_at, unfreeze_reason, row_version, created_at, updated_at";
+/// The columns [`map_schedule`] reads, over the `weekly_schedules` row named `alias` (the table
+/// name itself when not aliased). `frozen_at` is the week's freeze time: stored for a person's
+/// freeze; an automatic freeze stores none (the sync server takes a stored freeze time only from
+/// the person who froze the week, [`auto_freeze_week`]) and its time is that of its
+/// `auto_frozen` event for the current baseline.
+pub(crate) fn schedule_cols(alias: &str) -> String {
+    format!(
+        "{a}.id, {a}.entity_id, {a}.week_start, {a}.week_end, {a}.status, {a}.approved_by_id, {a}.approved_at, \
+         CASE WHEN {a}.status IN ('frozen', 'published') AND {a}.frozen_at IS NULL \
+              THEN (SELECT MAX(e.created_at) FROM weekly_schedule_events e \
+                     WHERE e.weekly_schedule_id = {a}.id AND e.baseline_no = {a}.baseline_no \
+                       AND e.action = 'auto_frozen') \
+              ELSE {a}.frozen_at END AS frozen_at, \
+         {a}.frozen_by_id, {a}.frozen_without_approval, {a}.baseline_no, {a}.published_by_id, {a}.published_at, \
+         {a}.unfreeze_requested_by_id, {a}.unfreeze_requested_at, {a}.unfreeze_reason, {a}.row_version, \
+         {a}.created_at, {a}.updated_at",
+        a = alias
+    )
+}
 
 pub(crate) fn map_schedule(r: &QueryResult) -> AppResult<WeeklySchedule> {
     Ok(WeeklySchedule {
@@ -270,7 +288,10 @@ async fn load_schedule(
 ) -> AppResult<Option<WeeklySchedule>> {
     db.query_one(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        format!("SELECT {SCHEDULE_COLS} FROM weekly_schedules WHERE entity_id = ? AND week_start = ?"),
+        format!(
+            "SELECT {} FROM weekly_schedules WHERE entity_id = ? AND week_start = ?",
+            schedule_cols("weekly_schedules")
+        ),
         [site.into(), week_start.to_string().into()],
     ))
     .await?
@@ -610,6 +631,9 @@ async fn freeze_core(
             .await?;
         }
     }
+    // A person's freeze records when they froze it; the automatic freeze records no time
+    // ([`auto_freeze_week`]): its time is that of its event, recorded below.
+    let frozen_at = actor_id.map(|_| now.clone());
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE weekly_schedules SET status = 'frozen', frozen_at = ?, frozen_by_id = ?, \
@@ -617,7 +641,7 @@ async fn freeze_core(
                 baseline_no = ?, unfreeze_requested_by_id = NULL, unfreeze_requested_at = NULL, unfreeze_reason = NULL, \
                 row_version = row_version + 1, updated_at = ? WHERE id = ?",
         [
-            now.clone().into(),
+            frozen_at.into(),
             actor_id.into(),
             baseline_no.into(),
             now.into(),
@@ -983,6 +1007,18 @@ async fn auto_freeze_site(db: &DatabaseConnection, site: i64, now: DateTime<Utc>
 }
 
 /// Freezes one due week if it was never frozen.
+///
+/// Nobody signs an automatic freeze, and the sync server takes a week's stored `frozen_at` only
+/// from the person named in `frozen_by` who signed it (a change setting it unsigned is refused
+/// `author_not_signer`). So the automatic freeze stores no time (`frozen_at` NULL with
+/// `frozen_by_id` NULL, allowed by migration 298): it changes only the status, the baseline number
+/// and "frozen without approval", which name nobody, and travels like any background change. Its
+/// time is that of its "frozen automatically" event (same identity on every PC), read in place of
+/// `frozen_at` ([`schedule_cols`]). A later approval, publish or unfreeze request by a person then
+/// carries no unsigned freeze time either.
+///
+/// Changes captured before it (a planner's edit of the week not staged yet) are staged first, as
+/// they stood: the automatic freeze is never sent inside a person's change.
 async fn auto_freeze_week(db: &DatabaseConnection, week: &SiteWeek) -> AppResult<bool> {
     let tx = db.begin().await?;
     let schedule = ensure_schedule(&tx, week).await?;
@@ -990,6 +1026,8 @@ async fn auto_freeze_week(db: &DatabaseConnection, week: &SiteWeek) -> AppResult
         tx.rollback().await?;
         return Ok(false);
     }
+    // Only when it freezes: staged before its writes, as the week stood.
+    crate::sync::capture::drain_capture_journal(&tx).await?;
     freeze_core(&tx, &schedule, week, None).await?;
     tx.commit().await?;
     Ok(true)
@@ -1332,7 +1370,10 @@ async fn frozen_schedule_touching(
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            format!("SELECT {SCHEDULE_COLS} FROM weekly_schedules WHERE entity_id = ? AND status IN ('frozen', 'published')"),
+            format!(
+                "SELECT {} FROM weekly_schedules WHERE entity_id = ? AND status IN ('frozen', 'published')",
+                schedule_cols("weekly_schedules")
+            ),
             [site.into()],
         ))
         .await?;

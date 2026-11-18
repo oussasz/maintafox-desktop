@@ -29,8 +29,8 @@ use crate::errors::{AppError, AppResult};
 
 use super::weekly::site_week;
 use super::weekly_schedule::{
-    crews_with_sites, freeze_due_at, local_midnight_utc, map_schedule, rfc3339, site_crews, WeeklySchedule,
-    SCHEDULE_COLS, STATUS_FROZEN, STATUS_PUBLISHED,
+    crews_with_sites, freeze_due_at, local_midnight_utc, map_schedule, rfc3339, schedule_cols, site_crews,
+    WeeklySchedule, STATUS_FROZEN, STATUS_PUBLISHED,
 };
 
 fn decode_err(field: &str, err: impl std::fmt::Display) -> AppError {
@@ -190,7 +190,8 @@ async fn baseline(db: &impl ConnectionTrait, schedule: &WeeklySchedule, week_end
 }
 
 /// When the week's current baseline held: from its freeze until it was unfrozen for editing
-/// (`None`: still frozen). A week frozen or published reads its own `frozen_at`; a reopened one
+/// (`None`: still frozen). A week frozen or published reads its freeze time (`schedule_cols`: its
+/// stored `frozen_at`, or its automatic freeze event); a reopened one
 /// reads the freeze and unfreeze events of that baseline.
 async fn frozen_span(
     db: &impl ConnectionTrait,
@@ -369,11 +370,7 @@ async fn frozen_schedules(
     let marks = vec!["?"; sites.len()].join(",");
     let mut values: Vec<sea_orm::Value> = sites.iter().map(|s| (*s).into()).collect();
     values.extend([from.to_string().into(), to.to_string().into()]);
-    let cols = SCHEDULE_COLS
-        .split(',')
-        .map(|c| format!("ws.{}", c.trim()))
-        .collect::<Vec<_>>()
-        .join(", ");
+    let cols = schedule_cols("ws");
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,

@@ -484,7 +484,13 @@ pub async fn issue_inventory_stock(
     if let Some(wo_id) =
         crate::finance::settlement::work_order_of_source(&reservation.source_type, reservation.source_id)
     {
-        crate::finance::settlement::post_late_costs_best_effort(&state.db, &[wo_id], i64::from(user.user_id)).await;
+        crate::finance::settlement::post_late_costs_best_effort(
+            &state.db,
+            &[wo_id],
+            i64::from(user.user_id),
+            state.sync_worker.synced_since_start(),
+        )
+        .await;
     }
     Ok(reservation)
 }
@@ -506,7 +512,13 @@ pub async fn return_inventory_stock(
     if let Some(wo_id) =
         crate::finance::settlement::work_order_of_source(&reservation.source_type, reservation.source_id)
     {
-        crate::finance::settlement::post_late_costs_best_effort(&state.db, &[wo_id], i64::from(user.user_id)).await;
+        crate::finance::settlement::post_late_costs_best_effort(
+            &state.db,
+            &[wo_id],
+            i64::from(user.user_id),
+            state.sync_worker.synced_since_start(),
+        )
+        .await;
     }
     Ok(reservation)
 }
@@ -809,7 +821,13 @@ pub async fn receive_inventory_purchase_order_goods(
     // A contractor / service receipt reaching an already settled OT is a late cost.
     match crate::finance::settlement::work_orders_of_receipt(&state.db, receipt.id).await {
         Ok(wo_ids) => {
-            crate::finance::settlement::post_late_costs_best_effort(&state.db, &wo_ids, i64::from(user.user_id)).await
+            crate::finance::settlement::post_late_costs_best_effort(
+                &state.db,
+                &wo_ids,
+                i64::from(user.user_id),
+                state.sync_worker.synced_since_start(),
+            )
+            .await
         }
         Err(e) => tracing::warn!(target: "maintafox", "late cost lookup for receipt {}: {e}", receipt.id),
     }
@@ -1937,7 +1955,13 @@ pub async fn issue_inventory_stock_to_work_order(
     request.actor_id = Some(i64::from(user.user_id));
     let outcome = crate::inventory::issue::issue_stock(&state.db, request).await?;
     if let Some(wo_id) = outcome.work_order_id {
-        crate::finance::settlement::post_late_costs_best_effort(&state.db, &[wo_id], i64::from(user.user_id)).await;
+        crate::finance::settlement::post_late_costs_best_effort(
+            &state.db,
+            &[wo_id],
+            i64::from(user.user_id),
+            state.sync_worker.synced_since_start(),
+        )
+        .await;
     }
     Ok(outcome)
 }

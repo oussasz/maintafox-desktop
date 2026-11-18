@@ -615,3 +615,50 @@ async fn sign_out_still_works_while_an_update_installs() {
         .await
         .is_err_and(|e| is_update_refusal(&e)));
 }
+
+/// The audits that name the person at the start and end of their session are written while their
+/// session captures their changes, so they travel as that person's signed changes: the device
+/// trusted at a first sign-in (written once the signing session has started) and the sign-out
+/// (written before it ends). Written outside it, they named someone who did not sign them and the
+/// sync server refused them (`author_not_signer` on `actor_sync_id`, a PC joining the plant).
+#[tokio::test]
+async fn device_trust_and_sign_out_audits_are_the_signed_in_persons_changes() {
+    let db = crate::sync::test_support::started_db().await;
+    let state = AppState::new(db.clone());
+    let id = technician(&db, "signed_audit_tech").await;
+    let session_id = sign_in(&state, id, "signed_audit_tech").await;
+    crate::sync::capture::set_capture_actor(
+        &db,
+        Some(&crate::sync::capture::CaptureActor {
+            user_sync_id: "signed_audit_tech-sync",
+            user_id: i64::from(id),
+            session_id: &session_id,
+            expires_at: Utc::now() + TimeDelta::hours(1),
+        }),
+    )
+    .await
+    .expect("the session captures this person's changes");
+
+    audit_device_trusted(&db, id, "fingerprint-signed-audit").await;
+    logout_impl(&state).await.expect("sign-out");
+
+    for action in ["device.trust_registered", "logout"] {
+        let makers: Vec<Option<String>> = db
+            .query_all(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT maker_user_sync_id AS v FROM sync_outbox
+                  WHERE entity_type = 'audit_events' AND json_extract(payload_json, '$.action_code') = ?",
+                [action.into()],
+            ))
+            .await
+            .expect("outbox")
+            .iter()
+            .map(|r| r.try_get::<Option<String>>("", "v").expect("maker"))
+            .collect();
+        assert_eq!(
+            makers,
+            vec![Some("signed_audit_tech-sync".to_string())],
+            "{action}: sent once, as the signed-in person's change"
+        );
+    }
+}

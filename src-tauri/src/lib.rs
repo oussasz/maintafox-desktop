@@ -1278,6 +1278,7 @@ pub fn run() {
         commands::finance::list_asset_cost_history,
         commands::finance::list_finance_catalogs,
         commands::finance::post_late_wo_costs,
+        commands::finance::get_late_wo_cost_summary,
         commands::inspection::list_inspection_round_page,
         commands::inspection::get_inspection_kpis,
         commands::inspection::list_inspection_anomaly_rows,

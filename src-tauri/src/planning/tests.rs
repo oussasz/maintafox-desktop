@@ -4158,6 +4158,125 @@ async fn the_next_week_freezes_itself_but_never_counts_as_approved() {
     assert!(!view.awaiting_approval);
 }
 
+/// The automatic freeze names nobody, and the sync server takes a week's stored freeze time only
+/// from the person named in `frozen_by` who signed it (`author_not_signer` on `frozen_by_sync_id`,
+/// seen on a PC joining the plant). It now stores no time (migration 298) and travels like any
+/// background change; its time is that of its "frozen automatically" event. The usual workflow
+/// (approve, automatic freeze, publish) never sends a freeze time without the person who froze it.
+#[tokio::test]
+async fn an_automatic_freeze_sends_no_unsigned_freeze_time_through_approve_freeze_publish() {
+    let db = setup_db().await;
+    crate::sync::capture::install_capture(&db).await.expect("capture");
+    ensure_planning_notification_rule(&db).await;
+    let (site, team) = weekly_site(&db, "C").await;
+    let candidate = insert_candidate(&db, "manual_test", 7912, "ready", 100.0).await;
+    scheduling::create_schedule_commitment(
+        &db,
+        1,
+        commit_input(candidate, team, "2026-05-11T08:00", "2026-05-11T09:00"),
+    )
+    .await
+    .expect("next week's work");
+    crate::sync::capture::drain_capture_journal(&db).await.expect("staged");
+    // Each change of the week as it is staged to be sent (its latest outbox envelope).
+    let sent_week = format!(
+        "SELECT o.payload_json AS p FROM sync_outbox o JOIN weekly_schedules w \
+           ON w.entity_sync_id = o.entity_sync_id \
+         WHERE o.entity_type = 'weekly_schedules' AND w.entity_id = {site} AND w.week_start = '2026-05-10' \
+         ORDER BY o.id DESC LIMIT 1"
+    );
+    let mut payloads: Vec<String> = Vec::new();
+    macro_rules! stage {
+        () => {
+            crate::sync::capture::drain_capture_journal(&db)
+                .await
+                .expect("staged");
+            payloads.push(
+                db.query_one(Statement::from_string(DbBackend::Sqlite, sent_week.clone()))
+                    .await
+                    .expect("outbox")
+                    .expect("the week is sent")
+                    .try_get::<String>("", "p")
+                    .expect("payload"),
+            );
+        };
+    }
+
+    // A planner approves the week ahead, then it freezes itself at its due time.
+    crate::planning::weekly_schedule::approve_weekly_schedule(&db, 1, week_ref(site, "2026-05-11", None))
+        .await
+        .expect("approved ahead");
+    stage!();
+    let frozen = crate::planning::weekly_schedule::auto_freeze_due(&db, utc_at("2026-05-08T00:30"))
+        .await
+        .expect("tick");
+    assert!(frozen.contains(&(site, day("2026-05-10"))), "{frozen:?}");
+    stage!();
+    let schedule = crate::planning::weekly_schedule::get_weekly_schedule(&db, site, "2026-05-11")
+        .await
+        .expect("view")
+        .schedule
+        .expect("schedule");
+    assert_eq!(schedule.status, "frozen");
+    assert!(schedule.frozen_by_id.is_none(), "frozen by the system");
+    assert_eq!(
+        scalar(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM weekly_schedules WHERE id = {} AND frozen_at IS NULL",
+                schedule.id
+            )
+        )
+        .await,
+        1,
+        "no freeze time is stored for an automatic freeze"
+    );
+    let event_time: String = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT created_at FROM weekly_schedule_events WHERE weekly_schedule_id = {} \
+                   AND action = 'auto_frozen' AND baseline_no = 1",
+                schedule.id
+            ),
+        ))
+        .await
+        .expect("query")
+        .expect("the automatic freeze event")
+        .try_get("", "created_at")
+        .expect("time");
+    assert_eq!(
+        schedule.frozen_at.as_deref(),
+        Some(event_time.as_str()),
+        "the week shows when it froze, from its event"
+    );
+
+    // The planner publishes it.
+    crate::planning::weekly_schedule::publish_weekly_schedule(
+        &db,
+        1,
+        week_ref(site, "2026-05-11", Some(schedule.row_version)),
+    )
+    .await
+    .expect("published");
+    stage!();
+
+    assert_eq!(payloads.len(), 3, "approval, freeze and publish are sent");
+    for p in &payloads {
+        let v: serde_json::Value = serde_json::from_str(p).expect("json");
+        assert!(
+            v.get("frozen_at").is_none_or(serde_json::Value::is_null)
+                || v.get("frozen_by_sync_id").is_some_and(|b| !b.is_null()),
+            "a freeze time is only sent with the person who froze the week: {p}"
+        );
+    }
+    let last: serde_json::Value = serde_json::from_str(payloads.last().expect("publish")).expect("json");
+    assert_eq!(
+        last.get("status").and_then(serde_json::Value::as_str),
+        Some("published")
+    );
+}
+
 #[tokio::test]
 async fn a_released_slot_returns_the_job_to_the_backlog_and_finished_work_closes_its_commitment() {
     let db = setup_db().await;
@@ -4290,6 +4409,139 @@ async fn a_released_slot_returns_the_job_to_the_backlog_and_finished_work_closes
         .expect("sweep");
     assert!(closed >= 1);
     assert_eq!(commitment_status(&db, third.id).await, "closed");
+}
+
+/// A work order finished by a person's command closes its commitments in that person's name (the
+/// commitment's status author and its change-log row), which travels signed. The planning tick's
+/// automatic close names nobody, and the sync server takes `status_changed_at` only from the
+/// person named in `status_changed_by` who signed it: every PC makes the same close itself, so it
+/// is not sent.
+#[tokio::test]
+async fn a_commitment_closed_by_a_person_names_them_and_the_automatic_close_is_not_sent() {
+    let db = setup_db().await;
+    crate::sync::capture::install_capture(&db).await.expect("capture");
+    let team_id = get_any_team_id(&db).await;
+    let (wo_id, actor_id) = create_planning_wo(&db, "Close author WO").await;
+    let candidate = insert_candidate(&db, "work_order", wo_id, "ready", 100.0).await;
+    let first = scheduling::create_schedule_commitment(
+        &db,
+        actor_id,
+        commit_input(candidate, team_id, "2026-10-08T08:00", "2026-10-08T10:00"),
+    )
+    .await
+    .expect("committed");
+    let (other_wo, _) = create_planning_wo(&db, "Close author WO 2").await;
+    let other_candidate = insert_candidate(&db, "work_order", other_wo, "ready", 100.0).await;
+    let second = scheduling::create_schedule_commitment(
+        &db,
+        actor_id,
+        commit_input(other_candidate, team_id, "2026-10-09T08:00", "2026-10-09T10:00"),
+    )
+    .await
+    .expect("committed");
+    exec_sql(&db, "DELETE FROM sync_capture_journal").await;
+
+    // The person's command that finishes the first work order closes its slot in their name.
+    crate::planning::lifecycle::close_commitments_of_work_order(&db, wo_id, actor_id)
+        .await
+        .expect("closed by the command");
+    assert_eq!(commitment_status(&db, first.id).await, "closed");
+    assert_eq!(
+        scalar(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM schedule_commitments WHERE id = {} AND status_changed_by_id = {actor_id}",
+                first.id
+            )
+        )
+        .await,
+        1,
+        "the commitment names who closed it"
+    );
+    assert_eq!(
+        scalar(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM schedule_change_log WHERE commitment_id = {} \
+                   AND action_type = 'close_commitment' AND actor_id = {actor_id}",
+                first.id
+            )
+        )
+        .await,
+        1,
+        "its history names who closed it"
+    );
+    assert!(
+        scalar(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM sync_capture_journal j JOIN schedule_commitments c \
+                   ON c.entity_sync_id = j.entity_sync_id \
+                 WHERE j.entity_type = 'schedule_commitments' AND c.id = {}",
+                first.id
+            )
+        )
+        .await
+            > 0,
+        "the person's close is sent"
+    );
+
+    // The second work order is finished elsewhere: the planning tick closes its slot, unsent.
+    exec_sql(
+        &db,
+        &format!("UPDATE work_orders SET mechanically_completed_at = '2026-10-09T10:00:00Z' WHERE id = {other_wo}"),
+    )
+    .await;
+    exec_sql(&db, "DELETE FROM sync_capture_journal").await;
+    // A planner's change of that slot, captured but not staged yet when the tick comes.
+    exec_sql(
+        &db,
+        &format!(
+            "UPDATE schedule_commitments SET planned_labor_hours = 3.5 WHERE id = {}",
+            second.id
+        ),
+    )
+    .await;
+    let closed = crate::planning::lifecycle::close_finished_commitments(&db)
+        .await
+        .expect("tick");
+    assert!(closed >= 1);
+    assert_eq!(commitment_status(&db, second.id).await, "closed");
+    assert_eq!(
+        scalar(
+            &db,
+            "SELECT COUNT(*) FROM sync_capture_journal \
+              WHERE entity_type IN ('schedule_commitments', 'schedule_change_log')"
+        )
+        .await,
+        0,
+        "an automatic close is not sent: nobody signs it"
+    );
+    let staged: String = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT o.payload_json AS p FROM sync_outbox o JOIN schedule_commitments c \
+                   ON c.entity_sync_id = o.entity_sync_id \
+                 WHERE o.entity_type = 'schedule_commitments' AND c.id = {} ORDER BY o.id DESC LIMIT 1",
+                second.id
+            ),
+        ))
+        .await
+        .expect("outbox")
+        .expect("the planner's change is staged")
+        .try_get("", "p")
+        .expect("payload");
+    let staged: serde_json::Value = serde_json::from_str(&staged).expect("json");
+    assert_eq!(
+        staged.get("status").and_then(serde_json::Value::as_str),
+        Some("committed"),
+        "the planner's change is sent as it stood, without the automatic close: {staged}"
+    );
+    assert_eq!(
+        staged.get("planned_labor_hours").and_then(serde_json::Value::as_f64),
+        Some(3.5)
+    );
 }
 
 #[tokio::test]

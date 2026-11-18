@@ -38,6 +38,7 @@ const svc = vi.hoisted(() => ({
   listWoSettlements: vi.fn(),
   retryWoSettlement: vi.fn(),
   postLateWoCosts: vi.fn(),
+  getLateWoCostSummary: vi.fn(),
   getBudgetCockpit: vi.fn(),
   getBudgetCockpitDrilldown: vi.fn(),
   listBudgetPeriods: vi.fn(),
@@ -482,6 +483,65 @@ describe("SettlementWorklist", () => {
     fireEvent.click(screen.getByRole("button", { name: "Settle late costs" }));
     await waitFor(() => expect(svc.postLateWoCosts).toHaveBeenCalled());
     await waitFor(() => expect(onChanged).toHaveBeenCalled());
+  });
+
+  it("shows how many settled work orders have costs waiting for the catch-up", async () => {
+    perms.granted = new Set([P.FIN_POST]);
+    svc.listWoSettlements.mockResolvedValue([settlement()]);
+    svc.getLateWoCostSummary.mockResolvedValue({
+      work_orders_to_book: 3,
+      work_orders_waiting_for_sync: 2,
+      untied_waiting_documents: 0,
+    });
+    render(
+      <MemoryRouter>
+        <SettlementWorklist fiscalYear={2026} />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByTestId("settlement-late-waiting")).toHaveTextContent(
+      "3 settled work orders have costs waiting to be settled.",
+    );
+    expect(screen.getByTestId("settlement-late-held")).toHaveTextContent(
+      "2 work orders are still waiting for documents received from another PC",
+    );
+  });
+
+  it("shows nothing waiting when every settled cost is booked", async () => {
+    svc.listWoSettlements.mockResolvedValue([settlement()]);
+    svc.getLateWoCostSummary.mockResolvedValue({
+      work_orders_to_book: 0,
+      work_orders_waiting_for_sync: 0,
+      untied_waiting_documents: 0,
+    });
+    render(
+      <MemoryRouter>
+        <SettlementWorklist fiscalYear={2026} />
+      </MemoryRouter>,
+    );
+    await screen.findByText("No cost centre for this work order.");
+    await waitFor(() => expect(svc.getLateWoCostSummary).toHaveBeenCalled());
+    expect(screen.queryByTestId("settlement-late-waiting")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("settlement-late-held")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("settlement-late-blocked")).not.toBeInTheDocument();
+  });
+
+  it("says the catch-up waits for the sync instead of a count it would refuse", async () => {
+    perms.granted = new Set([P.FIN_POST]);
+    svc.listWoSettlements.mockResolvedValue([settlement()]);
+    svc.getLateWoCostSummary.mockResolvedValue({
+      work_orders_to_book: 3,
+      work_orders_waiting_for_sync: 0,
+      untied_waiting_documents: 2,
+    });
+    render(
+      <MemoryRouter>
+        <SettlementWorklist fiscalYear={2026} />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByTestId("settlement-late-blocked")).toHaveTextContent(
+      "2 received documents are waiting for another record that ties them to a work order",
+    );
+    expect(screen.queryByTestId("settlement-late-waiting")).not.toBeInTheDocument();
   });
 });
 

@@ -714,6 +714,90 @@ async fn an_update_of_device_local_columns_only_is_not_captured() {
     );
 }
 
+/// What a sign-in writes on the account (the failure count, the lock, the last sign-in) is sign-in
+/// state of this PC: none of it is a change of the account to send. A PC joining the plant pushed
+/// its first sign-in as an unsigned `user_accounts` change, refused by the sync server
+/// (`signature_required`: account changes are signed by an administrator, or by the account
+/// itself for its password only).
+#[tokio::test]
+async fn sign_in_bookkeeping_is_not_a_change_of_the_account_to_send() {
+    use super::test_support::{exec, scalar_i64 as count, started_db};
+    let db = started_db().await;
+    stage(&db).await;
+    let user_id =
+        i32::try_from(count(&db, "SELECT id FROM user_accounts ORDER BY id LIMIT 1", vec![]).await).expect("user id");
+    let journal = "SELECT COUNT(*) FROM sync_capture_journal WHERE entity_type = 'user_accounts'";
+
+    let policy = crate::auth::lockout::LockoutPolicy::load(&db).await;
+    crate::auth::lockout::record_failed_attempt(&db, user_id, &policy)
+        .await
+        .expect("wrong password");
+    crate::auth::session_manager::record_failed_login(&db, user_id)
+        .await
+        .expect("wrong password (session)");
+    // A lock that has run out is lifted at the next sign-in.
+    exec(
+        &db,
+        "UPDATE user_accounts SET locked_until = '2020-01-01T00:00:00Z' WHERE id = ?",
+        vec![user_id.into()],
+    )
+    .await;
+    crate::auth::lockout::check_lockout(&db, user_id)
+        .await
+        .expect("lock run out");
+    crate::auth::lockout::clear_failed_attempts(&db, user_id)
+        .await
+        .expect("right password in a session");
+    crate::auth::session_manager::record_successful_login(&db, user_id)
+        .await
+        .expect("sign-in");
+    assert_eq!(
+        count(&db, journal, vec![]).await,
+        0,
+        "a sign-in on this PC is not a change of the account"
+    );
+    assert_eq!(
+        count(
+            &db,
+            "SELECT COUNT(*) FROM user_accounts WHERE id = ? AND last_login_at IS NOT NULL AND failed_login_attempts = 0",
+            vec![user_id.into()],
+        )
+        .await,
+        1,
+        "the sign-in is recorded on this PC"
+    );
+}
+
+/// Reading the equipment catalog (every asset form does) writes no equipment class that already
+/// matches it: each write was a new version of every class, sent to the server again and again
+/// (row version 10 for each class of one plant, the last ones pushed by a PC joining it).
+#[tokio::test]
+async fn reading_the_equipment_catalog_again_sends_no_class() {
+    use super::test_support::{scalar_i64 as count, started_db};
+    let db = started_db().await;
+    crate::assets::taxonomy_reference::ensure_equipment_taxonomy_reference_integrity(&db)
+        .await
+        .expect("catalog");
+    stage(&db).await;
+    assert!(
+        count(&db, "SELECT COUNT(*) FROM equipment_classes", vec![]).await > 0,
+        "the plant has equipment classes"
+    );
+    crate::assets::taxonomy_reference::list_equipment_taxonomy_catalog(&db)
+        .await
+        .expect("catalog read");
+    assert_eq!(
+        count(
+            &db,
+            "SELECT COUNT(*) FROM sync_capture_journal WHERE entity_type = 'equipment_classes'",
+            vec![]
+        )
+        .await,
+        0,
+        "nothing changed: nothing to send"
+    );
+}
+
 #[tokio::test]
 async fn many_children_received_before_their_parents_are_applied_parents_first_in_one_call() {
     let db = setup_db().await;
