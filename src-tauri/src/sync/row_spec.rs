@@ -1112,18 +1112,17 @@ pub const ROW_SPECS: &[RowSpec] = &[
         // here: it says what this PC did on arrival, and it names a work order or task that the
         // sending PC may have deleted since (a travelling event would wait there for it forever).
         // Only its stub travels (queued by `audit::chain::seal`, the apply suppresses capture).
-        // The sign-in and sign-out events of this PC that name a person outside that person's
-        // session (`commands::auth`: a failed sign-in, the device trusted at a first sign-in,
-        // written before the session starts; a sign-out, written after it ended) stay on it too:
-        // the person named did not sign them, and the sync server refuses an `actor_sync_id` that
-        // names someone who did not sign (`author_not_signer`). The successful sign-in itself,
-        // written inside the session, travels signed. Judged only while the event is not sealed
-        // (`chain_hash` empty): such an event sealed in its travelling form by an earlier version
-        // keeps travelling, so its hash stays verifiable.
+        // A failed sign-in that names the account tried (`commands::auth`) stays on this PC too:
+        // nobody proved to be that person, so nobody signs it, and the sync server refuses an
+        // `actor_sync_id` naming someone who did not sign (`author_not_signer`). Only its stub
+        // travels. The other sign-in events are written inside the person's session (the device
+        // trusted at a first sign-in, the sign-in, the sign-out) and travel signed. Judged only
+        // while the event is not sealed (`chain_hash` empty): a failed sign-in sealed in its
+        // travelling form by an earlier version keeps travelling, so its hash stays verifiable.
         row_filter: Some(
             "{row}.action_code NOT IN ('notification.safety_notice_acknowledged', 'sync.conflict_resolved', 'WO_EXECUTION_AUTHOR_NOT_RECEIVED') \
              AND COALESCE({row}.target_type, '') NOT IN ('work_permit', 'permit_type', 'stock_location_article', 'stock_reservation', 'app_session', 'bulk_import_batch') \
-             AND NOT ({row}.action_code IN ('login.failure', 'device.trust_registered', 'logout') \
+             AND NOT ({row}.action_code = 'login.failure' \
                       AND {row}.actor_id IS NOT NULL AND COALESCE({row}.chain_hash, '') = '') \
              AND substr(COALESCE({row}.chain_hash, ''), 1, 3) NOT IN ('L1:', 'L2:')",
         ),

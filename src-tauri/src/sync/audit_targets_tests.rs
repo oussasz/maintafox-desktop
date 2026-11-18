@@ -851,13 +851,12 @@ async fn the_gate_seals_override_audits_with_details_that_travel() {
     assert!(verify_audit_chain(&db).await.expect("verify").intact);
 }
 
-/// The sign-in events of a PC that name a person outside that person's session (a failed sign-in,
-/// the device trusted at a first sign-in, a sign-out) stay on the PC: the person did not sign
-/// them, and the sync server refuses an `actor_sync_id` naming someone who did not sign
-/// (`author_not_signer`, seen on a PC joining the plant). Only their stub travels, so the chain
-/// stays whole for the other PCs. The successful sign-in, written in the session, still travels.
+/// A failed sign-in that names the account tried stays on the PC: nobody proved to be that person,
+/// so nobody signs it, and the sync server refuses an `actor_sync_id` naming someone who did not
+/// sign (`author_not_signer`). Only its stub travels, so the chain stays whole for the other PCs.
+/// The sign-in events written in the person's session (device trusted, sign-in, sign-out) travel.
 #[tokio::test]
-async fn sign_in_events_naming_a_person_outside_their_session_stay_on_the_pc() {
+async fn a_failed_sign_in_naming_an_account_stays_on_the_pc() {
     use crate::audit::chain::verify_audit_chain;
     use crate::audit::writer::{write_audit_event, AuditEventInput};
     use crate::sync::test_support::{scalar_i64, scalar_opt_text, started_db};
@@ -878,7 +877,7 @@ async fn sign_in_events_naming_a_person_outside_their_session_stay_on_the_pc() {
     };
     let journaled =
         "SELECT COUNT(*) FROM sync_capture_journal WHERE entity_type = 'audit_events' AND entity_sync_id = ?";
-    for action in ["login.failure", "device.trust_registered", "logout"] {
+    for action in ["login.failure"] {
         let id = write_audit_event(&db, event(action)).await.expect("write");
         let sync_id = scalar_opt_text(
             &db,
@@ -909,17 +908,19 @@ async fn sign_in_events_naming_a_person_outside_their_session_stay_on_the_pc() {
             "{action}: its stub travels in its place"
         );
     }
-    let id = write_audit_event(&db, event("login.success")).await.expect("write");
-    let sync_id = scalar_opt_text(
-        &db,
-        "SELECT entity_sync_id FROM audit_events WHERE id = ?",
-        vec![id.into()],
-    )
-    .await
-    .expect("identity");
-    assert!(
-        scalar_i64(&db, journaled, vec![sync_id.into()]).await > 0,
-        "the successful sign-in travels"
-    );
+    for action in ["login.success", "device.trust_registered", "logout"] {
+        let id = write_audit_event(&db, event(action)).await.expect("write");
+        let sync_id = scalar_opt_text(
+            &db,
+            "SELECT entity_sync_id FROM audit_events WHERE id = ?",
+            vec![id.into()],
+        )
+        .await
+        .expect("identity");
+        assert!(
+            scalar_i64(&db, journaled, vec![sync_id.into()]).await > 0,
+            "{action}: written in the session, it travels"
+        );
+    }
     assert!(verify_audit_chain(&db).await.expect("verify").intact);
 }
