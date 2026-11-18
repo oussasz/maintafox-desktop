@@ -24,7 +24,27 @@ pub(crate) async fn seed_system_data_for(
     profile: BuildProfile,
 ) -> AppResult<()> {
     tracing::info!("seeder::starting system seed (version {})", SEED_SCHEMA_VERSION);
+    // One transaction for the whole seed. Run on the connection itself, every statement was its own
+    // commit, and most of them write even when nothing changes (an `INSERT OR IGNORE` into a table
+    // with AUTOINCREMENT, an `UPDATE` of an indexed column to the same value): hundreds of syncs
+    // of the database file to disk at every start. The statements, their order and what they
+    // write are unchanged.
+    let tx = db.begin().await?;
+    let seeded = seed_system_data_steps(&tx, profile).await;
+    // A failing step stops the seed as before, and what the steps before it wrote is kept, as when
+    // each statement was committed on its own (the startup goes on without the rest).
+    let committed = tx.commit().await;
+    seeded?;
+    committed?;
+    tracing::info!("seeder::complete — system seed version {} applied", SEED_SCHEMA_VERSION);
+    Ok(())
+}
 
+/// The steps of [`seed_system_data_for`], on its transaction.
+async fn seed_system_data_steps(
+    db: &(impl ConnectionTrait + TransactionTrait),
+    profile: BuildProfile,
+) -> AppResult<()> {
     // ── 1. Insert all domain definitions ─────────────────────────────────
     seed_domain(
         db,
@@ -2284,7 +2304,6 @@ pub(crate) async fn seed_system_data_for(
     // The safety rule notice's fixed category and rule rows (never synchronised: a tenant data
     // reset wipes them and only this brings them back, `settings::received_notice`).
     crate::settings::received_notice::ensure_notice_rows(db).await?;
-    tracing::info!("seeder::complete — system seed version {} applied", SEED_SCHEMA_VERSION);
     Ok(())
 }
 

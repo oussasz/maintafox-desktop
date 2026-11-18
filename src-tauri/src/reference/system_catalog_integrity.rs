@@ -5,7 +5,7 @@
 //! This module re-applies the system substrate (domains + published sets + required
 //! values) idempotently for every domain that must never disappear silently.
 
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 
 use crate::assets::taxonomy_reference;
 use crate::errors::AppResult;
@@ -15,7 +15,25 @@ use crate::reference::governance::derive_category_for_persist;
 const SYSTEM_META: &str = r#"{"origin":"system"}"#;
 
 /// Ensure all system-governed reference catalogs exist after wipe/drift.
+///
+/// One transaction for the whole pass. Run on the connection itself, every statement was its own
+/// commit, and most of them write even when nothing changes (an `INSERT OR IGNORE` into a table
+/// with AUTOINCREMENT, an `UPDATE` of an indexed column to the same value): hundreds of syncs of
+/// the database file to disk at every start. The statements, their order and what they write are
+/// unchanged; a failing step stops the pass (and the startup) as before, and now changes nothing.
 pub async fn ensure_system_reference_catalog_integrity(db: &DatabaseConnection) -> AppResult<()> {
+    // The tenant's language of the starter qualification lists, read before the transaction: on
+    // the app's single-connection pool nothing else can read while it is open. No step of the pass
+    // changes it.
+    let locale = crate::pm::wo_content::tenant_text_locale(db).await?;
+    let tx = db.begin().await?;
+    ensure_system_reference_catalog_integrity_in(&tx, &locale).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// The steps of [`ensure_system_reference_catalog_integrity`], on its transaction.
+async fn ensure_system_reference_catalog_integrity_in(db: &impl ConnectionTrait, locale: &str) -> AppResult<()> {
     taxonomy_reference::ensure_equipment_taxonomy_reference_integrity(db).await?;
     // Technical characteristics per family (COMPANY list), after the families they hang under.
     crate::assets::characteristics::ensure_characteristic_catalog(db).await?;
@@ -42,7 +60,7 @@ pub async fn ensure_system_reference_catalog_integrity(db: &DatabaseConnection) 
     // Finance cost categories and variance reasons.
     crate::finance::reference_catalog::ensure_finance_reference_catalogs(db).await?;
     // Certification / authorisation types and skills in the tenant's language.
-    crate::qualification::catalog::ensure_qualification_catalog(db).await?;
+    crate::qualification::catalog::ensure_qualification_catalog_in(db, locale).await?;
     // Planning window types (production, maintenance, shutdown, freeze).
     crate::planning::windows::ensure_window_type_catalog(db).await?;
     // LOTO energy types (SYSTEM) and isolation methods (COMPANY); isolations that arrived without
@@ -254,7 +272,7 @@ const DI_REQUEST_TYPES: &[SeedValue] = &[
     },
 ];
 
-async fn ensure_di_reference_catalog(db: &DatabaseConnection) -> AppResult<()> {
+async fn ensure_di_reference_catalog(db: &impl ConnectionTrait) -> AppResult<()> {
     ensure_domain(
         db,
         "DI.ORIGIN",
@@ -409,7 +427,7 @@ const PERSONNEL_SKILLS: &[SeedValue] = &[
     },
 ];
 
-async fn ensure_personnel_skills_reference_catalog(db: &DatabaseConnection) -> AppResult<()> {
+async fn ensure_personnel_skills_reference_catalog(db: &impl ConnectionTrait) -> AppResult<()> {
     ensure_domain(
         db,
         "PERSONNEL.SKILLS",
@@ -458,7 +476,7 @@ const WORK_FAILURE_MODES: &[SeedValue] = &[
     },
 ];
 
-async fn ensure_work_failure_modes_reference_catalog(db: &DatabaseConnection) -> AppResult<()> {
+async fn ensure_work_failure_modes_reference_catalog(db: &impl ConnectionTrait) -> AppResult<()> {
     ensure_domain(
         db,
         "WORK.FAILURE_MODES",
@@ -566,7 +584,7 @@ pub(crate) async fn ensure_system_delay_reason(db: &impl ConnectionTrait, code: 
     insert_seed_values(db, "WORK.DELAY_REASONS", &WORK_DELAY_REASONS[at..=at]).await
 }
 
-async fn ensure_work_delay_reasons_reference_catalog(db: &DatabaseConnection) -> AppResult<()> {
+async fn ensure_work_delay_reasons_reference_catalog(db: &impl ConnectionTrait) -> AppResult<()> {
     ensure_domain(
         db,
         "WORK.DELAY_REASONS",
@@ -590,7 +608,7 @@ const WORK_PART_UNUSED_REASONS: &[SeedValue] = &[
     seed("other", "Other", 5, "part_unused_reason"),
 ];
 
-async fn ensure_work_part_unused_reason_reference_catalog(db: &DatabaseConnection) -> AppResult<()> {
+async fn ensure_work_part_unused_reason_reference_catalog(db: &impl ConnectionTrait) -> AppResult<()> {
     ensure_domain(
         db,
         "WORK.PART_UNUSED_REASON",
@@ -611,7 +629,7 @@ const ORG_SCHEDULE_CLASSES: &[SeedValue] = &[SeedValue {
     ..seed("DAY_SHIFT", "Journée normale", 1, "schedule_class")
 }];
 
-async fn ensure_org_schedule_class_reference_catalog(db: &DatabaseConnection) -> AppResult<()> {
+async fn ensure_org_schedule_class_reference_catalog(db: &impl ConnectionTrait) -> AppResult<()> {
     ensure_domain(
         db,
         "ORG.SCHEDULE_CLASS",

@@ -197,7 +197,8 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
     let app_state = app.state::<crate::state::AppState>();
     // Sync capture is off while migrations and the startup seeders run: rows every device seeds
     // itself are never sent. It is installed again before the sync worker starts (Phase 4b).
-    if let Err(e) = crate::sync::capture::suspend_capture(&app_state.db).await {
+    // Every trigger is dropped in one commit (one per trigger was ~3 s of each start on a laptop).
+    if let Err(e) = crate::sync::capture::suspend_capture_atomically(&app_state.db).await {
         let reason = format!("Sync capture could not be suspended before migrations: {e}");
         error!("{reason}");
         emit_event(&app, StartupEvent::Failed { reason });
@@ -285,11 +286,7 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
     // Phase 3a: the work-order types with their maintenance natures and the shared DI / OT
     // urgency scale are SYSTEM reference lists the workflow rules depend on.
     info!("startup: enforcing work-order types / natures and urgency scale integrity");
-    let catalogs = async {
-        crate::wo::types::ensure_work_order_type_catalog(&app_state.db).await?;
-        crate::reference::urgency_scale::ensure_urgency_scale(&app_state.db).await
-    };
-    if let Err(e) = catalogs.await {
+    if let Err(e) = enforce_work_order_catalogs(&app_state.db).await {
         let reason = format!("Work order type / urgency scale integrity check failed: {e}");
         error!("{reason}");
         emit_event(&app, StartupEvent::Failed { reason: reason.clone() });
@@ -298,7 +295,7 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
     }
 
     info!("startup: enforcing work_order_statuses (OT lifecycle) integrity");
-    if let Err(e) = crate::wo::statuses::ensure_required_work_order_statuses(&app_state.db).await {
+    if let Err(e) = enforce_work_order_statuses(&app_state.db).await {
         let reason = format!("Work order statuses integrity check failed: {e}");
         error!("{reason}");
         emit_event(&app, StartupEvent::Failed { reason: reason.clone() });
@@ -581,6 +578,27 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
         .show()
         .map_err(|e| crate::errors::AppError::Internal(anyhow::anyhow!("{e}")))?;
 
+    Ok(())
+}
+
+/// Phase 3a: the work-order types with their maintenance natures and the shared urgency scale, in
+/// one transaction (one commit instead of one per statement; a failure changes nothing).
+pub(crate) async fn enforce_work_order_catalogs(db: &sea_orm::DatabaseConnection) -> AppResult<()> {
+    use sea_orm::TransactionTrait;
+    let tx = db.begin().await?;
+    crate::wo::types::ensure_work_order_type_catalog(&tx).await?;
+    crate::reference::urgency_scale::ensure_urgency_scale(&tx).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Phase 3a: the work-order statuses of the OT lifecycle, in one transaction (one commit instead of
+/// one per statement; a failure changes nothing).
+pub(crate) async fn enforce_work_order_statuses(db: &sea_orm::DatabaseConnection) -> AppResult<()> {
+    use sea_orm::TransactionTrait;
+    let tx = db.begin().await?;
+    crate::wo::statuses::ensure_required_work_order_statuses(&tx).await?;
+    tx.commit().await?;
     Ok(())
 }
 

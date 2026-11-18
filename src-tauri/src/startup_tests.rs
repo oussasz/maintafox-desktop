@@ -81,6 +81,38 @@ mod startup_tests {
 
         use sea_orm::DatabaseConnection;
 
+        pub const CAPTURE_SUSPENDED: &str = "capture suspended";
+        pub const SYSTEM_SEED: &str = "system seed";
+        pub const WORK_ORDER_CATALOGS: &str = "work-order types and urgency scale";
+        pub const WORK_ORDER_STATUSES: &str = "work-order statuses";
+        pub const REFERENCE_INTEGRITY: &str = "reference catalog integrity";
+
+        /// Phases that only re-apply what is already there on a normal start: each one is a
+        /// single transaction, so a single commit (one sync of the file to disk), however many
+        /// statements it runs.
+        pub const ONE_COMMIT_PHASES: &[&str] = &[
+            CAPTURE_SUSPENDED,
+            SYSTEM_SEED,
+            WORK_ORDER_CATALOGS,
+            WORK_ORDER_STATUSES,
+            REFERENCE_INTEGRITY,
+        ];
+
+        /// Fails when a phase of [`ONE_COMMIT_PHASES`] committed more than once.
+        pub fn assert_one_commit_phases(phases: &[Phase]) {
+            for name in ONE_COMMIT_PHASES {
+                let phase = phases
+                    .iter()
+                    .find(|p| p.name == *name)
+                    .unwrap_or_else(|| panic!("phase {name} not run"));
+                assert!(
+                    phase.commits <= 1,
+                    "{name}: {} commits, each one a sync of the database file to disk",
+                    phase.commits
+                );
+            }
+        }
+
         pub struct Phase {
             pub name: &'static str,
             pub ms: u128,
@@ -130,35 +162,37 @@ mod startup_tests {
             timed(
                 p,
                 commits,
-                "capture suspended",
-                crate::sync::capture::suspend_capture(db),
+                CAPTURE_SUSPENDED,
+                crate::sync::capture::suspend_capture_atomically(db),
             )
             .await
             .expect("capture suspended");
             timed(p, commits, "migrations (none pending)", crate::db::run_migrations(db))
                 .await
                 .expect("migrations");
-            timed(p, commits, "system seed", crate::db::seeder::seed_system_data(db))
+            timed(p, commits, SYSTEM_SEED, crate::db::seeder::seed_system_data(db))
                 .await
                 .expect("system seed");
-            timed(p, commits, "work-order types and urgency scale", async {
-                crate::wo::types::ensure_work_order_type_catalog(db).await?;
-                crate::reference::urgency_scale::ensure_urgency_scale(db).await
-            })
+            timed(
+                p,
+                commits,
+                WORK_ORDER_CATALOGS,
+                crate::startup::enforce_work_order_catalogs(db),
+            )
             .await
             .expect("work-order types and urgency scale");
             timed(
                 p,
                 commits,
-                "work-order statuses",
-                crate::wo::statuses::ensure_required_work_order_statuses(db),
+                WORK_ORDER_STATUSES,
+                crate::startup::enforce_work_order_statuses(db),
             )
             .await
             .expect("work-order statuses");
             timed(
                 p,
                 commits,
-                "reference catalog integrity",
+                REFERENCE_INTEGRITY,
                 crate::reference::system_catalog_integrity::ensure_system_reference_catalog_integrity(db),
             )
             .await
@@ -296,6 +330,97 @@ mod startup_tests {
             "{}",
             normal_start::report("normal start of a site-size database (debug build)", &phases)
         );
+        normal_start::assert_one_commit_phases(&phases);
         db.close().await.expect("close");
+    }
+
+    /// A normal start re-applies the system data without one commit per statement: the phases
+    /// that only re-apply what is there each commit once.
+    #[tokio::test]
+    async fn a_normal_start_commits_each_system_data_phase_once() {
+        let db = crate::sync::test_support::started_db().await;
+        let commits = normal_start::count_commits(&db).await;
+        let phases = normal_start::run(&db, &commits).await;
+        eprintln!("{}", normal_start::report("normal start (test database)", &phases));
+        normal_start::assert_one_commit_phases(&phases);
+    }
+
+    /// The seed is one transaction, but a failing step still keeps what the steps before it wrote,
+    /// as when each statement was committed on its own (the startup goes on without the rest).
+    #[tokio::test]
+    async fn a_failing_seed_step_keeps_what_the_steps_before_it_wrote() {
+        use crate::sync::test_support::{exec, scalar_opt_text};
+        let db = crate::sync::test_support::started_db().await;
+        let permission = &crate::rbac::permissions::CATALOG[0];
+        // Step 3 (permissions) puts the catalog description back; step 4 (seed version) fails.
+        exec(
+            &db,
+            "UPDATE permissions SET description = 'stale' WHERE name = ?",
+            vec![permission.name.into()],
+        )
+        .await;
+        exec(
+            &db,
+            "CREATE TEMP TRIGGER injected_seed_failure BEFORE INSERT ON system_config \
+             WHEN NEW.key = 'seed_schema_version' BEGIN SELECT RAISE(ABORT, 'injected failure'); END",
+            vec![],
+        )
+        .await;
+
+        let seeded = crate::db::seeder::seed_system_data(&db).await;
+
+        assert!(seeded.is_err(), "the injected failure stops the seed");
+        let description = scalar_opt_text(
+            &db,
+            "SELECT description FROM permissions WHERE name = ?",
+            vec![permission.name.into()],
+        )
+        .await;
+        assert_eq!(description.as_deref(), Some(permission.description));
+    }
+
+    async fn class_audience(db: &sea_orm::DatabaseConnection) -> Option<String> {
+        crate::sync::test_support::scalar_opt_text(
+            db,
+            "SELECT audience FROM reference_domains WHERE code = 'EQUIPMENT.CLASS'",
+            vec![],
+        )
+        .await
+    }
+
+    /// The reference catalog integrity pass is one transaction: when a step fails, the startup
+    /// stops and nothing the pass wrote before is kept; the next start runs it whole.
+    #[tokio::test]
+    async fn a_failing_reference_integrity_pass_changes_nothing() {
+        use crate::sync::test_support::exec;
+        let db = crate::sync::test_support::started_db().await;
+        // The first step puts the audience of the equipment classes back; the last one fails.
+        exec(
+            &db,
+            "UPDATE reference_domains SET audience = 'system' WHERE code = 'EQUIPMENT.CLASS'",
+            vec![],
+        )
+        .await;
+        exec(
+            &db,
+            &format!(
+                "CREATE TEMP TRIGGER injected_integrity_failure BEFORE UPDATE ON reference_domains \
+                 WHEN UPPER(TRIM(NEW.code)) = '{}' BEGIN SELECT RAISE(ABORT, 'injected failure'); END",
+                crate::planning::break_in_reasons::BREAK_IN_REASONS_DOMAIN
+            ),
+            vec![],
+        )
+        .await;
+
+        let failed = crate::reference::system_catalog_integrity::ensure_system_reference_catalog_integrity(&db).await;
+
+        assert!(failed.is_err(), "the injected failure stops the pass");
+        assert_eq!(class_audience(&db).await.as_deref(), Some("system"), "nothing kept");
+
+        exec(&db, "DROP TRIGGER temp.injected_integrity_failure", vec![]).await;
+        crate::reference::system_catalog_integrity::ensure_system_reference_catalog_integrity(&db)
+            .await
+            .expect("integrity pass");
+        assert_eq!(class_audience(&db).await.as_deref(), Some("company"), "repaired");
     }
 }
