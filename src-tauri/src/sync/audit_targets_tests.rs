@@ -850,3 +850,76 @@ async fn the_gate_seals_override_audits_with_details_that_travel() {
     }
     assert!(verify_audit_chain(&db).await.expect("verify").intact);
 }
+
+/// The sign-in events of a PC that name a person outside that person's session (a failed sign-in,
+/// the device trusted at a first sign-in, a sign-out) stay on the PC: the person did not sign
+/// them, and the sync server refuses an `actor_sync_id` naming someone who did not sign
+/// (`author_not_signer`, seen on a PC joining the plant). Only their stub travels, so the chain
+/// stays whole for the other PCs. The successful sign-in, written in the session, still travels.
+#[tokio::test]
+async fn sign_in_events_naming_a_person_outside_their_session_stay_on_the_pc() {
+    use crate::audit::chain::verify_audit_chain;
+    use crate::audit::writer::{write_audit_event, AuditEventInput};
+    use crate::sync::test_support::{scalar_i64, scalar_opt_text, started_db};
+
+    let db = started_db().await;
+    let person = scalar_i64(&db, "SELECT id FROM user_accounts ORDER BY id LIMIT 1", vec![]).await;
+    let event = |action: &str| AuditEventInput {
+        action_code: action.to_string(),
+        target_type: None,
+        target_id: None,
+        actor_id: Some(person),
+        auth_context: "password".to_string(),
+        result: "success".to_string(),
+        before_hash: None,
+        after_hash: None,
+        retention_class: "standard".to_string(),
+        details_json: Some(serde_json::json!({ "summary": action })),
+    };
+    let journaled =
+        "SELECT COUNT(*) FROM sync_capture_journal WHERE entity_type = 'audit_events' AND entity_sync_id = ?";
+    for action in ["login.failure", "device.trust_registered", "logout"] {
+        let id = write_audit_event(&db, event(action)).await.expect("write");
+        let sync_id = scalar_opt_text(
+            &db,
+            "SELECT entity_sync_id FROM audit_events WHERE id = ?",
+            vec![id.into()],
+        )
+        .await
+        .expect("identity");
+        assert_eq!(
+            scalar_i64(&db, journaled, vec![sync_id.into()]).await,
+            0,
+            "{action}: not sent"
+        );
+        let hash = scalar_opt_text(&db, "SELECT chain_hash FROM audit_events WHERE id = ?", vec![id.into()])
+            .await
+            .expect("sealed");
+        assert!(hash.starts_with("L2:"), "{action}: sealed in its local form: {hash}");
+        assert_eq!(
+            scalar_i64(
+                &db,
+                "SELECT COUNT(*) FROM audit_chain_stubs s JOIN audit_events e
+                   ON e.chain_origin = s.chain_origin AND e.chain_seq = s.chain_seq
+                 WHERE e.id = ?",
+                vec![id.into()],
+            )
+            .await,
+            1,
+            "{action}: its stub travels in its place"
+        );
+    }
+    let id = write_audit_event(&db, event("login.success")).await.expect("write");
+    let sync_id = scalar_opt_text(
+        &db,
+        "SELECT entity_sync_id FROM audit_events WHERE id = ?",
+        vec![id.into()],
+    )
+    .await
+    .expect("identity");
+    assert!(
+        scalar_i64(&db, journaled, vec![sync_id.into()]).await > 0,
+        "the successful sign-in travels"
+    );
+    assert!(verify_audit_chain(&db).await.expect("verify").intact);
+}

@@ -352,12 +352,9 @@ pub async fn clamp_last_admin_lock(conn: &impl ConnectionTrait, user_id: i64, lo
     let bounded = bound.format("%Y-%m-%dT%H:%M:%SZ").to_string();
     conn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        "UPDATE user_accounts SET locked_until = ?, updated_at = ? WHERE id = ?",
-        [
-            bounded.clone().into(),
-            chrono::Utc::now().to_rfc3339().into(),
-            user_id.into(),
-        ],
+        // Lock state of this PC: the account's `updated_at` is left as it is (`auth::lockout`).
+        "UPDATE user_accounts SET locked_until = ? WHERE id = ?",
+        [bounded.clone().into(), user_id.into()],
     ))
     .await?;
     tracing::warn!(user_id, "last_admin::lock_bounded");

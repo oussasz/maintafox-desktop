@@ -3,6 +3,12 @@
 //! `user_accounts` has `failed_login_attempts`, `locked_until`, and
 //! `consecutive_lockouts` columns. This module enforces lockout policy
 //! by checking/updating those columns at login time.
+//!
+//! Those columns are sign-in state of this PC (device-local in `sync::row_spec`): writing them
+//! leaves the account's `updated_at` untouched, so a sign-in, a wrong password or a lock is not a
+//! change of the account to send. A change of `user_accounts` must be signed by an administrator
+//! (or by the account itself for its password); the sync server refuses one made by a sign-in
+//! (`signature_required`).
 
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
@@ -100,14 +106,13 @@ pub async fn check_lockout(db: &sea_orm::DatabaseConnection, user_id: i32) -> Ap
         return Err(AppError::AccountLocked { until });
     }
 
-    // Expired lock → auto-unlock (but keep consecutive_lockouts for progressive)
-    let ts = chrono::Utc::now().to_rfc3339();
+    // Expired lock → auto-unlock (but keep consecutive_lockouts for progressive).
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE user_accounts \
-         SET locked_until = NULL, failed_login_attempts = 0, updated_at = ? \
+         SET locked_until = NULL, failed_login_attempts = 0 \
          WHERE id = ?",
-        [ts.into(), user_id.into()],
+        [user_id.into()],
     ))
     .await?;
 
@@ -120,13 +125,12 @@ pub async fn check_lockout(db: &sea_orm::DatabaseConnection, user_id: i32) -> Ap
 /// (`session_manager::record_successful_login`): counter, lock and progressive count are reset.
 /// Used by the password checks made inside a session (unlock, step-up).
 pub async fn clear_failed_attempts(db: &sea_orm::DatabaseConnection, user_id: i32) -> AppResult<()> {
-    let now = chrono::Utc::now().to_rfc3339();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE user_accounts \
-         SET failed_login_attempts = 0, locked_until = NULL, consecutive_lockouts = 0, updated_at = ? \
+         SET failed_login_attempts = 0, locked_until = NULL, consecutive_lockouts = 0 \
          WHERE id = ?",
-        [now.into(), user_id.into()],
+        [user_id.into()],
     ))
     .await?;
     Ok(())
@@ -143,15 +147,13 @@ pub async fn record_failed_attempt(
     user_id: i32,
     policy: &LockoutPolicy,
 ) -> AppResult<()> {
-    let now = chrono::Utc::now().to_rfc3339();
-
     // Step 1: increment counter
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE user_accounts \
-         SET failed_login_attempts = failed_login_attempts + 1, updated_at = ? \
+         SET failed_login_attempts = failed_login_attempts + 1 \
          WHERE id = ?",
-        [now.into(), user_id.into()],
+        [user_id.into()],
     ))
     .await?;
 
@@ -196,15 +198,13 @@ pub async fn record_failed_attempt(
 
         let lock_until = chrono::Utc::now() + chrono::Duration::minutes(duration_minutes);
         let lock_until_str = lock_until.format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        let lock_ts = chrono::Utc::now().to_rfc3339();
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "UPDATE user_accounts \
              SET locked_until = ?, \
-                 consecutive_lockouts = consecutive_lockouts + 1, \
-                 updated_at = ? \
+                 consecutive_lockouts = consecutive_lockouts + 1 \
              WHERE id = ?",
-            [lock_until_str.into(), lock_ts.clone().into(), user_id.into()],
+            [lock_until_str.into(), user_id.into()],
         ))
         .await?;
 

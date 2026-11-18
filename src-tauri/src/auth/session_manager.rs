@@ -503,8 +503,8 @@ pub async fn get_pin_hash_for_user(db: &DatabaseConnection, user_id: i32) -> App
 }
 
 /// Increment `failed_login_attempts` for a user. Locks account at 10 attempts.
+/// Sign-in state of this PC: the account's `updated_at` is left as it is (`auth::lockout`).
 pub async fn record_failed_login(db: &DatabaseConnection, user_id: i32) -> AppResult<()> {
-    let now = Utc::now().to_rfc3339();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         r"UPDATE user_accounts
@@ -513,16 +513,17 @@ pub async fn record_failed_login(db: &DatabaseConnection, user_id: i32) -> AppRe
                    WHEN failed_login_attempts + 1 >= 10
                    THEN datetime('now', '+15 minutes')
                    ELSE locked_until
-               END,
-               updated_at = ?
+               END
            WHERE id = ?",
-        [now.into(), user_id.into()],
+        [user_id.into()],
     ))
     .await?;
     Ok(())
 }
 
 /// Reset `failed_login_attempts`, `locked_until`, and `consecutive_lockouts` after successful login.
+/// Sign-in state of this PC: the account's `updated_at` is left as it is, so a sign-in is not a
+/// change of the account to send (`auth::lockout`; the sync server refuses an unsigned one).
 pub async fn record_successful_login(db: &DatabaseConnection, user_id: i32) -> AppResult<()> {
     let now = Utc::now().to_rfc3339();
     db.execute(Statement::from_sql_and_values(
@@ -532,10 +533,9 @@ pub async fn record_successful_login(db: &DatabaseConnection, user_id: i32) -> A
                locked_until = NULL,
                consecutive_lockouts = 0,
                last_login_at = ?,
-               last_seen_at = ?,
-               updated_at = ?
+               last_seen_at = ?
            WHERE id = ?",
-        [now.clone().into(), now.clone().into(), now.into(), user_id.into()],
+        [now.clone().into(), now.into(), user_id.into()],
     ))
     .await?;
     Ok(())

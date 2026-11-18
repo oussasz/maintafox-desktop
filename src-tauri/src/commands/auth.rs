@@ -891,16 +891,16 @@ pub(crate) async fn set_pin_impl(state: &AppState, payload: SetPinInput) -> AppR
     pin::validate_pin_format(payload.new_pin.trim())?;
     let pin_hash = pin::hash_pin(payload.new_pin.trim())?;
 
-    let now = chrono::Utc::now().to_rfc3339();
+    // The PIN unlocks this PC only (device-local in `sync::row_spec`): the account's `updated_at`
+    // is left as it is, so setting it is not a change of the account to send.
     state
         .db
         .execute(sea_orm::Statement::from_sql_and_values(
             sea_orm::DbBackend::Sqlite,
             r"UPDATE user_accounts
-               SET pin_hash = ?,
-                   updated_at = ?
+               SET pin_hash = ?
                WHERE id = ?",
-            [pin_hash.into(), now.into(), user.user_id.into()],
+            [pin_hash.into(), user.user_id.into()],
         ))
         .await?;
 
@@ -956,16 +956,15 @@ pub(crate) async fn clear_pin_impl(state: &AppState, payload: ClearPinInput) -> 
         return Err(AppError::Auth("Mot de passe incorrect.".into()));
     }
 
-    let now = chrono::Utc::now().to_rfc3339();
+    // Device-local, like setting it (above).
     state
         .db
         .execute(sea_orm::Statement::from_sql_and_values(
             sea_orm::DbBackend::Sqlite,
             r"UPDATE user_accounts
-               SET pin_hash = NULL,
-                   updated_at = ?
+               SET pin_hash = NULL
                WHERE id = ?",
-            [now.into(), user.user_id.into()],
+            [user.user_id.into()],
         ))
         .await?;
 
