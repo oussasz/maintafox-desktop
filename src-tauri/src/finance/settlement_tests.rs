@@ -1983,12 +1983,26 @@ async fn s19_the_catch_up_waits_for_a_complete_copy_and_the_waiting_costs_are_co
         vec![po_line.clone().into()],
     )
     .await;
+    // Only the receipt line of that purchase order line waits now: both OTs can come only from it.
+    let others = "('s19-reserved-issue-waits', 's19-po-line-waits', 's19-receipt-line-of-waiting-po-line')";
+    exec(
+        &db,
+        &format!("UPDATE sync_inbox SET apply_status = 'applied' WHERE entity_sync_id IN {others}"),
+        vec![],
+    )
+    .await;
     let waits = settlement::ensure_complete_copy_for_late_costs(&db, true)
         .await
         .expect("tied to two OTs");
     let mut both = vec![wo_id, wo_b];
     both.sort_unstable();
     assert_eq!(waits.work_orders.iter().copied().collect::<Vec<_>>(), both);
+    exec(
+        &db,
+        &format!("UPDATE sync_inbox SET apply_status = 'deferred' WHERE entity_sync_id IN {others}"),
+        vec![],
+    )
+    .await;
     exec(
         &db,
         "UPDATE purchase_order_lines SET source_reservation_id = NULL WHERE entity_sync_id = ?",
@@ -2027,6 +2041,34 @@ async fn s19_the_catch_up_waits_for_a_complete_copy_and_the_waiting_costs_are_co
         )
         .await;
     }
+
+    // A link naming a waiting row of another kind ties nothing: a movement whose reservation sync
+    // id is a waiting purchase order line is refused.
+    inbox_row_with(
+        &db,
+        "purchase_order_lines",
+        "s19-not-a-reservation",
+        "deferred",
+        serde_json::json!({ "demand_source_type": "WORK_ORDER", "demand_source_sync_id": wo_sync, "source_reservation_sync_id": null }),
+    )
+    .await;
+    inbox_row_with(
+        &db,
+        "inventory_transactions",
+        "s19-issue-of-wrong-link",
+        "deferred",
+        serde_json::json!({ "source_type": null, "source_sync_id": null, "reservation_sync_id": "s19-not-a-reservation", "quantity": 1 }),
+    )
+    .await;
+    assert!(refused(
+        settlement::ensure_complete_copy_for_late_costs(&db, true).await
+    ));
+    exec(
+        &db,
+        "DELETE FROM sync_inbox WHERE entity_sync_id IN ('s19-not-a-reservation', 's19-issue-of-wrong-link')",
+        vec![],
+    )
+    .await;
 
     // The documents are applied. Before a sync since start-up the person's hook books nothing;
     // after it, the OT is booked in that person's name and the catch-up has nothing left.

@@ -1098,8 +1098,14 @@ impl TieContext<'_> {
                 // Held here: its OT, when settled, is among the ties above.
                 continue;
             }
+            let expected = if is_po_line {
+                "purchase_order_lines"
+            } else {
+                "stock_reservations"
+            };
             match self.deferred.get(link) {
-                Some((link_type, link_payload)) if depth < 4 => {
+                // A waiting row of another kind under that sync id ties nothing: untied.
+                Some((link_type, link_payload)) if depth < 4 && link_type.as_str() == expected => {
                     work_orders.extend(self.work_orders_of(link, link_type, link_payload, depth + 1)?);
                 }
                 _ => return None,

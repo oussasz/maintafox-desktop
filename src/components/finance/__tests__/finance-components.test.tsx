@@ -539,7 +539,7 @@ describe("SettlementWorklist", () => {
       </MemoryRouter>,
     );
     expect(await screen.findByTestId("settlement-late-blocked")).toHaveTextContent(
-      "Sync in progress: 2 received documents are still waiting",
+      "2 received documents are waiting for another record that ties them to a work order",
     );
     expect(screen.queryByTestId("settlement-late-waiting")).not.toBeInTheDocument();
   });
