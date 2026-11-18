@@ -4158,12 +4158,13 @@ async fn the_next_week_freezes_itself_but_never_counts_as_approved() {
     assert!(!view.awaiting_approval);
 }
 
-/// The automatic freeze names nobody, and the sync server takes a week's freeze time only from the
-/// person who froze it (`author_not_signer` on `frozen_by_sync_id`, seen on a PC joining the
-/// plant). The week's own row stays on this PC; its baseline and its "frozen automatically" event
-/// are captured as before. A person approving the week afterwards sends it, frozen, as their change.
+/// The automatic freeze names nobody, and the sync server takes a week's stored freeze time only
+/// from the person named in `frozen_by` who signed it (`author_not_signer` on `frozen_by_sync_id`,
+/// seen on a PC joining the plant). It now stores no time (migration 298) and travels like any
+/// background change; its time is that of its "frozen automatically" event. The usual workflow
+/// (approve, automatic freeze, publish) never sends a freeze time without the person who froze it.
 #[tokio::test]
-async fn an_automatic_freeze_keeps_the_week_row_on_this_pc_until_a_person_changes_it() {
+async fn an_automatic_freeze_sends_no_unsigned_freeze_time_through_approve_freeze_publish() {
     let db = setup_db().await;
     crate::sync::capture::install_capture(&db).await.expect("capture");
     ensure_planning_notification_rule(&db).await;
@@ -4176,18 +4177,41 @@ async fn an_automatic_freeze_keeps_the_week_row_on_this_pc_until_a_person_change
     )
     .await
     .expect("next week's work");
-    // What came before stands for the plant's data, already on the server.
-    db.execute(Statement::from_string(
-        DbBackend::Sqlite,
-        "DELETE FROM sync_capture_journal".to_string(),
-    ))
-    .await
-    .expect("journal emptied");
+    crate::sync::capture::drain_capture_journal(&db).await.expect("staged");
+    // Each change of the week as it is staged to be sent (its latest outbox envelope).
+    let sent_week = format!(
+        "SELECT o.payload_json AS p FROM sync_outbox o JOIN weekly_schedules w \
+           ON w.entity_sync_id = o.entity_sync_id \
+         WHERE o.entity_type = 'weekly_schedules' AND w.entity_id = {site} AND w.week_start = '2026-05-10' \
+         ORDER BY o.id DESC LIMIT 1"
+    );
+    let mut payloads: Vec<String> = Vec::new();
+    macro_rules! stage {
+        () => {
+            crate::sync::capture::drain_capture_journal(&db)
+                .await
+                .expect("staged");
+            payloads.push(
+                db.query_one(Statement::from_string(DbBackend::Sqlite, sent_week.clone()))
+                    .await
+                    .expect("outbox")
+                    .expect("the week is sent")
+                    .try_get::<String>("", "p")
+                    .expect("payload"),
+            );
+        };
+    }
 
+    // A planner approves the week ahead, then it freezes itself at its due time.
+    crate::planning::weekly_schedule::approve_weekly_schedule(&db, 1, week_ref(site, "2026-05-11", None))
+        .await
+        .expect("approved ahead");
+    stage!();
     let frozen = crate::planning::weekly_schedule::auto_freeze_due(&db, utc_at("2026-05-08T00:30"))
         .await
         .expect("tick");
     assert!(frozen.contains(&(site, day("2026-05-10"))), "{frozen:?}");
+    stage!();
     let schedule = crate::planning::weekly_schedule::get_weekly_schedule(&db, site, "2026-05-11")
         .await
         .expect("view")
@@ -4198,52 +4222,58 @@ async fn an_automatic_freeze_keeps_the_week_row_on_this_pc_until_a_person_change
     assert_eq!(
         scalar(
             &db,
-            "SELECT COUNT(*) FROM sync_capture_journal WHERE entity_type = 'weekly_schedules'"
+            &format!(
+                "SELECT COUNT(*) FROM weekly_schedules WHERE id = {} AND frozen_at IS NULL",
+                schedule.id
+            )
         )
         .await,
-        0,
-        "an automatic freeze is not sent: nobody signs it"
+        1,
+        "no freeze time is stored for an automatic freeze"
     );
-    assert!(
-        scalar(
-            &db,
-            "SELECT COUNT(*) FROM sync_capture_journal WHERE entity_type = 'weekly_schedule_baseline_items'"
-        )
+    let event_time: String = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT created_at FROM weekly_schedule_events WHERE weekly_schedule_id = {} \
+                   AND action = 'auto_frozen' AND baseline_no = 1",
+                schedule.id
+            ),
+        ))
         .await
-            > 0,
-        "the baseline travels"
-    );
-    assert!(
-        scalar(
-            &db,
-            "SELECT COUNT(*) FROM sync_capture_journal WHERE entity_type = 'weekly_schedule_events'"
-        )
-        .await
-            > 0,
-        "the \"frozen automatically\" event travels"
+        .expect("query")
+        .expect("the automatic freeze event")
+        .try_get("", "created_at")
+        .expect("time");
+    assert_eq!(
+        schedule.frozen_at.as_deref(),
+        Some(event_time.as_str()),
+        "the week shows when it froze, from its event"
     );
 
-    // A planner approves the week afterwards: the week is sent, as that person's change.
-    crate::planning::weekly_schedule::approve_weekly_schedule(
+    // The planner publishes it.
+    crate::planning::weekly_schedule::publish_weekly_schedule(
         &db,
         1,
         week_ref(site, "2026-05-11", Some(schedule.row_version)),
     )
     .await
-    .expect("approved after the fact");
-    assert!(
-        scalar(
-            &db,
-            &format!(
-                "SELECT COUNT(*) FROM sync_capture_journal j JOIN weekly_schedules w
-                   ON w.entity_sync_id = j.entity_sync_id
-                 WHERE j.entity_type = 'weekly_schedules' AND w.id = {}",
-                schedule.id
-            )
-        )
-        .await
-            > 0,
-        "the approval sends the week"
+    .expect("published");
+    stage!();
+
+    assert_eq!(payloads.len(), 3, "approval, freeze and publish are sent");
+    for p in &payloads {
+        let v: serde_json::Value = serde_json::from_str(p).expect("json");
+        assert!(
+            v.get("frozen_at").is_none_or(serde_json::Value::is_null)
+                || v.get("frozen_by_sync_id").is_some_and(|b| !b.is_null()),
+            "a freeze time is only sent with the person who froze the week: {p}"
+        );
+    }
+    let last: serde_json::Value = serde_json::from_str(payloads.last().expect("publish")).expect("json");
+    assert_eq!(
+        last.get("status").and_then(serde_json::Value::as_str),
+        Some("published")
     );
 }
 
