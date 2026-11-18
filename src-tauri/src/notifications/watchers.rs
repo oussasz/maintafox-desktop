@@ -118,10 +118,16 @@ fn i(r: &QueryResult, col: &str) -> Result<Option<i64>> {
     r.try_get::<Option<i64>>("", col).map_err(|e| decode(col, e))
 }
 
+/// A quantity or limit. SQLite hands back a whole-number value (a `COALESCE(x, 0)` default, a value
+/// written without decimals) as INTEGER, which the REAL decoder refuses: read it as a whole number then.
 fn f(r: &QueryResult, col: &str) -> Result<f64> {
-    Ok(r.try_get::<Option<f64>>("", col)
-        .map_err(|e| decode(col, e))?
-        .unwrap_or(0.0))
+    match r.try_get::<Option<f64>>("", col) {
+        Ok(v) => Ok(v.unwrap_or(0.0)),
+        Err(real_err) => r
+            .try_get::<Option<i64>>("", col)
+            .map(|v| v.map_or(0.0, |n| n as f64))
+            .map_err(|_| decode(col, real_err)),
+    }
 }
 
 fn text(fr: bool, fr_text: String, en_text: String) -> String {
@@ -333,12 +339,12 @@ async fn candidates_of(
                 .query_all(Statement::from_string(
                     DbBackend::Sqlite,
                     "SELECT a.id, a.entity_sync_id AS sid, a.article_code, a.article_name, a.reorder_point, \
-                            COALESCE(b.qty, 0) AS qty \
+                            COALESCE(b.qty, 0.0) AS qty \
                      FROM articles a \
                      LEFT JOIN (SELECT article_id, SUM(available_qty) AS qty FROM stock_balances GROUP BY article_id) b \
                             ON b.article_id = a.id \
                      WHERE a.is_active = 1 AND a.reorder_point > 0 AND a.entity_sync_id IS NOT NULL \
-                       AND COALESCE(b.qty, 0) <= a.reorder_point"
+                       AND COALESCE(b.qty, 0.0) <= a.reorder_point"
                         .to_string(),
                 ))
                 .await?;
@@ -387,7 +393,7 @@ async fn candidates_of(
         // movement that took it below zero (ledger order every PC shares) only dates it.
         "stock_to_reconcile" => {
             use crate::inventory::negative_stock::{double_count_pairs, negative_crossing, QTY_TOLERANCE};
-            const COLUMNS: &str = "SELECT a.id AS article_id, a.entity_sync_id AS asid, a.article_code, a.article_name,                     sl.id AS location_id, sl.entity_sync_id AS lsid, sl.code AS location_code, w.code AS warehouse_code,                     COALESCE(sb.on_hand_qty, 0) AS on_hand_qty";
+            const COLUMNS: &str = "SELECT a.id AS article_id, a.entity_sync_id AS asid, a.article_code, a.article_name,                     sl.id AS location_id, sl.entity_sync_id AS lsid, sl.code AS location_code, w.code AS warehouse_code,                     COALESCE(sb.on_hand_qty, 0.0) AS on_hand_qty";
             const SYNCED: &str = "a.entity_sync_id IS NOT NULL AND sl.entity_sync_id IS NOT NULL";
             let action_url = crate::inventory::negative_stock::LIST_URL.to_string();
             let negatives = conn
