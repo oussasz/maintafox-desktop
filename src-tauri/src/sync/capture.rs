@@ -81,6 +81,19 @@ pub async fn suspend_capture(conn: &impl ConnectionTrait) -> AppResult<()> {
     Ok(())
 }
 
+/// [`suspend_capture`] in one transaction of its own: every capture trigger is dropped, or none.
+///
+/// Run on the connection itself, each `DROP TRIGGER` was its own commit, with its own sync of the
+/// database file to disk: three triggers per synchronised entity type (about 690), so about three
+/// seconds of every start on a laptop before the migrations could even be checked. In one
+/// transaction the same triggers are dropped with a single commit.
+pub async fn suspend_capture_atomically(db: &DatabaseConnection) -> AppResult<()> {
+    let tx = db.begin().await?;
+    suspend_capture(&tx).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
 /// Install the capture triggers of every synchronised entity type, give identity to rows that
 /// have none, and queue once the existing rows of entity types synchronised for the first time.
 pub async fn install_capture(db: &DatabaseConnection) -> AppResult<CaptureInstallReport> {

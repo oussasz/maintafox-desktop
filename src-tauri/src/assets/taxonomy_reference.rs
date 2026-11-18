@@ -250,7 +250,7 @@ fn seeded_reference_value_sync_id(domain_code: &str, value_code: &str) -> String
     crate::sync::identity::seeded_entity_sync_id("reference_values", &format!("{domain_code}:{value_code}"))
 }
 
-async fn published_set_id(db: &DatabaseConnection, domain_code: &str) -> AppResult<i64> {
+async fn published_set_id(db: &impl ConnectionTrait, domain_code: &str) -> AppResult<i64> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -309,7 +309,7 @@ fn map_option_row(row: &sea_orm::QueryResult) -> AppResult<EquipmentTaxonomyOpti
     })
 }
 
-async fn list_domain_options(db: &DatabaseConnection, domain_code: &str) -> AppResult<Vec<EquipmentTaxonomyOption>> {
+async fn list_domain_options(db: &impl ConnectionTrait, domain_code: &str) -> AppResult<Vec<EquipmentTaxonomyOption>> {
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -326,7 +326,7 @@ async fn list_domain_options(db: &DatabaseConnection, domain_code: &str) -> AppR
 }
 
 /// Idempotent upsert of system status rows in the published `EQUIPMENT.STATUS` set.
-pub async fn ensure_required_equipment_status_values(db: &DatabaseConnection) -> AppResult<()> {
+pub async fn ensure_required_equipment_status_values(db: &impl ConnectionTrait) -> AppResult<()> {
     let set_id = published_set_id(db, DOMAIN_STATUS).await?;
     for &(code, label, sort, color, tag) in REQUIRED_STATUS {
         db.execute(Statement::from_sql_and_values(
@@ -358,7 +358,7 @@ pub async fn ensure_required_equipment_status_values(db: &DatabaseConnection) ->
 }
 
 /// Idempotent upsert of A–D criticality rows in the published `EQUIPMENT.CRITICALITY` set.
-pub async fn ensure_required_equipment_criticality_values(db: &DatabaseConnection) -> AppResult<()> {
+pub async fn ensure_required_equipment_criticality_values(db: &impl ConnectionTrait) -> AppResult<()> {
     let set_id = published_set_id(db, DOMAIN_CRITICALITY).await?;
     for &(code, label, sort, color) in REQUIRED_CRITICALITY {
         db.execute(Statement::from_sql_and_values(
@@ -388,7 +388,7 @@ pub async fn ensure_required_equipment_criticality_values(db: &DatabaseConnectio
 }
 
 /// Idempotent upsert of industrial class codes in the published `EQUIPMENT.CLASS` set.
-pub async fn ensure_required_equipment_class_values(db: &DatabaseConnection) -> AppResult<()> {
+pub async fn ensure_required_equipment_class_values(db: &impl ConnectionTrait) -> AppResult<()> {
     let set_id = published_set_id(db, DOMAIN_CLASS).await?;
     for &(code, label, sort) in REQUIRED_CLASS {
         db.execute(Statement::from_sql_and_values(
@@ -415,7 +415,7 @@ pub async fn ensure_required_equipment_class_values(db: &DatabaseConnection) -> 
     Ok(())
 }
 
-async fn resolve_published_value_id(db: &DatabaseConnection, domain_code: &str, value_code: &str) -> AppResult<i64> {
+async fn resolve_published_value_id(db: &impl ConnectionTrait, domain_code: &str, value_code: &str) -> AppResult<i64> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -433,7 +433,7 @@ async fn resolve_published_value_id(db: &DatabaseConnection, domain_code: &str, 
 }
 
 /// Idempotent upsert of family rows in published `EQUIPMENT.FAMILY`, linked to class parents.
-pub async fn ensure_required_equipment_family_values(db: &DatabaseConnection) -> AppResult<()> {
+pub async fn ensure_required_equipment_family_values(db: &impl ConnectionTrait) -> AppResult<()> {
     let set_id = published_set_id(db, DOMAIN_FAMILY).await?;
     for &(code, label, sort, class_code) in REQUIRED_FAMILY {
         let class_parent_id = resolve_published_value_id(db, DOMAIN_CLASS, class_code).await?;
@@ -463,7 +463,7 @@ pub async fn ensure_required_equipment_family_values(db: &DatabaseConnection) ->
 }
 
 /// Idempotent upsert of subfamily rows in published `EQUIPMENT.SUBFAMILY`, linked to family parents.
-pub async fn ensure_required_equipment_subfamily_values(db: &DatabaseConnection) -> AppResult<()> {
+pub async fn ensure_required_equipment_subfamily_values(db: &impl ConnectionTrait) -> AppResult<()> {
     let set_id = published_set_id(db, DOMAIN_SUBFAMILY).await?;
     for &(code, label, sort, family_code) in REQUIRED_SUBFAMILY {
         let family_parent_id = resolve_published_value_id(db, DOMAIN_FAMILY, family_code).await?;
@@ -492,7 +492,7 @@ pub async fn ensure_required_equipment_subfamily_values(db: &DatabaseConnection)
     Ok(())
 }
 
-async fn verify_required_codes(db: &DatabaseConnection, domain_code: &str, required: &[&str]) -> AppResult<()> {
+async fn verify_required_codes(db: &impl ConnectionTrait, domain_code: &str, required: &[&str]) -> AppResult<()> {
     let mut missing: Vec<String> = Vec::new();
     for code in required {
         let row = db
@@ -524,7 +524,7 @@ async fn verify_required_codes(db: &DatabaseConnection, domain_code: &str, requi
 /// Reference Manager seeds canonical codes such as `PUMP`, while tenant bootstrap may only insert
 /// unrelated rows (e.g. `GEN-CLASS-PUMP`). Without this sync, choosing "PUMP" from the catalog fails
 /// validation even though the reference value exists.
-pub async fn sync_equipment_classes_from_published_reference(db: &DatabaseConnection) -> AppResult<()> {
+pub async fn sync_equipment_classes_from_published_reference(db: &impl ConnectionTrait) -> AppResult<()> {
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -598,7 +598,7 @@ pub async fn sync_equipment_classes_from_published_reference(db: &DatabaseConnec
 /// Idempotent recreate of EQUIPMENT.* domains + published v1 sets when missing
 /// (same substrate as migration 103). Required when migration history is present
 /// but catalog rows were wiped.
-async fn ensure_equipment_taxonomy_domains_and_published_sets(db: &DatabaseConnection) -> AppResult<()> {
+async fn ensure_equipment_taxonomy_domains_and_published_sets(db: &impl ConnectionTrait) -> AppResult<()> {
     db.execute(Statement::from_string(
         DbBackend::Sqlite,
         "INSERT OR IGNORE INTO reference_domains \
@@ -676,7 +676,7 @@ async fn ensure_equipment_taxonomy_domains_and_published_sets(db: &DatabaseConne
 }
 
 /// Startup hook: repair drift for system-locked equipment domains.
-pub async fn ensure_equipment_taxonomy_reference_integrity(db: &DatabaseConnection) -> AppResult<()> {
+pub async fn ensure_equipment_taxonomy_reference_integrity(db: &impl ConnectionTrait) -> AppResult<()> {
     ensure_equipment_taxonomy_domains_and_published_sets(db).await?;
     ensure_required_equipment_status_values(db).await?;
     ensure_required_equipment_criticality_values(db).await?;

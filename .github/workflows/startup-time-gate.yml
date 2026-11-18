@@ -82,6 +82,16 @@ jobs:
           trap 'kill "$MON" 2>/dev/null || true' EXIT
           cargo test --lib startup_tests
 
+      # A normal start (second launch, nothing to migrate) of an encrypted database file the size of a real
+      # site (~34,000 synchronised rows): the time and the commits of each database phase of the startup,
+      # printed in this log. The phases that only re-apply the system data must commit once each.
+      - name: Measure a normal start on a site-size database
+        timeout-minutes: 20
+        working-directory: src-tauri
+        env:
+          CARGO_BUILD_JOBS: "2"
+        run: cargo test --lib normal_start_of_a_site_size_database -- --ignored --nocapture
+
       # Note: Full integration-level startup time measurement (launching Tauri,
       # reading tracing logs, asserting < 4s) requires a display server and
       # Tauri's `test` feature. The unit tests for validate_startup_duration
