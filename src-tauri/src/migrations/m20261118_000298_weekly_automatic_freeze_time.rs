@@ -216,9 +216,12 @@ mod tests {
         let db = started_db_before_migration("m20261118_000298_weekly_automatic_freeze_time").await;
         let mut factory = RowFactory::new();
         let week = factory.create(&db, "weekly_schedules").await.expect("a week");
+        // The factory gives every week the same site and Monday: move this one to the week before, so the
+        // second week below does not break the one-week-per-site-and-Monday rule.
         exec(
             &db,
-            "UPDATE weekly_schedules SET status = 'frozen', frozen_at = '2026-11-15T00:00:00Z', baseline_no = 1
+            "UPDATE weekly_schedules SET status = 'frozen', frozen_at = '2026-11-15T00:00:00Z', baseline_no = 1,
+                    week_start = '2026-11-02', week_end = '2026-11-08'
               WHERE id = ?",
             vec![week.rowid.into()],
         )
