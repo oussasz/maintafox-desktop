@@ -666,3 +666,36 @@ async fn enrolment_wait_ends_on_a_refused_account_or_at_sign_out() {
         "signed out while waiting"
     );
 }
+
+/// The account is acknowledged between the server's refusal and the check that follows it (an
+/// exchange finishing at that moment): the retry still happens, at once.
+#[tokio::test]
+async fn enrolment_retries_when_the_account_is_acknowledged_during_the_refused_attempt() {
+    use crate::sync::signing::{enrol_when_account_reaches_server, EnrolOutcome};
+    let db = started_device_db().await;
+    let account = unsent_own_account(&db).await;
+    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let attempt = {
+        let db = db.clone();
+        let calls = calls.clone();
+        move || {
+            let db = db.clone();
+            let n = calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            async move {
+                if n == 0 {
+                    exec(&db, "UPDATE sync_outbox SET status = 'acked'", vec![]).await;
+                    Ok(EnrolOutcome::Unavailable)
+                } else {
+                    Ok(EnrolOutcome::Enrolled)
+                }
+            }
+        }
+    };
+    let outcome = enrol_when_account_reaches_server(&db, &account, attempt, || true, RETRY_POLL, RETRY_WINDOW)
+        .await
+        .expect("enrol");
+    assert_eq!(
+        (outcome, calls.load(std::sync::atomic::Ordering::SeqCst)),
+        (EnrolOutcome::Enrolled, 2)
+    );
+}

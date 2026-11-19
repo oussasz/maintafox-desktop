@@ -535,11 +535,17 @@ where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = AppResult<EnrolOutcome>>,
 {
+    // Read before the attempt: an exchange may acknowledge the account between the server's refusal
+    // and the check below, which must still retry (review note on 402c6935).
+    let waiting_before = own_account_upload(conn, user_sync_id).await? == OwnAccountUpload::Waiting;
     let first = attempt().await?;
-    if !matches!(first, EnrolOutcome::Refused | EnrolOutcome::Unavailable)
-        || own_account_upload(conn, user_sync_id).await? != OwnAccountUpload::Waiting
-    {
+    if !waiting_before || !matches!(first, EnrolOutcome::Refused | EnrolOutcome::Unavailable) {
         return Ok(first);
+    }
+    match own_account_upload(conn, user_sync_id).await? {
+        OwnAccountUpload::Waiting => {}
+        OwnAccountUpload::Accepted => return attempt().await,
+        OwnAccountUpload::Settled => return Ok(first),
     }
     tracing::info!(
         ?first,
