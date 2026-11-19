@@ -513,3 +513,156 @@ async fn a_rewritten_item_loses_its_signatures() {
     assert!(cleared);
     crate::auth::signing_keys::release_session_keys();
 }
+
+// ── Enrolment retry once the user's own account reached the server ─────────────────────────
+
+/// The first administrator's account, made on this PC outside any session (first-start screen),
+/// staged in the outbox and not sent yet.
+async fn unsent_own_account(db: &DatabaseConnection) -> String {
+    set_capture_actor(db, None).await.expect("no actor");
+    let mut factory = RowFactory::new();
+    let row = factory.create(db, "user_accounts").await.expect("account");
+    drain_capture_journal(db).await.expect("drain");
+    row.entity_sync_id
+}
+
+/// An enrolment attempt that answers `outcomes` in turn and counts its calls.
+fn scripted_enrolment(
+    outcomes: Vec<crate::sync::signing::EnrolOutcome>,
+) -> (
+    std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    impl FnMut() -> std::future::Ready<crate::errors::AppResult<crate::sync::signing::EnrolOutcome>>,
+) {
+    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counter = calls.clone();
+    let attempt = move || {
+        let n = counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        std::future::ready(Ok(outcomes[n.min(outcomes.len() - 1)]))
+    };
+    (calls, attempt)
+}
+
+const RETRY_POLL: std::time::Duration = std::time::Duration::from_millis(5);
+const RETRY_WINDOW: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Refused while the account had not reached the server: enrols again as soon as the server
+/// accepted the account (the founding administrator's first sign-in).
+#[tokio::test]
+async fn enrolment_refused_before_the_account_reached_the_server_is_retried_after_its_ack() {
+    use crate::sync::signing::{enrol_when_account_reaches_server, own_account_upload, EnrolOutcome, OwnAccountUpload};
+    let db = started_device_db().await;
+    let account = unsent_own_account(&db).await;
+    assert_eq!(
+        own_account_upload(&db, &account).await.expect("state"),
+        OwnAccountUpload::Waiting
+    );
+
+    let acker = {
+        let db = db.clone();
+        let account = account.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(40)).await;
+            exec(
+                &db,
+                "UPDATE sync_outbox SET status = 'acked' WHERE entity_type = 'user_accounts' AND entity_sync_id = ?",
+                vec![account.into()],
+            )
+            .await;
+        })
+    };
+    let (calls, attempt) = scripted_enrolment(vec![EnrolOutcome::Refused, EnrolOutcome::Enrolled]);
+    let outcome = enrol_when_account_reaches_server(&db, &account, attempt, || true, RETRY_POLL, RETRY_WINDOW)
+        .await
+        .expect("enrol");
+    acker.await.expect("acker");
+    assert_eq!(outcome, EnrolOutcome::Enrolled);
+    assert_eq!(
+        calls.load(std::sync::atomic::Ordering::SeqCst),
+        2,
+        "one retry after the ack"
+    );
+}
+
+/// A refusal for an account the server already knows (received from it, or already accepted) is
+/// final: no retry, no second password check.
+#[tokio::test]
+async fn enrolment_refused_for_an_account_already_on_the_server_is_not_retried() {
+    use crate::sync::signing::{enrol_when_account_reaches_server, own_account_upload, EnrolOutcome, OwnAccountUpload};
+    let db = started_device_db().await;
+    let account = unsent_own_account(&db).await;
+    exec(&db, "UPDATE sync_outbox SET status = 'acked'", vec![]).await;
+    assert_eq!(
+        own_account_upload(&db, &account).await.expect("state"),
+        OwnAccountUpload::Accepted
+    );
+    let (calls, attempt) = scripted_enrolment(vec![EnrolOutcome::Refused, EnrolOutcome::Enrolled]);
+    let outcome = enrol_when_account_reaches_server(&db, &account, attempt, || true, RETRY_POLL, RETRY_WINDOW)
+        .await
+        .expect("enrol");
+    assert_eq!(
+        (outcome, calls.load(std::sync::atomic::Ordering::SeqCst)),
+        (EnrolOutcome::Refused, 1)
+    );
+
+    // Received from the server: nothing of it in this PC's outbox.
+    exec(&db, "DELETE FROM sync_outbox", vec![]).await;
+    assert_eq!(
+        own_account_upload(&db, &account).await.expect("state"),
+        OwnAccountUpload::Settled
+    );
+    let (calls, attempt) = scripted_enrolment(vec![EnrolOutcome::Refused, EnrolOutcome::Enrolled]);
+    let outcome = enrol_when_account_reaches_server(&db, &account, attempt, || true, RETRY_POLL, RETRY_WINDOW)
+        .await
+        .expect("enrol");
+    assert_eq!(
+        (outcome, calls.load(std::sync::atomic::Ordering::SeqCst)),
+        (EnrolOutcome::Refused, 1)
+    );
+
+    // Enrolled or locked at once: nothing to wait for.
+    let account2 = unsent_own_account(&db).await;
+    for first in [EnrolOutcome::Enrolled, EnrolOutcome::Locked] {
+        let (calls, attempt) = scripted_enrolment(vec![first, EnrolOutcome::Enrolled]);
+        let outcome = enrol_when_account_reaches_server(&db, &account2, attempt, || true, RETRY_POLL, RETRY_WINDOW)
+            .await
+            .expect("enrol");
+        assert_eq!((outcome, calls.load(std::sync::atomic::Ordering::SeqCst)), (first, 1));
+    }
+}
+
+/// The wait ends without a retry when the server refused the account, or when the session ended
+/// (the password copy is not kept beyond the session).
+#[tokio::test]
+async fn enrolment_wait_ends_on_a_refused_account_or_at_sign_out() {
+    use crate::sync::signing::{enrol_when_account_reaches_server, EnrolOutcome};
+    let db = started_device_db().await;
+    let account = unsent_own_account(&db).await;
+
+    let rejecter = {
+        let db = db.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(40)).await;
+            exec(&db, "UPDATE sync_outbox SET status = 'rejected'", vec![]).await;
+        })
+    };
+    let (calls, attempt) = scripted_enrolment(vec![EnrolOutcome::Refused, EnrolOutcome::Enrolled]);
+    let outcome = enrol_when_account_reaches_server(&db, &account, attempt, || true, RETRY_POLL, RETRY_WINDOW)
+        .await
+        .expect("enrol");
+    rejecter.await.expect("rejecter");
+    assert_eq!(
+        (outcome, calls.load(std::sync::atomic::Ordering::SeqCst)),
+        (EnrolOutcome::Refused, 1)
+    );
+
+    let account2 = unsent_own_account(&db).await;
+    let (calls, attempt) = scripted_enrolment(vec![EnrolOutcome::Unavailable, EnrolOutcome::Enrolled]);
+    let outcome = enrol_when_account_reaches_server(&db, &account2, attempt, || false, RETRY_POLL, RETRY_WINDOW)
+        .await
+        .expect("enrol");
+    assert_eq!(
+        (outcome, calls.load(std::sync::atomic::Ordering::SeqCst)),
+        (EnrolOutcome::Unavailable, 1),
+        "signed out while waiting"
+    );
+}

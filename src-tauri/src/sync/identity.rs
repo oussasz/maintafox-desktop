@@ -155,6 +155,20 @@ mod tests {
         assert!(uuid::Uuid::parse_str(&a).is_ok());
     }
 
+    /// Shared vector with the sync server (`api/src/sync/signing-rules.ts` seededEntitySyncId): the
+    /// server recognises the founding administrator's grant by the seeded Administrator role id.
+    #[test]
+    fn seeded_role_ids_match_the_server_vector() {
+        assert_eq!(
+            seeded_entity_sync_id("roles", "Administrator"),
+            "10018b84-32e2-8082-8f39-f934e499bc41"
+        );
+        assert_eq!(
+            seeded_entity_sync_id("roles", "Superadmin"),
+            "5fbf2d8a-a2f6-8667-b042-c45bca575caa"
+        );
+    }
+
     #[test]
     fn new_ids_are_uuids() {
         let id = new_entity_sync_id();
