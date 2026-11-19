@@ -462,17 +462,136 @@ pub async fn enrol_key(db: &DatabaseConnection, key: &UnlockedSigningKey, passwo
     Ok(outcome)
 }
 
+/// How long a sign-in keeps waiting, at most, for the user's own account to reach the server before
+/// it enrols again ([`enrol_when_account_reaches_server`]).
+const ENROL_RETRY_WINDOW: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+/// How often that wait looks at the account's sync state (the sync worker pushes every minute).
+const ENROL_RETRY_POLL: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// Where this PC's user account stands with the sync server, for the enrolment retry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OwnAccountUpload {
+    /// The server accepted a change of this account sent from this PC.
+    Accepted,
+    /// A change of this account is still waiting to be sent (capture journal or outbox).
+    Waiting,
+    /// Nothing of it is waiting: received from the server, or refused by it.
+    Settled,
+}
+
+pub(crate) async fn own_account_upload(conn: &impl ConnectionTrait, user_sync_id: &str) -> AppResult<OwnAccountUpload> {
+    let row = conn
+        .query_one(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "SELECT
+                 EXISTS (SELECT 1 FROM sync_outbox
+                         WHERE entity_type = 'user_accounts' AND entity_sync_id = ?1 AND status = 'acked') AS accepted,
+                 (EXISTS (SELECT 1 FROM sync_outbox
+                          WHERE entity_type = 'user_accounts' AND entity_sync_id = ?1
+                            AND status IN ('pending', 'in_flight'))
+                  OR EXISTS (SELECT 1 FROM sync_capture_journal
+                             WHERE entity_type = 'user_accounts' AND entity_sync_id = ?1 AND last_error IS NULL))
+                     AS waiting",
+            [user_sync_id.into()],
+        ))
+        .await?;
+    let flag = |name: &str| -> AppResult<bool> {
+        Ok(row
+            .as_ref()
+            .map(|r| r.try_get::<i64>("", name))
+            .transpose()
+            .map_err(|e| AppError::SyncError(format!("own account upload '{name}': {e}")))?
+            .unwrap_or(0)
+            != 0)
+    };
+    Ok(if flag("accepted")? {
+        OwnAccountUpload::Accepted
+    } else if flag("waiting")? {
+        OwnAccountUpload::Waiting
+    } else {
+        OwnAccountUpload::Settled
+    })
+}
+
+/// Enrols with `attempt`, and once more after the user's own account reached the server when the
+/// first attempt could not succeed because the server did not know the account yet.
+///
+/// The first administrator of a new plant signs in on the PC that created the account before any
+/// push: the server refuses the enrolment (design §4 step 2: the user must be active in the
+/// server's state) until the founding account arrives with the next exchange. Without this retry
+/// their key stayed unenrolled for the whole session and their changes waited in the outbox until
+/// the next sign-in. Only a refusal while this PC still holds the account's first upload is retried,
+/// once, as soon as the server accepted it; the wait ends with the session (`still_held`) or after
+/// `window`. Any other refusal (wrong password, disabled account) is final, as before.
+pub(crate) async fn enrol_when_account_reaches_server<F, Fut>(
+    conn: &impl ConnectionTrait,
+    user_sync_id: &str,
+    mut attempt: F,
+    still_held: impl Fn() -> bool,
+    poll: std::time::Duration,
+    window: std::time::Duration,
+) -> AppResult<EnrolOutcome>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = AppResult<EnrolOutcome>>,
+{
+    // Read before the attempt: an exchange may acknowledge the account between the server's refusal
+    // and the check below, which must still retry (review note on 402c6935).
+    let waiting_before = own_account_upload(conn, user_sync_id).await? == OwnAccountUpload::Waiting;
+    let first = attempt().await?;
+    if !waiting_before || !matches!(first, EnrolOutcome::Refused | EnrolOutcome::Unavailable) {
+        return Ok(first);
+    }
+    match own_account_upload(conn, user_sync_id).await? {
+        OwnAccountUpload::Waiting => {}
+        OwnAccountUpload::Accepted => return attempt().await,
+        OwnAccountUpload::Settled => return Ok(first),
+    }
+    tracing::info!(
+        ?first,
+        "sync signing: enrolment waits for this account to reach the server"
+    );
+    let deadline = std::time::Instant::now() + window;
+    loop {
+        tokio::time::sleep(poll).await;
+        if !still_held() || std::time::Instant::now() >= deadline {
+            return Ok(first);
+        }
+        match own_account_upload(conn, user_sync_id).await? {
+            OwnAccountUpload::Waiting => {}
+            OwnAccountUpload::Accepted => return attempt().await,
+            OwnAccountUpload::Settled => return Ok(first),
+        }
+    }
+}
+
 /// Enrols the key in the background when it is not enrolled yet (never delays the action that
-/// unlocked it). The password copy is wiped when done.
+/// unlocked it), retrying once when the user's own account had not reached the server yet
+/// ([`enrol_when_account_reaches_server`]): the password copy is then held by this task until the
+/// account is accepted, the session ends, or [`ENROL_RETRY_WINDOW`] passes (the session already
+/// holds the user's unwrapped signing key for as long). The password copy is wiped when done.
 pub fn spawn_enrolment_if_needed(db: DatabaseConnection, key: std::sync::Arc<UnlockedSigningKey>, password: String) {
     tauri::async_runtime::spawn(async move {
         let mut password = password;
         match key_is_enrolled(&db, key.key_id()).await {
             Ok(true) => {}
-            Ok(false) => match enrol_key(&db, &key, &password).await {
-                Ok(outcome) => tracing::info!(?outcome, key_id = %key.key_id(), "sync signing: enrolment"),
-                Err(e) => tracing::warn!(error = %e, "sync signing: enrolment failed"),
-            },
+            Ok(false) => {
+                let still_held =
+                    || signing_keys::held_key(key.user_sync_id()).is_some_and(|held| held.key_id() == key.key_id());
+                let outcome = enrol_when_account_reaches_server(
+                    &db,
+                    key.user_sync_id(),
+                    || enrol_key(&db, &key, &password),
+                    still_held,
+                    ENROL_RETRY_POLL,
+                    ENROL_RETRY_WINDOW,
+                )
+                .await;
+                match outcome {
+                    Ok(outcome) => tracing::info!(?outcome, key_id = %key.key_id(), "sync signing: enrolment"),
+                    Err(e) => tracing::warn!(error = %e, "sync signing: enrolment failed"),
+                }
+            }
             Err(e) => tracing::warn!(error = %e, "sync signing: enrolment state unreadable"),
         }
         wipe_string(&mut password);
